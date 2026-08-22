@@ -1,0 +1,62 @@
+# ---- dependencies ----
+node_modules/
+.pnp/
+.pnp.js
+.pnpm-store/
+
+# ---- next.js ----
+/.next/
+/out/
+next-env.d.ts
+
+# ---- payload ----
+/media/
+/.payload/
+
+# ---- production ----
+/build/
+/dist/
+
+# ---- environment (NEVER COMMIT SECRETS) ----
+.env
+.env.*
+!.env.example
+
+# ---- testing ----
+/coverage/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/.nyc_output/
+
+# ---- storybook ----
+/storybook-static/
+
+# ---- database dumps (may contain customer personal data) ----
+*.sql
+*.dump
+*.sqlite
+*.sqlite3
+!**/migrations/*.sql
+
+# ---- logs ----
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---- editor / os ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# ---- misc ----
+*.pem
+.vercel/
+.turbo/
+tsconfig.tsbuildinfo
