@@ -292,40 +292,58 @@ dependency to substitute for a free Neon branch that Phase 5 requires regardless
 
 *Recorded in Phase 2. Full detail: DEV-15.*
 
-### D-10 — Drizzle schema push is off from the first commit
+### D-10 — Schema push is development-only, and the guard for it is owed
 
-`@payloadcms/db-postgres` enables Drizzle's `push` in development by default, which syncs schema changes
-into the database without a migration. It is set to `push: false` from Phase 2, with `migrationDir` at
-`src/payload/migrations`.
+Plan §5.1d prescribes Drizzle's push workflow for the development sandbox and committed migrations for
+every other environment. The config states the condition explicitly rather than relying on the adapter
+default:
 
-Plan §5.1c makes explicit, reviewable migrations the only path schema takes to a database. Leaving the
-default on until Phase 5 would mean Phase 5's migration baseline is generated from a schema no one
-reviewed. From Phase 6 onward, a schema change is not live until a migration is generated and run.
+```ts
+push: process.env.NODE_ENV === 'development'
+```
 
-*Confirmed in Phase 2. Full detail: DEV-17.*
+An earlier version of this decision disabled push outright. It was withdrawn inside Phase 2: it
+contradicted §5.1d to buy a review that the config diff already provides, and it pulled Phase 5's
+migration work forward for no gain.
+
+**The hazard this leaves.** Push rewrites the schema of whatever `DATABASE_URL` points at, so `pnpm dev`
+aimed at a non-development database would alter it. `next build` and `next start` run with
+`NODE_ENV=production`, so push is off in both. **Phase 4 owes the environment guard** that makes this
+structurally impossible rather than merely unlikely — that is an outstanding obligation, not a nicety.
+
+*Revised in Phase 2. Full detail: DEV-17 (withdrawn entry retained).*
 
 ## 5. Current position
 
 **Phase 1 — Workspace, repository and baseline: complete.** Repository initialized on `main`, baseline
 config and documentation in place, consistency gate executed and recorded above.
 
-**Phase 2 — Scaffold the Next.js + Payload application: built; Gate 1 partially verified.**
+**Phase 2 — Scaffold the Next.js + Payload application: complete. Gate 1 passed.**
 
-Next 16.3.2 with Payload 3.88.0 embedded in one deployable. 706 packages from 16 direct dependencies,
-no peer-dependency warnings. TypeScript strict, ESLint flat config at `--max-warnings 0`, Prettier,
-Tailwind v4, and the two-route-group structure above.
+Next 16.3.2 with Payload 3.88.0 embedded in one deployable. 706 packages from 16 direct dependencies, no
+peer-dependency warnings. TypeScript strict, ESLint flat config at `--max-warnings 0`, Prettier, Tailwind
+v4, and the two-route-group structure above, against **Neon PostgreSQL 17.11**.
 
 | Gate 1 criterion | Status |
 |---|---|
-| 1. Frontend loads | **pass** — `/` returns 200, renders as an RSC with Tailwind applied |
-| 2. Payload admin loads | **blocked** — needs a Postgres connection string. See **D-09** |
-| 3. Build passes | **pass** — `pnpm build`, 4 routes, `/admin` and `/api/*` correctly dynamic |
+| 1. Frontend loads | **pass** — `/` → 200, RSC-rendered with Tailwind applied |
+| 2. Payload admin loads | **pass** — `/admin` → 200; `/admin/create-first-user` renders |
+| 3. Build passes | **pass** — 4 routes, `/admin` and `/api/*` correctly dynamic |
 | 4. Typecheck passes | **pass** — `tsc --noEmit`, strict |
 | 5. Lint passes | **pass** — `eslint --max-warnings 0` |
 | 6. Commit captures a known-good baseline | **pass** — branch `phase-2-scaffold-next-payload` |
 
-**Next: supply `DATABASE_URL` from a Neon development branch, confirm `/admin` and `/api/users` return
-200, then Phase 3 — design system and UI foundation.** Phase 3 owes the token layer (**G-12**, **G-14**),
-the type scale, the core primitives, and the global shell.
+The Payload API was verified through a full auth round-trip — register, login, authenticated read,
+identity — not merely a liveness check. Unauthenticated `GET /api/users` returns 403, which is the
+default access control working as intended. Details and evidence: notes §1.5b.
 
-Phase 3 needs no third-party account.
+**Next: Phase 3 — design system and UI foundation.** It owes the token layer (**G-12**, **G-14**), the
+type scale, the core primitives, and the global shell. It needs no third-party account and no database.
+
+**Carried into later phases as explicit debt:**
+
+| Owed | Phase | Why |
+|---|---|---|
+| Environment guard so `pnpm dev` cannot push schema to a non-development database | 4 | **D-10** |
+| Migration baseline and the discipline around it | 5 | Plan §5.1c–d |
+| `sslmode=require` → `verify-full` when `pg` reaches v9 | 5 or any `pg` major | Semantics change; see notes §1.5b |

@@ -174,6 +174,54 @@ into the committed `tsconfig.json`, and a subsequent build leaves the file byte-
 in `README.md` and `docs/` — 136 lines of pure padding churn with no content change. `*.md` is in
 `.prettierignore`; Markdown line endings and indentation stay governed by `.editorconfig`.
 
+## 1.5b Phase 2 — Gate 1 verification against a real database
+
+Neon development branch provisioned by the project owner. **PostgreSQL 17.11**, chosen over Neon's
+current default of 18 — see the note below. Direct (unpooled) endpoint, `sslmode=require`.
+
+**Gate 1, all six criteria verified against the running application:**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| 1 | Frontend loads | `GET /` → 200, RSC-rendered, Tailwind chunk applied |
+| 2 | Payload admin loads | `GET /admin` → 200 (`Dashboard · NORTH / 01`); `GET /admin/create-first-user` → 200 with the form rendered |
+| 3 | Build passes | `pnpm build` → 4 routes; `/admin` and `/api/*` dynamic, never prerendered |
+| 4 | Typecheck passes | `tsc --noEmit`, strict |
+| 5 | Lint passes | `eslint --max-warnings 0` |
+| 6 | Known-good baseline committed | branch `phase-2-scaffold-next-payload` |
+
+**Payload API — full auth round-trip, not just a liveness check:**
+
+| Request | Result |
+|---|---|
+| `GET /api/users` unauthenticated | **403** — correct. Payload's default access control denies it. A 403 here is the API working, not failing. |
+| `POST /api/users/first-register` | 200, user persisted, JWT issued |
+| `POST /api/users/login` | 200, JWT issued |
+| `GET /api/users` with JWT | 200, `totalDocs=1` |
+| `GET /api/users/me` with JWT | 200, identity echoed |
+
+**Schema created by push on first `/admin` hit — 8 tables:** `users`, `users_sessions`,
+`payload_preferences`, `payload_preferences_rels`, `payload_locked_documents`,
+`payload_locked_documents_rels`, `payload_migrations`, `payload_kv`.
+
+**Runtime confirmation of the CSS isolation.** `/admin` loads exactly one stylesheet, Payload's own. The
+storefront's Tailwind chunk is absent from the served admin document — so the isolation holds at runtime,
+not only in the build manifest. This is the second, independent confirmation of **D-08**.
+
+**Why PostgreSQL 17 and not Neon's default 18.** Neon made PG 18 the default for new projects in June
+2026. Payload had a genuine PG 18 incompatibility — [issue #13963](https://github.com/payloadcms/payload/issues/13963):
+PG 18 refuses `DROP CONSTRAINT` on a NOT NULL belonging to a primary key column, which is exactly what
+Drizzle emits during migrations. It is **fixed** — PR #14700, merged 2025-11-20, shipped in **v3.65.0**,
+and our pinned 3.88.0 is 842 commits past it with `behind_by 0`. PG 17 was chosen anyway because **a Neon
+project's major version cannot be changed after creation** (it requires a new project plus a data
+migration), the phases immediately ahead are precisely the migration-heavy ones, and nothing in the
+corpus needs a PG 18 feature. PG 17 is supported by Neon until 2029.
+
+**`sslmode=require` will change meaning in `pg` v9.** `pg@8.20.0` warns that it currently treats
+`require` as `verify-full`, and that v9 will adopt libpq semantics (weaker). Harmless today. When `pg`
+reaches v9, the connection string must become `sslmode=verify-full` to keep the present behaviour.
+*(Revisit at Phase 5 or at any `pg` major upgrade.)*
+
 ## 1.5 Blocked on the project owner
 
 The engineer cannot provision these. Each is needed from the phase named, and every one has a free or
@@ -181,7 +229,7 @@ test tier — no paid service is required for local development.
 
 | Service | Needed from | What is required |
 |---|---|---|
-| **Neon Postgres** | **Phase 2** | Development database / branch connection string. **This is the first hard blocker, and Phase 2 proved it lands earlier than this table originally said** — see **DEV-15**. |
+| ~~**Neon Postgres**~~ | ~~**Phase 2**~~ | **RESOLVED 2026-08-22.** Development branch provisioned, PostgreSQL 17.11. Phase 2 proved this lands earlier than Phase 5 — see **DEV-15** and §1.5b. |
 | Cloudinary | Phase 8 | Cloud name, API key/secret, development folder or preset |
 | Algolia | Phase 12 | App ID, search-only key, admin key, development index |
 | Stripe | Phase 17 | **Test mode only.** Secret key, publishable key, webhook signing secret |
@@ -495,22 +543,30 @@ transition. The one link from the storefront to `/admin` is a plain anchor for t
 
 ---
 
-### DEV-17 — Drizzle's schema push is disabled from the start
+### DEV-17 — ~~Drizzle's schema push is disabled from the start~~ **WITHDRAWN**
 
-**Plan §5.1c** requires migration discipline, but `push` defaults to **on in development** for
-`@payloadcms/db-postgres`, which silently syncs schema changes straight into the database.
+**Originally recorded, then reversed within Phase 2 before Gate 1 closed.**
 
-**We do:** set `push: false` in `payload.config.ts` from Phase 2, and point `migrationDir` at
-`src/payload/migrations`.
+The first version of this entry set `push: false` from Phase 2, reasoning that Phase 5's migration
+baseline should be generated from a reviewed schema.
 
-**Why:** the plan makes explicit, reviewable migrations the only route schema takes to a database. Leaving
-the default on for three phases and switching it off in Phase 5 would mean the Phase 5 migration baseline
-is generated against a schema that was never reviewed.
+**That was wrong, and it is withdrawn.** Plan §5.1d is explicit: *"Use Payload/Drizzle's recommended
+development push workflow for the sandbox database, then generate committed migrations for
+non-development environments."* The override contradicted a direct instruction on a weak premise —
+`migrate:create` diffs the Payload **config**, which is reviewed code either way, so disabling push
+bought no review that the pull request did not already provide. It also pulled migration work forward
+into Phase 2, duplicating Phase 5 for no gain.
 
-**Consequence:** from Phase 6 onward, a schema change is not live until a migration is generated and run.
-This is intended.
+**We do:** `push: process.env.NODE_ENV === 'development'` — written out rather than left to the adapter
+default, so the condition is visible at the call site. Development pushes; every other environment gets
+committed migrations, which Phase 5 establishes.
 
-*Affects Phases 2, 5, 6.*
+**Hazard this creates, recorded deliberately:** push rewrites the schema of whatever `DATABASE_URL`
+points at. Running `pnpm dev` against a non-development database would alter it. `next build` and
+`next start` both run with `NODE_ENV=production`, so push is off there. **Phase 4 owns the environment
+guard** that makes this structurally impossible rather than merely unlikely.
+
+*Supersedes the original DEV-17. Affects Phases 2, 4, 5.*
 
 ---
 
@@ -551,5 +607,6 @@ collection is easy to mistake for a considered account model.
 |---|---|---|
 | Phase 1 — Workspace, repository and baseline | 2026-08-22 | Document created. Notes §1.1–§1.6; deviations DEV-01 through DEV-14. |
 | Phase 2 — Scaffold the Next.js + Payload application | 2026-08-22 | Note §1.5a (resolved install, pnpm 11 `allowBuilds`, native flat ESLint config, Next-generated agent files, tsconfig rewrite, Prettier scope). Closed two §1.4 hazards. Corrected §1.5: Neon moves from Phase 5 to Phase 2. Deviations **DEV-15** through **DEV-19**. |
+| Phase 2 — Gate 1 closed | 2026-08-22 | Note §1.5b: all six Gate 1 criteria verified against Neon PostgreSQL 17.11, full Payload auth round-trip, runtime confirmation of D-08, PG 17-vs-18 reasoning, `pg` v9 `sslmode` change. **DEV-17 withdrawn** — it contradicted plan §5.1d; push is development-only. Neon unblocked in §1.5. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

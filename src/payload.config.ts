@@ -36,9 +36,13 @@ export default buildConfig({
     pool: {
       connectionString: process.env.DATABASE_URL || '',
     },
-    // Drizzle's dev-mode schema push is disabled: the plan requires explicit, reviewable
-    // migrations as the only way schema reaches a database. See Phase 5 (§5.1c).
-    push: false,
+    // Plan §5.1d: Drizzle's push workflow for the development sandbox, committed
+    // migrations for every other environment. Stated explicitly rather than left to the
+    // adapter default so the condition is visible.
+    //
+    // HAZARD: push rewrites whatever schema DATABASE_URL points at. `pnpm dev` against a
+    // non-development database would alter it. Phase 4 owns the environment guard.
+    push: process.env.NODE_ENV === 'development',
     migrationDir: path.resolve(dirname, 'payload/migrations'),
   }),
 

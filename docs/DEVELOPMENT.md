@@ -36,6 +36,13 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   anyone else is using. The storefront builds and runs without it, but `/admin` and `/api/*` return
   HTTP 500 until it is set — Payload connects during `payload.init()`.
 
+> **Use PostgreSQL 17 when creating the Neon project, not the default 18**, and use the **direct**
+> (non-pooled) endpoint locally. A Neon project's major version cannot be changed afterwards. Reasoning:
+> notes §1.5b.
+>
+> **In development, Payload pushes schema changes straight into whatever `DATABASE_URL` points at.**
+> Point it at a development branch and nothing else. See `docs/ARCHITECTURE.md` → **D-10**.
+
 ```bash
 pnpm dev
 ```
@@ -43,7 +50,7 @@ pnpm dev
 - Storefront → http://localhost:3000
 - Payload admin → http://localhost:3000/admin
 
-The first visit to `/admin` prompts you to create the first user.
+The first visit to `/admin` creates the schema and prompts you to create the first user.
 
 > `pnpm install` runs postinstall scripts for `esbuild` and `unrs-resolver` only — pnpm 11 denies build
 > scripts by default and those two are allowed explicitly in `pnpm-workspace.yaml`. Both fetch native
@@ -151,7 +158,7 @@ and every one has a free or test tier:
 
 | Service | Needed from | Notes |
 |---|---|---|
-| Neon Postgres | **Phase 2** | Development branch/database, separate from production. Required for `/admin` |
+| Neon Postgres | **Phase 2** | Development branch, separate from production. Required for `/admin`. **PostgreSQL 17** |
 | Cloudinary | Phase 8 | Development folder/preset |
 | Algolia | Phase 12 | Development index |
 | Stripe | Phase 17 | **Test mode only** |

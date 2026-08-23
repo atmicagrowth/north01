@@ -67,10 +67,13 @@ When a material decision changes, update the affected documents and re-run the c
 
 ## Status
 
-**Phase 2 — Scaffold the Next.js + Payload application.** The application shell runs: Next.js 16.3.2 with
-Payload 3.88.0 embedded in the same deployable, TypeScript strict, ESLint at zero warnings, Prettier, and
-Tailwind v4. `pnpm build`, `pnpm typecheck` and `pnpm lint` all pass. No storefront feature is built yet.
+**Phase 2 — Scaffold the Next.js + Payload application: complete, Gate 1 passed.** The application shell
+runs against Neon PostgreSQL 17: Next.js 16.3.2 with Payload 3.88.0 embedded in the same deployable,
+TypeScript strict, ESLint at zero warnings, Prettier, and Tailwind v4. Storefront, Payload admin and the
+Payload REST API all verified end to end. `pnpm build`, `pnpm typecheck` and `pnpm lint` pass.
 
-Running the Payload admin needs a `DATABASE_URL` — see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+No storefront feature is built yet — that starts with the design system in Phase 3.
+
+Local setup: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the phase gate and what comes next.
