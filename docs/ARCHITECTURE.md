@@ -347,7 +347,7 @@ v4, and the two-route-group structure above, against **Neon PostgreSQL 17.11**.
 
 The Payload API was verified through a full auth round-trip — register, login, authenticated read,
 identity — not merely a liveness check. Unauthenticated `GET /api/users` returns 403, which is the
-default access control working as intended. Details and evidence: notes §1.5b.
+default access control working as intended. Details and evidence: notes §1.7.2.
 
 **Next: Phase 3 — design system and UI foundation.** It owes the token layer (**G-12**, **G-14**), the
 type scale, the core primitives, and the global shell. It needs no third-party account and no database.

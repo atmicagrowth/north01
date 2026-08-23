@@ -39,7 +39,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 > **Use PostgreSQL 17 when creating the Neon project, not the default 18**, use the **direct**
 > (non-pooled) endpoint locally, and end the string with **`sslmode=verify-full`** rather than
 > `sslmode=require` — `pg` v9 redefines `require` as *skip certificate verification*. A Neon project's
-> major version cannot be changed afterwards. Reasoning: notes §1.5b and §1.5c.
+> major version cannot be changed afterwards. Reasoning: notes §1.7.2 and §1.7.4.
 >
 > Missing either variable now fails immediately with a named error rather than starting in a broken state.
 >

@@ -122,12 +122,50 @@ Recorded now, to be resolved by the phase that meets them.
   Verified against the production build: the Tailwind chunk is referenced by the storefront document and
   by no admin bundle. No `@source` scoping, `important` selector, or preflight opt-out was needed. The
   rule that keeps it true: **`(payload)/layout.tsx` must never import the storefront stylesheet.**
-- ~~**pnpm 11 `minimumReleaseAge` gating.**~~ **Did not materialise** — see §1.5a. `pnpm-workspace.yaml`
+- ~~**pnpm 11 `minimumReleaseAge` gating.**~~ **Did not materialise** — see §1.7.1. `pnpm-workspace.yaml`
   is committed regardless, because pnpm 11's `allowBuilds` gate lives in it and two entries are required.
 - **Windows line endings.** `.gitattributes` normalizes to LF in the repository. Do not disable this;
   Playwright snapshots and generated Payload types are sensitive to it.
 
-## 1.5a Phase 2 — what the scaffold actually resolved to
+## 1.5 Blocked on the project owner
+
+The engineer cannot provision these. Each is needed from the phase named, and every one has a free or
+test tier — no paid service is required for local development.
+
+| Service | Needed from | What is required |
+|---|---|---|
+| ~~**Neon Postgres**~~ | ~~**Phase 2**~~ | **RESOLVED 2026-08-22.** Development branch provisioned, PostgreSQL 17.11. Phase 2 proved this lands earlier than Phase 5 — see **DEV-15** and §1.7.2. |
+| Cloudinary | Phase 8 | Cloud name, API key/secret, development folder or preset |
+| Algolia | Phase 12 | App ID, search-only key, admin key, development index |
+| Stripe | Phase 17 | **Test mode only.** Secret key, publishable key, webhook signing secret |
+| Resend | Phase 19 | API key; verified sending domain before any production claim |
+| PostHog / GA4 / Sentry | Phase 25 | Optional — the storefront must work fully without them |
+
+~~Phases 2, 3 and 4 need none of these.~~ **Corrected in Phase 2:** Phase 2 needs Neon. Phases 3 and 4
+need none of these. See **DEV-15**.
+
+## 1.6 Process notes
+
+- **The pre-Phase-1 consistency gate was executed**, as the plan requires, and its result is recorded in
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#3-cross-document-consistency-audit). Method: six
+  independent auditors swept the corpus along separate dimensions, then every claimed contradiction was
+  handed to an adversarial verifier instructed to refute it and to confirm both quotes existed verbatim.
+  22 of 24 verified claims were refuted as context-dissolving, misquoted, or jointly satisfiable. Outcome:
+  **the corpus is architecturally consistent** — 11 real contradictions, all documentation drift or IA
+  naming, none touching stack, business model, data ownership, or build order.
+- The gate produced **14 specification gaps** — requirements every document assumes and none defines. Each
+  is assigned to the phase that first needs it. See `docs/ARCHITECTURE.md` §3.2 and Section 2 below.
+- **The reference image is not authoritative** and several elements drawn in it are deliberately out of
+  scope. See **DEV-09**.
+
+---
+
+## 1.7 Phase 2 — Next.js + Payload scaffold
+
+Sections 1.1–1.6 are Phase 1's, organised by topic. From here the notes are organised by phase, one
+section each, so the document reads as history.
+
+### 1.7.1 What the scaffold actually resolved to
 
 **Install result.** `pnpm install --strict-peer-dependencies` resolves the full graph to **706 packages**
 from **16 direct dependencies** (7 runtime, 9 dev), exit 0, **no peer-dependency warnings**. This is the
@@ -174,7 +212,7 @@ into the committed `tsconfig.json`, and a subsequent build leaves the file byte-
 in `README.md` and `docs/` — 136 lines of pure padding churn with no content change. `*.md` is in
 `.prettierignore`; Markdown line endings and indentation stay governed by `.editorconfig`.
 
-## 1.5b Phase 2 — Gate 1 verification against a real database
+### 1.7.2 Gate 1, verified against a real database
 
 Neon development branch provisioned by the project owner. **PostgreSQL 17.11**, chosen over Neon's
 current default of 18 — see the note below. Direct (unpooled) endpoint, `sslmode=require`.
@@ -218,9 +256,24 @@ migration), the phases immediately ahead are precisely the migration-heavy ones,
 corpus needs a PG 18 feature. PG 17 is supported by Neon until 2029.
 
 **`sslmode=require` will change meaning in `pg` v9.** ~~Revisit at Phase 5 or at any `pg` major
-upgrade.~~ **Closed 2026-08-23 — the connection string now uses `verify-full` explicitly.** See §1.5c.
+upgrade.~~ **Closed 2026-08-23 — the connection string now uses `verify-full` explicitly.** See §1.7.4.
 
-## 1.5c Phase 2 — debt cleared before Phase 3
+### 1.7.3 Confirmation sweep of earlier deviations
+
+Required by the plan's append rule, step 4: *"Confirm that deviations recorded earlier and marked 'to be
+confirmed in Phase N' have in fact been confirmed."*
+
+| Entry | Due | Status after Phase 2 |
+|---|---|---|
+| **DEV-04** — GraphQL installed, never exposed | Phase 2 | **Confirmed.** `graphql@16.14.2` installed as a peer of `payload`; `@payloadcms/graphql` absent; the `api/graphql` and `api/graphql-playground` route files from the blank template were deliberately not created. Build manifest shows `/api/[...slug]` and no GraphQL route. |
+| **DEV-14** — substantial work uses feature branches | Phase 2 | **Confirmed.** Phase 2 ran on `phase-2-scaffold-next-payload`, not `main`. |
+| **DEV-18, DEV-19** | Phase 2 | **Recategorised** — they recorded compliance, not departure. Content moved to §1.7.5; the entries remain as tombstones so the identifiers stay stable. |
+| DEV-05 — Cloudinary first-party adapter | Phase 8 | Still pending. Not due. |
+| DEV-03 — order state as two axes | Phase 18 | Still pending. Not due. |
+
+No other deviation was due for confirmation in Phase 2.
+
+### 1.7.4 Debt cleared before Phase 3
 
 Three items closed on 2026-08-23, each from Phase 2's own edge-case list (§2.1c) rather than pulled
 forward from a later phase.
@@ -277,38 +330,26 @@ probe route in the `(frontend)` group:
 *Also note: a folder whose name starts with `_` is a Next.js private folder and is excluded from routing
 entirely. The first probe was named `_probe` and vanished from the manifest with no warning.*
 
-## 1.5 Blocked on the project owner
+### 1.7.5 Foundation choices that follow the plan rather than depart from it
 
-The engineer cannot provision these. Each is needed from the phase named, and every one has a free or
-test tier — no paid service is required for local development.
+Recorded here rather than in Section 2 because Section 2 is reserved for entries that **override** a
+canonical document, and neither of these does. Both are easy to mistake for oversights, which is why they
+are written down.
 
-| Service | Needed from | What is required |
-|---|---|---|
-| ~~**Neon Postgres**~~ | ~~**Phase 2**~~ | **RESOLVED 2026-08-22.** Development branch provisioned, PostgreSQL 17.11. Phase 2 proved this lands earlier than Phase 5 — see **DEV-15** and §1.5b. |
-| Cloudinary | Phase 8 | Cloud name, API key/secret, development folder or preset |
-| Algolia | Phase 12 | App ID, search-only key, admin key, development index |
-| Stripe | Phase 17 | **Test mode only.** Secret key, publishable key, webhook signing secret |
-| Resend | Phase 19 | API key; verified sending domain before any production claim |
-| PostHog / GA4 / Sentry | Phase 25 | Optional — the storefront must work fully without them |
+**No Lexical editor and no `sharp` at Phase 2.** Plan §2.1b: *"Add the Lexical rich-text package only if
+rich-text fields are used. Add `sharp` only if the chosen Payload media configuration needs local image
+manipulation."* Phase 2 defines one auth collection with neither a rich-text field nor a media
+collection, so `buildConfig` carries no `editor` key and no `sharp` key.
 
-~~Phases 2, 3 and 4 need none of these.~~ **Corrected in Phase 2:** Phase 2 needs Neon. Phases 3 and 4
-need none of these. See **DEV-15**.
+`@payloadcms/richtext-lexical` arrives in Phase 6 with the first rich-text field; `sharp` in Phase 8 with
+the media collection. **Consequence:** adding a `richText` field before installing Lexical fails at config
+build with a missing-editor error. That failure is the guardrail working, not a defect.
 
-## 1.6 Process notes
-
-- **The pre-Phase-1 consistency gate was executed**, as the plan requires, and its result is recorded in
-  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#3-cross-document-consistency-audit). Method: six
-  independent auditors swept the corpus along separate dimensions, then every claimed contradiction was
-  handed to an adversarial verifier instructed to refute it and to confirm both quotes existed verbatim.
-  22 of 24 verified claims were refuted as context-dissolving, misquoted, or jointly satisfiable. Outcome:
-  **the corpus is architecturally consistent** — 11 real contradictions, all documentation drift or IA
-  naming, none touching stack, business model, data ownership, or build order.
-- The gate produced **14 specification gaps** — requirements every document assumes and none defines. Each
-  is assigned to the phase that first needs it. See `docs/ARCHITECTURE.md` §3.2 and Section 2 below.
-- **The reference image is not authoritative** and several elements drawn in it are deliberately out of
-  scope. See **DEV-09**.
-
----
+**The `users` collection is scaffolding, not the account model.** Payload requires exactly one
+auth-enabled collection to own the admin panel. `src/payload/collections/Users.ts` is that and nothing
+more — `auth: true`, no roles, no custom fields, no access rules. Roles and access control are Phase 7
+(§7.1a–7.1e); customer accounts and the rest of the data model are Phase 6. **This file must not
+accumulate fields in the meantime.**
 
 # 2. Deviations
 
@@ -380,7 +421,7 @@ installed as an implementation detail of an approved stack technology, not as an
 `@payloadcms/graphql` is **not** installed and **no GraphQL API surface is exposed**. The plan's intent —
 no second API paradigm — is preserved.
 
-*Resolves D-02.*
+*Resolves D-02. **Confirmed in Phase 2** — installed as a peer, no `@payloadcms/graphql`, no GraphQL route file created, and the build manifest shows no GraphQL endpoint. See §1.7.3.*
 
 ---
 
@@ -543,6 +584,9 @@ header. The **tech stack** is the sole canonical stack — verified: every techn
   initial commit."* Subsequent substantial work uses feature branches.
 - **The repository is public**, by the project owner's explicit decision. See §1.1 for the consequence.
 
+***Confirmed in Phase 2*** — the branch rule held: Phase 2 ran on `phase-2-scaffold-next-payload`, not
+`main`. See §1.7.3.
+
 ---
 
 ### DEV-15 — Postgres is required from Phase 2, not Phase 5
@@ -625,34 +669,19 @@ guard** that makes this structurally impossible rather than merely unlikely.
 
 ---
 
-### DEV-18 — Phase 2 installs no Lexical editor and no `sharp`
+### DEV-18 — ~~Phase 2 installs no Lexical editor and no `sharp`~~ **MOVED TO NOTES §1.7.5**
 
-**Plan §2.1b says:** *"Add the Lexical rich-text package only if rich-text fields are used. Add `sharp`
-only if the chosen Payload media configuration needs local image manipulation."*
-
-**We do:** omit both. `buildConfig` carries no `editor` and no `sharp` key at Phase 2.
-
-**Why:** Phase 2 defines one auth collection with no rich-text field and no media collection, so neither
-package has anything to do yet. `@payloadcms/richtext-lexical` arrives in Phase 6 with the first rich-text
-field; `sharp` arrives in Phase 8 with the media collection.
-
-**Consequence:** adding a `richText` field before Phase 6 installs Lexical will fail at config build with a
-missing-editor error. That failure is the guardrail working, not a defect.
-
-*Affects Phases 2, 6, 8.*
+Not a deviation. Omitting Lexical and `sharp` at Phase 2 **follows** plan §2.1b; it does not depart from
+it, so it does not belong in a section defined as the entries that override the plan. The content moved
+intact to notes **§1.7.5**. The identifier is retained rather than reused.
 
 ---
 
-### DEV-19 — The Phase 2 `users` collection is scaffolding, not the account model
+### DEV-19 — ~~The Phase 2 `users` collection is scaffolding~~ **MOVED TO NOTES §1.7.5**
 
-Payload requires exactly one auth-enabled collection to own the admin panel. `src/payload/collections/Users.ts`
-is that collection and nothing more — `auth: true`, no roles, no custom fields, no access rules.
-
-Roles and access control are **Phase 7** (§7.1a–7.1e); customer accounts and the rest of the data model are
-**Phase 6**. This file must not accumulate fields in the meantime. Recorded because a minimal auth
-collection is easy to mistake for a considered account model.
-
-*Affects Phases 6 and 7.*
+Not a deviation either — no canonical document says otherwise; the plan simply never describes the
+minimum auth collection Payload requires to boot. That is a gap the notes fill, not an override. Content
+moved intact to notes **§1.7.5**. The identifier is retained rather than reused.
 
 ---
 
@@ -661,8 +690,9 @@ collection is easy to mistake for a considered account model.
 | Phase | Date | Added |
 |---|---|---|
 | Phase 1 — Workspace, repository and baseline | 2026-08-22 | Document created. Notes §1.1–§1.6; deviations DEV-01 through DEV-14. |
-| Phase 2 — Scaffold the Next.js + Payload application | 2026-08-22 | Note §1.5a (resolved install, pnpm 11 `allowBuilds`, native flat ESLint config, Next-generated agent files, tsconfig rewrite, Prettier scope). Closed two §1.4 hazards. Corrected §1.5: Neon moves from Phase 5 to Phase 2. Deviations **DEV-15** through **DEV-19**. |
-| Phase 2 — debt clearance | 2026-08-23 | Note §1.5c: empty-string env fallbacks replaced with fail-fast (§4.1b compliance), `sslmode` hardened to `verify-full` (closes the pg-v9 item), `/api` namespace sharing verified empirically and the collision rule recorded for Phase 6. |
-| Phase 2 — Gate 1 closed | 2026-08-22 | Note §1.5b: all six Gate 1 criteria verified against Neon PostgreSQL 17.11, full Payload auth round-trip, runtime confirmation of D-08, PG 17-vs-18 reasoning, `pg` v9 `sslmode` change. **DEV-17 withdrawn** — it contradicted plan §5.1d; push is development-only. Neon unblocked in §1.5. |
+| Phase 2 — scaffold | 2026-08-22 | Notes §1.7.1: resolved install (706 packages, 16 direct), pnpm 11 `allowBuilds`, native flat ESLint config, Next-generated agent files, tsconfig rewrite, Prettier scope. Closed both §1.4 hazards. Corrected §1.5 — Neon moves from Phase 5 to Phase 2. Deviations **DEV-15**, **DEV-16**. |
+| Phase 2 — Gate 1 closed | 2026-08-22 | Notes §1.7.2: all six Gate 1 criteria verified against Neon PostgreSQL 17.11, full Payload auth round-trip, runtime confirmation of D-08, the PG 17-vs-18 reasoning. **DEV-17 withdrawn** — it contradicted plan §5.1d; push is development-only. Neon unblocked in §1.5. |
+| Phase 2 — debt clearance | 2026-08-23 | Notes §1.7.4: empty-string env fallbacks replaced with fail-fast (§4.1b), `sslmode` hardened to `verify-full` (closes the pg-v9 item), `/api` namespace sharing verified empirically and the collision rule recorded for Phase 6. |
+| Phase 2 — append audit | 2026-08-23 | Structural corrections to this document. Phase 2 notes renumbered from `1.5a–1.5c`, which sat *before* §1.5 and implied they subdivided it, to **§1.7** with subsections. Append log put back in date order. Step 4 of the append rule carried out and recorded as **§1.7.3** — **DEV-04** and **DEV-14** confirmed; DEV-05 (Phase 8) and DEV-03 (Phase 18) still pending, not due. **DEV-18** and **DEV-19** moved to §1.7.5: both recorded compliance, not departure, and did not belong in Section 2. |
 
 > **Append this table, and the sections above it, at the end of every phase.**
