@@ -43,6 +43,60 @@
 
 # REQUIRED CONTEXT — READ BEFORE DOING ANYTHING
 
+## REQUIRED IMPLEMENTATION NOTES AND DEVIATIONS — HIGHEST PRECEDENCE
+
+Read this file before anything else in this plan:
+
+**`NORTH01_Implementation_Notes_and_Deviations.md`**
+
+### What it is
+
+It is the living record of what was actually discovered, decided, and changed while building NORTH / 01.
+
+It has two parts:
+
+- **Notes** — facts established during implementation that the canonical documents do not contain:
+  verified environment state, resolved package versions and the evidence for each pin, integration
+  findings, known hazards, and the items blocked on the project owner rather than the engineer.
+- **Deviations** — every place where the implementation departs from what a canonical document actually
+  says, each stating what the document says, what is done instead, why, and which document the precedence
+  hierarchy makes authoritative.
+
+### It overrides this plan
+
+**Where `NORTH01_Implementation_Notes_and_Deviations.md` contradicts this implementation plan — or the
+tech stack, the feature matrix, the website-structure document, or the visual guide — the notes and
+deviations document wins.**
+
+It sits above every other document in the precedence hierarchy, ahead of this plan. The reason is
+that its statements were verified against the real toolchain, the real package registry, and the real
+codebase, whereas the canonical documents were written in advance of implementation. When this plan
+states something that implementation has since proven wrong, unavailable, or incomplete, the correction
+lives there and is binding.
+
+Do not re-litigate a recorded deviation. Do not silently reimplement something this plan describes when
+the notes document records that it was changed. If a recorded deviation appears mistaken, correct it in
+the notes document with the new evidence — do not quietly revert to the plan's text.
+
+### It must be appended after every implementation phase
+
+**Appending this document is part of the phase gate, not optional cleanup.**
+
+At the end of every implementation phase, before that phase is considered complete:
+
+1. Add any new **notes** the phase produced — versions resolved, hazards found, decisions forced by
+   reality, dependencies discovered, anything a future engineer would need and could not infer from the
+   code.
+2. Add any new **deviations** the phase introduced, in the established format: what the document says,
+   what was done instead, why, which document is authoritative, and which phases it affects.
+3. Update the append log with the phase, the date, and what was added.
+4. Confirm that deviations recorded earlier and marked *"to be confirmed in Phase N"* have in fact been
+   confirmed, and update them.
+
+A phase that changed behaviour without updating `NORTH01_Implementation_Notes_and_Deviations.md` is
+**not finished**, regardless of whether its code compiles, its tests pass, or its acceptance criteria are
+otherwise met. Treat a missing append the same way you would treat a failing build.
+
 ## REQUIRED BUSINESS-MODEL CHECK — ONLINE-ONLY DTC
 
 Before implementing any phase, verify that the work is compatible with the online-only constraint. If a requirement can be interpreted as physical retail, resolve it toward remote ecommerce fulfillment or mark it out of scope. Never add physical-store concepts merely because they are common in ecommerce templates.
