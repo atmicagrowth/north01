@@ -79,6 +79,18 @@ Tailwind chunk is never referenced by an admin document. **Two invariants preser
 
 No GraphQL routes are generated; see **D-02**.
 
+### The `/api` namespace is shared
+
+Payload's REST catch-all is `(payload)/api/[...slug]`, but the application also needs its own handlers
+there — the Stripe webhook in Phase 17, for one. Both coexist: a **static segment beats the catch-all**,
+and Payload keeps serving everything else. Verified in Phase 2 with a real probe route, in the build
+manifest and at runtime. No `routes.api` override or second API prefix is needed.
+
+**The rule that follows.** A storefront handler under `/api/` shadows any Payload collection endpoint of
+the same name — `(frontend)/api/users/route.ts` would silently take over `/api/users`. Keep app-owned
+handlers on names no collection would claim (`/api/stripe/*`, `/api/webhooks/*`), and **check new
+collection slugs against storefront `/api/` routes in Phase 6**.
+
 ---
 
 ## 2. Rules that do not bend
@@ -340,10 +352,19 @@ default access control working as intended. Details and evidence: notes §1.5b.
 **Next: Phase 3 — design system and UI foundation.** It owes the token layer (**G-12**, **G-14**), the
 type scale, the core primitives, and the global shell. It needs no third-party account and no database.
 
-**Carried into later phases as explicit debt:**
+**Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
+
+| Was | Now |
+|---|---|
+| `process.env.X \|\| ''` for `DATABASE_URL` and `PAYLOAD_SECRET` | throws at config load with an actionable message — the silent substitution §4.1b forbids is gone |
+| `sslmode=require`, which `pg` v9 will redefine as *skip verification* | `sslmode=verify-full`, behaviour-neutral today and immune to the change |
+| Unknown whether the app can own routes under Payload's `/api` | verified it can; the collision rule is recorded for Phase 6 |
+
+**Genuinely owed by later phases** — sequencing, not debt. Each has a phase that will do it:
 
 | Owed | Phase | Why |
 |---|---|---|
+| Typed, Zod-validated environment module | 4 | Plan §4.1a. Phase 2 only removed the landmine |
 | Environment guard so `pnpm dev` cannot push schema to a non-development database | 4 | **D-10** |
 | Migration baseline and the discipline around it | 5 | Plan §5.1c–d |
-| `sslmode=require` → `verify-full` when `pg` reaches v9 | 5 or any `pg` major | Semantics change; see notes §1.5b |
+| CI running typecheck, lint, tests and build | 27 | Plan §27.1f |

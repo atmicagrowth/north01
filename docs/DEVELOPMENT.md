@@ -36,9 +36,12 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   anyone else is using. The storefront builds and runs without it, but `/admin` and `/api/*` return
   HTTP 500 until it is set — Payload connects during `payload.init()`.
 
-> **Use PostgreSQL 17 when creating the Neon project, not the default 18**, and use the **direct**
-> (non-pooled) endpoint locally. A Neon project's major version cannot be changed afterwards. Reasoning:
-> notes §1.5b.
+> **Use PostgreSQL 17 when creating the Neon project, not the default 18**, use the **direct**
+> (non-pooled) endpoint locally, and end the string with **`sslmode=verify-full`** rather than
+> `sslmode=require` — `pg` v9 redefines `require` as *skip certificate verification*. A Neon project's
+> major version cannot be changed afterwards. Reasoning: notes §1.5b and §1.5c.
+>
+> Missing either variable now fails immediately with a named error rather than starting in a broken state.
 >
 > **In development, Payload pushes schema changes straight into whatever `DATABASE_URL` points at.**
 > Point it at a development branch and nothing else. See `docs/ARCHITECTURE.md` → **D-10**.
@@ -93,6 +96,13 @@ Two things must stay true, or the Payload admin panel starts inheriting Tailwind
 2. No shared `src/app/layout.tsx` is added above the two route groups.
 
 See `docs/ARCHITECTURE.md` → **D-08**.
+
+**`/api/` is shared with Payload.** The app can own routes there — a static segment beats Payload's
+catch-all — but a handler at `(frontend)/api/<name>` shadows the Payload collection endpoint of the same
+name. Keep app handlers on names no collection would claim, such as `/api/stripe/*`.
+
+Also: a folder starting with `_` is a Next.js *private folder* and is excluded from routing with no
+warning. `api/_webhook/route.ts` will simply never exist.
 
 ## Generated files that are committed
 

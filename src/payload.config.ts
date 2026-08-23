@@ -10,6 +10,26 @@ const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
 
 /**
+ * Plan §4.1b: a missing server secret must fail clearly rather than be silently replaced
+ * with a fake value. `process.env.X || ''` is exactly the substitution it forbids - an empty
+ * PAYLOAD_SECRET would sign session tokens with nothing at all.
+ *
+ * This is the Phase 2 minimum, not the environment system. The typed, Zod-validated module
+ * that separates browser-safe from server-only variables is Phase 4 (§4.1a), and it replaces
+ * this. The variable name is safe to include here because this throws at config load, server
+ * side - it never reaches an API response.
+ */
+function requireServerEnv(name: 'DATABASE_URL' | 'PAYLOAD_SECRET'): string {
+  const value = process.env[name]
+  if (!value) {
+    throw new Error(
+      `${name} is not set. Copy .env.example to .env and fill it in; see docs/DEVELOPMENT.md.`,
+    )
+  }
+  return value
+}
+
+/**
  * Payload runs embedded inside this Next.js application - one deployable, not a separate
  * backend. See docs/ARCHITECTURE.md.
  *
@@ -34,7 +54,7 @@ export default buildConfig({
 
   db: postgresAdapter({
     pool: {
-      connectionString: process.env.DATABASE_URL || '',
+      connectionString: requireServerEnv('DATABASE_URL'),
     },
     // Plan §5.1d: Drizzle's push workflow for the development sandbox, committed
     // migrations for every other environment. Stated explicitly rather than left to the
@@ -46,9 +66,8 @@ export default buildConfig({
     migrationDir: path.resolve(dirname, 'payload/migrations'),
   }),
 
-  // Payload signs and encrypts with this. It is server-only and must never be exposed.
-  // Formal environment validation arrives in Phase 4.
-  secret: process.env.PAYLOAD_SECRET || '',
+  // Payload signs and encrypts with this. Server-only; must never be exposed.
+  secret: requireServerEnv('PAYLOAD_SECRET'),
 
   typescript: {
     outputFile: path.resolve(dirname, 'payload-types.ts'),

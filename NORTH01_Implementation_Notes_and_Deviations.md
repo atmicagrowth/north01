@@ -217,10 +217,65 @@ project's major version cannot be changed after creation** (it requires a new pr
 migration), the phases immediately ahead are precisely the migration-heavy ones, and nothing in the
 corpus needs a PG 18 feature. PG 17 is supported by Neon until 2029.
 
-**`sslmode=require` will change meaning in `pg` v9.** `pg@8.20.0` warns that it currently treats
-`require` as `verify-full`, and that v9 will adopt libpq semantics (weaker). Harmless today. When `pg`
-reaches v9, the connection string must become `sslmode=verify-full` to keep the present behaviour.
-*(Revisit at Phase 5 or at any `pg` major upgrade.)*
+**`sslmode=require` will change meaning in `pg` v9.** ~~Revisit at Phase 5 or at any `pg` major
+upgrade.~~ **Closed 2026-08-23 — the connection string now uses `verify-full` explicitly.** See §1.5c.
+
+## 1.5c Phase 2 — debt cleared before Phase 3
+
+Three items closed on 2026-08-23, each from Phase 2's own edge-case list (§2.1c) rather than pulled
+forward from a later phase.
+
+**1. `process.env.X || ''` removed — it was the silent substitution §4.1b forbids.**
+
+`payload.config.ts` defaulted both `DATABASE_URL` and `PAYLOAD_SECRET` to `''`. Plan §4.1b is explicit:
+*"Do not silently substitute fake values"*, and Phase 2's edge-case list names *"Environment variables
+accessed without availability."* An empty `PAYLOAD_SECRET` is the serious half — Payload would sign
+session tokens with nothing.
+
+Both now go through a `requireServerEnv` helper that throws at config load. Verified by removing each
+variable in turn:
+
+```
+Error: PAYLOAD_SECRET is not set. Copy .env.example to .env and fill it in; see docs/DEVELOPMENT.md.
+Error: DATABASE_URL is not set. Copy .env.example to .env and fill it in; see docs/DEVELOPMENT.md.
+```
+
+This is six lines, not an environment system. **Phase 4 still owes the typed Zod module** (§4.1a) that
+separates browser-safe from server-only variables; this only removes the landmine in the meantime. The
+variable name appears in the message safely because it throws server-side at config load and never
+reaches an API response, as §4.1b requires.
+
+**2. `sslmode=require` → `sslmode=verify-full`.**
+
+`pg@8.20.0` warns that it currently treats `require` as `verify-full` and that **pg 9 will adopt libpq
+semantics, where `require` skips certificate verification.** Left alone, a routine `pg` major upgrade
+would silently downgrade TLS on the connection carrying customer and order data. Spelling out
+`verify-full` today is behaviour-neutral — verified connecting against Neon — and immune to that change.
+Applied to `.env` and documented in `.env.example`. **The pg-v9 debt item is closed, not deferred.**
+
+**3. The `/api` namespace is shared with Payload — verified, not assumed.**
+
+Payload's REST catch-all lives at `src/app/(payload)/api/[...slug]`, and Phase 17 needs a Stripe webhook
+at `/api/stripe/webhook`. Whether those can coexist was an open structural question. Tested with a real
+probe route in the `(frontend)` group:
+
+| | |
+|---|---|
+| Build manifest | both registered — `/api/stripe/webhook` **and** `/api/[...slug]` |
+| `GET /api/stripe/webhook` | 200, served by the storefront route |
+| `GET /api/users` | 403, still served by Payload's catch-all |
+
+**A static segment beats the catch-all, and both keep working.** Phase 17 needs no special routing, no
+`routes.api` override, and no second API prefix. Probe removed after the test.
+
+> **The rule this creates.** A storefront route handler under `/api/` shadows any Payload collection
+> endpoint of the same name. `src/app/(frontend)/api/users/route.ts` would silently take over
+> `/api/users`. **Phase 6 must check new collection slugs against storefront routes under `/api/`, and
+> vice versa.** Keep app-owned handlers on names no collection would ever claim — `/api/stripe/*`,
+> `/api/webhooks/*`.
+
+*Also note: a folder whose name starts with `_` is a Next.js private folder and is excluded from routing
+entirely. The first probe was named `_probe` and vanished from the manifest with no warning.*
 
 ## 1.5 Blocked on the project owner
 
@@ -607,6 +662,7 @@ collection is easy to mistake for a considered account model.
 |---|---|---|
 | Phase 1 — Workspace, repository and baseline | 2026-08-22 | Document created. Notes §1.1–§1.6; deviations DEV-01 through DEV-14. |
 | Phase 2 — Scaffold the Next.js + Payload application | 2026-08-22 | Note §1.5a (resolved install, pnpm 11 `allowBuilds`, native flat ESLint config, Next-generated agent files, tsconfig rewrite, Prettier scope). Closed two §1.4 hazards. Corrected §1.5: Neon moves from Phase 5 to Phase 2. Deviations **DEV-15** through **DEV-19**. |
+| Phase 2 — debt clearance | 2026-08-23 | Note §1.5c: empty-string env fallbacks replaced with fail-fast (§4.1b compliance), `sslmode` hardened to `verify-full` (closes the pg-v9 item), `/api` namespace sharing verified empirically and the collision rule recorded for Phase 6. |
 | Phase 2 — Gate 1 closed | 2026-08-22 | Note §1.5b: all six Gate 1 criteria verified against Neon PostgreSQL 17.11, full Payload auth round-trip, runtime confirmation of D-08, PG 17-vs-18 reasoning, `pg` v9 `sslmode` change. **DEV-17 withdrawn** — it contradicted plan §5.1d; push is development-only. Neon unblocked in §1.5. |
 
 > **Append this table, and the sections above it, at the end of every phase.**
