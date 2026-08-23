@@ -1,0 +1,7 @@
+/*
+ * Payload admin overrides.
+ *
+ * This route group has its own root layout and deliberately does NOT import the
+ * storefront's Tailwind entrypoint, so Tailwind Preflight cannot reach the admin panel.
+ * Keep it that way - see docs/STACK_VERSIONS.md §5.4.
+ */

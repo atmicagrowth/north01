@@ -117,14 +117,62 @@ itself. Resolution in **D-02**.
 
 Recorded now, to be resolved by the phase that meets them.
 
-- **Tailwind v4 preflight vs. the Payload admin panel.** Payload's admin ships its own stylesheet.
-  Tailwind's global preflight will leak into `/admin` unless scoped. Treat the Gate 1 criterion "Payload
-  admin loads" as "Payload admin loads **and renders correctly**". *(Phase 2)*
-- **pnpm 11 `minimumReleaseAge` gating.** pnpm 11 writes recently-published packages into a
-  `minimumReleaseAgeExclude` list in `pnpm-workspace.yaml` during resolution. That file is generated and
-  **must be committed**, or CI will resolve differently from local. *(Phase 2)*
+- ~~**Tailwind v4 preflight vs. the Payload admin panel.**~~ **Closed in Phase 2 — it cannot occur.**
+  The two route groups have separate root layouts, so Next.js builds them as separate CSS graphs.
+  Verified against the production build: the Tailwind chunk is referenced by the storefront document and
+  by no admin bundle. No `@source` scoping, `important` selector, or preflight opt-out was needed. The
+  rule that keeps it true: **`(payload)/layout.tsx` must never import the storefront stylesheet.**
+- ~~**pnpm 11 `minimumReleaseAge` gating.**~~ **Did not materialise** — see §1.5a. `pnpm-workspace.yaml`
+  is committed regardless, because pnpm 11's `allowBuilds` gate lives in it and two entries are required.
 - **Windows line endings.** `.gitattributes` normalizes to LF in the repository. Do not disable this;
   Playwright snapshots and generated Payload types are sensitive to it.
+
+## 1.5a Phase 2 — what the scaffold actually resolved to
+
+**Install result.** `pnpm install --strict-peer-dependencies` resolves the full graph to **706 packages**
+from **16 direct dependencies** (7 runtime, 9 dev), exit 0, **no peer-dependency warnings**. This is the
+real number; the 825 figure in §1.2 came from a lockfile-only dry run that included packages later phases
+will add. Plan §2.1a's acceptance criterion *"No unresolved peer-dependency warnings"* is met.
+
+**The foundation deliberately installs 16 packages, not the stack list.** Per plan §2.1b, deferred and
+*not* installed at Phase 2: `@payloadcms/richtext-lexical` (Phase 6, when rich-text fields first exist),
+`sharp` (Phase 8, with the media collection), and every supporting library in §1.2. `graphql@16.14.2` is
+present only because it is a hard peer of `payload` — see **DEV-04**.
+
+**pnpm 11 gates build scripts, and two must be allowed.** pnpm 11 denies package build scripts by default
+and writes an `allowBuilds` map into `pnpm-workspace.yaml`. Two entries are required, not optional:
+
+| Package | Why it must be allowed |
+|---|---|
+| `esbuild` | Payload's config loader compiles `payload.config.ts` through esbuild; its postinstall downloads the platform-native binary. Without it the Payload CLI and `/admin` cannot load the config at all. |
+| `unrs-resolver` | The module resolver behind `eslint-plugin-import-x`, which `eslint-config-next` depends on. Same native-binary postinstall. |
+
+`pnpm-workspace.yaml` is committed for this reason. Note the key is **`allowBuilds`** in pnpm 11, not the
+`onlyBuiltDependencies` used by pnpm 9/10.
+
+**`minimumReleaseAge` gating did not materialise.** §1.4 anticipated pnpm 11 writing a
+`minimumReleaseAgeExclude` list. With the pinned versions it did not — no such key was generated. The
+hazard is closed for now; re-check when adding recently-published packages in later phases.
+
+**`eslint-config-next@16.3.2` ships native flat config.** It exports `Linter.Config[]` arrays from
+`./core-web-vitals` and `./typescript`, so `eslint.config.mjs` composes them directly. **No `FlatCompat`
+shim and no `@eslint/eslintrc` dependency are needed** — one fewer dependency than the pattern most
+Next 15-era guidance still shows.
+
+**Next.js 16 generates `AGENTS.md` and `CLAUDE.md` on every `next dev`.** `next dev` writes an agent-rules
+block delimited by `<!-- BEGIN:nextjs-agent-rules -->` / `<!-- END:nextjs-agent-rules -->` and re-creates
+it if deleted, so deleting it only guarantees a permanently dirty tree. Both files are committed. Project
+content is appended **below** the END marker, where Next does not touch it, and points at this document's
+precedence hierarchy. It can be turned off with `agentRules: false` in `next.config.mjs`; it is left on
+deliberately because the pointer to `node_modules/next/dist/docs/` is genuinely useful on a major this new.
+
+**Next.js rewrites `tsconfig.json` during `build` unless it already agrees.** The first build reformatted
+the file and forced `jsx: "react-jsx"` plus `.next/dev/types/**/*.ts` in `include`. Both are now written
+into the committed `tsconfig.json`, and a subsequent build leaves the file byte-identical — verified.
+
+**Prettier is scoped to code, not Markdown.** Running it across `*.md` reflowed every hand-authored table
+in `README.md` and `docs/` — 136 lines of pure padding churn with no content change. `*.md` is in
+`.prettierignore`; Markdown line endings and indentation stay governed by `.editorconfig`.
 
 ## 1.5 Blocked on the project owner
 
@@ -133,14 +181,15 @@ test tier — no paid service is required for local development.
 
 | Service | Needed from | What is required |
 |---|---|---|
-| **Neon Postgres** | **Phase 5** | Development database / branch connection string. **This is the first hard blocker.** |
+| **Neon Postgres** | **Phase 2** | Development database / branch connection string. **This is the first hard blocker, and Phase 2 proved it lands earlier than this table originally said** — see **DEV-15**. |
 | Cloudinary | Phase 8 | Cloud name, API key/secret, development folder or preset |
 | Algolia | Phase 12 | App ID, search-only key, admin key, development index |
 | Stripe | Phase 17 | **Test mode only.** Secret key, publishable key, webhook signing secret |
 | Resend | Phase 19 | API key; verified sending domain before any production claim |
 | PostHog / GA4 / Sentry | Phase 25 | Optional — the storefront must work fully without them |
 
-Phases 2, 3 and 4 need none of these.
+~~Phases 2, 3 and 4 need none of these.~~ **Corrected in Phase 2:** Phase 2 needs Neon. Phases 3 and 4
+need none of these. See **DEV-15**.
 
 ## 1.6 Process notes
 
@@ -393,10 +442,114 @@ header. The **tech stack** is the sole canonical stack — verified: every techn
 
 ---
 
+### DEV-15 — Postgres is required from Phase 2, not Phase 5
+
+**The plan implies, and this document's own §1.5 originally stated:** the database is first needed in
+Phase 5, and *"Phases 2, 3 and 4 need none of these."*
+
+**We found:** Phase 2's Gate 1 requires *"Payload admin loads"*. Payload connects to the database inside
+`payload.init()`, which runs when `/admin` renders. With no reachable Postgres both `/admin` and
+`/api/*` return **HTTP 500** with `cannot connect to Postgres … ECONNREFUSED`. Verified against the
+running application, not inferred.
+
+**We do:** treat a Neon development connection string as a **Phase 2** prerequisite. `§1.5` is corrected
+above.
+
+**What is unaffected:** `pnpm build`, `pnpm typecheck`, `pnpm lint`, `payload generate:importmap` and the
+storefront route all succeed with no database. `/admin` is a dynamic route, so the production build never
+prerenders it and never connects. The database is needed to *run* the admin panel, not to build it.
+
+**Rejected:** a local Postgres install or a dev-only PGlite wire-protocol shim. Both add a local
+dependency the tech stack does not approve, to substitute for a free Neon branch that Phase 5 requires
+anyway.
+
+*Affects Phases 2 and 5.*
+
+---
+
+### DEV-16 — Route-group topology, and how the admin panel is insulated
+
+**Plan §1.3 fixes the directory boundaries** and its Phase 2 edge-case list warns of *"Payload admin route
+colliding with storefront route groups."*
+
+**We do:** two sibling route groups under `src/app/`, each with **its own root layout** and no shared
+parent layout:
+
+```text
+src/app/(frontend)/   storefront - imports globals.css (Tailwind)
+src/app/(payload)/    admin + REST API - imports @payloadcms/next/css + custom.css only
+```
+
+**Why this exact shape:** it is Payload's officially supported structure, and it resolves the Tailwind
+preflight hazard structurally rather than by patching CSS. Separate root layouts mean separate CSS graphs,
+so Tailwind is physically absent from `/admin` — confirmed against the production build's per-route
+stylesheet references, not assumed.
+
+**The invariant to preserve:** `(payload)/layout.tsx` must never import the storefront stylesheet, and no
+shared `src/app/layout.tsx` may be introduced above the two groups. Doing either re-opens the hazard.
+
+**Consequence to keep in mind:** navigating between the groups is a full document load, not a client
+transition. The one link from the storefront to `/admin` is a plain anchor for that reason.
+
+*Affects Phase 2 onward.*
+
+---
+
+### DEV-17 — Drizzle's schema push is disabled from the start
+
+**Plan §5.1c** requires migration discipline, but `push` defaults to **on in development** for
+`@payloadcms/db-postgres`, which silently syncs schema changes straight into the database.
+
+**We do:** set `push: false` in `payload.config.ts` from Phase 2, and point `migrationDir` at
+`src/payload/migrations`.
+
+**Why:** the plan makes explicit, reviewable migrations the only route schema takes to a database. Leaving
+the default on for three phases and switching it off in Phase 5 would mean the Phase 5 migration baseline
+is generated against a schema that was never reviewed.
+
+**Consequence:** from Phase 6 onward, a schema change is not live until a migration is generated and run.
+This is intended.
+
+*Affects Phases 2, 5, 6.*
+
+---
+
+### DEV-18 — Phase 2 installs no Lexical editor and no `sharp`
+
+**Plan §2.1b says:** *"Add the Lexical rich-text package only if rich-text fields are used. Add `sharp`
+only if the chosen Payload media configuration needs local image manipulation."*
+
+**We do:** omit both. `buildConfig` carries no `editor` and no `sharp` key at Phase 2.
+
+**Why:** Phase 2 defines one auth collection with no rich-text field and no media collection, so neither
+package has anything to do yet. `@payloadcms/richtext-lexical` arrives in Phase 6 with the first rich-text
+field; `sharp` arrives in Phase 8 with the media collection.
+
+**Consequence:** adding a `richText` field before Phase 6 installs Lexical will fail at config build with a
+missing-editor error. That failure is the guardrail working, not a defect.
+
+*Affects Phases 2, 6, 8.*
+
+---
+
+### DEV-19 — The Phase 2 `users` collection is scaffolding, not the account model
+
+Payload requires exactly one auth-enabled collection to own the admin panel. `src/payload/collections/Users.ts`
+is that collection and nothing more — `auth: true`, no roles, no custom fields, no access rules.
+
+Roles and access control are **Phase 7** (§7.1a–7.1e); customer accounts and the rest of the data model are
+**Phase 6**. This file must not accumulate fields in the meantime. Recorded because a minimal auth
+collection is easy to mistake for a considered account model.
+
+*Affects Phases 6 and 7.*
+
+---
+
 # 3. Append log
 
 | Phase | Date | Added |
 |---|---|---|
 | Phase 1 — Workspace, repository and baseline | 2026-08-22 | Document created. Notes §1.1–§1.6; deviations DEV-01 through DEV-14. |
+| Phase 2 — Scaffold the Next.js + Payload application | 2026-08-22 | Note §1.5a (resolved install, pnpm 11 `allowBuilds`, native flat ESLint config, Next-generated agent files, tsconfig rewrite, Prettier scope). Closed two §1.4 hazards. Corrected §1.5: Neon moves from Phase 5 to Phase 2. Deviations **DEV-15** through **DEV-19**. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

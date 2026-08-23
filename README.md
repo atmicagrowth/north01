@@ -67,5 +67,10 @@ When a material decision changes, update the affected documents and re-run the c
 
 ## Status
 
-**Phase 1 — Workspace, repository and baseline.** The application has not been scaffolded yet.
-See `docs/ARCHITECTURE.md` for the current phase and what comes next.
+**Phase 2 — Scaffold the Next.js + Payload application.** The application shell runs: Next.js 16.3.2 with
+Payload 3.88.0 embedded in the same deployable, TypeScript strict, ESLint at zero warnings, Prettier, and
+Tailwind v4. `pnpm build`, `pnpm typecheck` and `pnpm lint` all pass. No storefront feature is built yet.
+
+Running the Payload admin needs a `DATABASE_URL` — see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the phase gate and what comes next.

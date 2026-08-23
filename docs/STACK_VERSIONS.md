@@ -5,7 +5,7 @@
 > **Rule:** versions here are chosen from *verified compatibility evidence*, never from the npm `latest` tag.
 > Every pin below is justified. Re-verify before any core upgrade and re-run the Gate 1 checks.
 
-**Verified:** 2026-08-22 · **Verification method:** npm registry metadata (`npm view <pkg> peerDependencies engines`) plus a
+**Verified:** 2026-08-22 (pins) · **Installed and proven:** 2026-08-22, Phase 2 · **Verification method:** npm registry metadata (`npm view <pkg> peerDependencies engines`) plus a
 `pnpm install --lockfile-only --strict-peer-dependencies` full-graph resolution dry-run.
 
 ---
@@ -99,17 +99,66 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
    `minimumReleaseAgeExclude` list in `pnpm-workspace.yaml` during resolution. This file is generated and
    must be committed so CI resolves identically.
 
-4. **Tailwind v4 preflight vs. the Payload admin route.** Payload's admin panel ships its own stylesheet.
-   Tailwind's global preflight must be scoped so it does not leak into `/admin`. To be verified during
-   Phase 2 Gate 1 (acceptance criterion: "Payload admin loads" — *and looks correct*).
+4. **Tailwind v4 preflight vs. the Payload admin route — resolved in Phase 2, and it cannot occur.**
+   The storefront and the admin are separate route groups with separate root layouts, so Next.js builds
+   them as separate CSS graphs. Verified against the production build: the Tailwind chunk is referenced by
+   the storefront document and by no admin bundle. No scoping directive was needed. The invariant that
+   keeps this true is that `src/app/(payload)/layout.tsx` never imports the storefront stylesheet — see
+   `docs/ARCHITECTURE.md` → **D-08**.
+
+5. **Postgres is needed from Phase 2, not Phase 5.** Payload connects during `payload.init()`, so `/admin`
+   and `/api/*` return HTTP 500 without a reachable database. Build, typecheck, lint and the storefront
+   are unaffected. See **DEV-15**.
 
 ## 6. Resolution proof
 
-Full-graph dry-run with the §2 + §3 pins:
+**Phase 2 — real install, not a dry run.**
 
 ```
-pnpm install --lockfile-only --strict-peer-dependencies
-→ resolved 825 packages, done. Exit 0. No unmet peer dependencies.
+pnpm install --strict-peer-dependencies
+→ 706 packages resolved from 16 direct dependencies. Exit 0. No unmet peer dependencies.
 ```
 
-This satisfies plan §2.1a acceptance criterion *"No unresolved peer-dependency warnings."*
+Plan §2.1a's acceptance criterion *"No unresolved peer-dependency warnings"* is met.
+
+> The 825 figure previously recorded here came from a `--lockfile-only` dry run that included packages
+> later phases will add. 706 is what the Phase 2 foundation actually resolves to.
+
+### What is installed at Phase 2
+
+Plan §2.1b: *"Do not install the entire final dependency list on day one."* Sixteen direct dependencies:
+
+| Runtime | | Dev | |
+|---|---|---|---|
+| `next` | 16.3.2 | `typescript` | 5.9.3 |
+| `react` / `react-dom` | 19.2.8 | `eslint` | 9.39.5 |
+| `payload` | 3.88.0 | `eslint-config-next` | 16.3.2 |
+| `@payloadcms/next` | 3.88.0 | `prettier` | 3.9.6 |
+| `@payloadcms/db-postgres` | 3.88.0 | `tailwindcss` / `@tailwindcss/postcss` | 4.3.3 |
+| `graphql` | 16.14.2 | `@types/node` | 22.20.1 |
+| | | `@types/react` / `@types/react-dom` | 19.2.18 / 19.2.4 |
+
+`@types/node` tracks the **installed runtime major (22.x)**, not the `latest` tag (26.2.0), so the types
+describe the Node that actually runs the code.
+
+**Deliberately not installed yet:** `@payloadcms/richtext-lexical` (Phase 6 — no rich-text field exists),
+`sharp` (Phase 8 — no media collection exists), and everything in §4. See **DEV-18**.
+
+### pnpm 11 build-script gating
+
+pnpm 11 denies package build scripts by default and records allowances under **`allowBuilds`** in
+`pnpm-workspace.yaml` — note the key changed from pnpm 9/10's `onlyBuiltDependencies`. Two are required:
+
+- **`esbuild`** — Payload's config loader compiles `payload.config.ts` through it; the postinstall fetches
+  the native binary. Without it neither the Payload CLI nor `/admin` can load the config.
+- **`unrs-resolver`** — the resolver behind `eslint-plugin-import-x`, a transitive dependency of
+  `eslint-config-next`. Same native-binary postinstall.
+
+`pnpm-workspace.yaml` must stay committed so CI resolves identically. The anticipated
+`minimumReleaseAgeExclude` list (§5.3) was **not** generated with these pins.
+
+### ESLint flat config needs no shim
+
+`eslint-config-next@16.3.2` exports native `Linter.Config[]` arrays from `./core-web-vitals` and
+`./typescript`. `eslint.config.mjs` spreads them directly — **no `FlatCompat`, no `@eslint/eslintrc`**,
+contrary to most Next 15-era guidance.

@@ -21,26 +21,85 @@ If pnpm is missing: `corepack enable && corepack prepare pnpm@latest --activate`
 git clone <repository-url>
 cd "apparel store"
 pnpm install
-cp .env.example .env          # (pending — Phase 4)
-pnpm dev                      # (pending — Phase 2)
+cp .env.example .env
+```
+
+Then fill in `.env`. Two variables, and the app needs both:
+
+```bash
+# 32 random bytes, hex. Server-only.
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+- `PAYLOAD_SECRET` — the value from that command.
+- `DATABASE_URL` — a **Neon development branch** connection string. Never production, never a branch
+  anyone else is using. The storefront builds and runs without it, but `/admin` and `/api/*` return
+  HTTP 500 until it is set — Payload connects during `payload.init()`.
+
+```bash
+pnpm dev
 ```
 
 - Storefront → http://localhost:3000
-- Payload admin → http://localhost:3000/admin *(pending — Phase 2)*
+- Payload admin → http://localhost:3000/admin
+
+The first visit to `/admin` prompts you to create the first user.
+
+> `pnpm install` runs postinstall scripts for `esbuild` and `unrs-resolver` only — pnpm 11 denies build
+> scripts by default and those two are allowed explicitly in `pnpm-workspace.yaml`. Both fetch native
+> binaries and both are required. If you see `ERR_PNPM_IGNORED_BUILDS`, that file did not get committed.
 
 ## Scripts
-
-*(pending — defined in Phase 2)* The project will expose at minimum:
 
 | Script | Purpose |
 |---|---|
 | `pnpm dev` | Local development server |
 | `pnpm build` | Production build |
-| `pnpm typecheck` | TypeScript, no emit |
-| `pnpm lint` | ESLint |
-| `pnpm format` | Prettier write |
-| `pnpm test` | Vitest unit/component tests |
-| `pnpm test:e2e` | Playwright |
+| `pnpm start` | Serve the production build |
+| `pnpm typecheck` | TypeScript, no emit, strict |
+| `pnpm lint` | ESLint — **fails on warnings** (`--max-warnings 0`) |
+| `pnpm lint:fix` | ESLint with autofix |
+| `pnpm format` | Prettier write (code only; Markdown is excluded) |
+| `pnpm format:check` | Prettier check — use this in CI |
+| `pnpm generate:types` | Regenerate `src/payload-types.ts` from the Payload config |
+| `pnpm generate:importmap` | Regenerate the admin import map |
+| `pnpm test` | Vitest unit/component tests *(pending — Phase 27)* |
+| `pnpm test:e2e` | Playwright *(pending — Phase 27)* |
+
+**Run `pnpm generate:types` after any change to a collection, global, or field.** The generated types are
+committed and the build assumes they are current.
+
+## Project layout
+
+```text
+src/
+├─ app/
+│  ├─ (frontend)/     storefront — its own root layout, imports Tailwind
+│  └─ (payload)/      admin panel + Payload REST API — its own root layout
+├─ payload.config.ts  aliased as @payload-config
+└─ payload/           collections, access rules, hooks, migrations
+```
+
+Two things must stay true, or the Payload admin panel starts inheriting Tailwind's Preflight reset:
+
+1. `src/app/(payload)/layout.tsx` never imports the storefront stylesheet.
+2. No shared `src/app/layout.tsx` is added above the two route groups.
+
+See `docs/ARCHITECTURE.md` → **D-08**.
+
+## Generated files that are committed
+
+Do not hand-edit these; regenerate them:
+
+| File | Regenerate with | Written by |
+|---|---|---|
+| `src/app/(payload)/admin/importMap.js` | `pnpm generate:importmap` | Payload |
+| `src/payload-types.ts` | `pnpm generate:types` | Payload |
+| `AGENTS.md` (block between its BEGIN/END markers) | any `next dev` | Next.js |
+| `pnpm-workspace.yaml` | `pnpm install` | pnpm |
+
+`AGENTS.md` is re-created by `next dev` if deleted, so it is committed rather than fought. Project-owned
+content lives **below** the `END:nextjs-agent-rules` marker, which Next does not touch.
 
 ## Working agreement
 
@@ -92,7 +151,7 @@ and every one has a free or test tier:
 
 | Service | Needed from | Notes |
 |---|---|---|
-| Neon Postgres | Phase 5 | Development branch/database, separate from production |
+| Neon Postgres | **Phase 2** | Development branch/database, separate from production. Required for `/admin` |
 | Cloudinary | Phase 8 | Development folder/preset |
 | Algolia | Phase 12 | Development index |
 | Stripe | Phase 17 | **Test mode only** |

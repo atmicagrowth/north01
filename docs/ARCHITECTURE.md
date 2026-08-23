@@ -36,19 +36,48 @@ blocks a purchase.
 
 ### Directory boundaries
 
-Fixed by plan §1.3. No root-level `utils.ts` dumping ground.
+Fixed by plan §1.3. No root-level `utils.ts` dumping ground. Everything application-side lives
+under `src/`, which is where Payload expects its config and where `.gitattributes` already
+pointed for generated types.
 
-| Path | Holds |
-|---|---|
-| `app/` | routes, layouts, pages, route handlers |
-| `components/` | reusable presentation and interaction components |
-| `features/` | domain-oriented modules, where complexity warrants isolation |
-| `lib/` | integrations, infrastructure, **server-only** modules |
-| `src/payload/` | CMS config, collections, globals, access rules, hooks |
-| `emails/` | React Email templates |
-| `tests/` | unit / component / e2e suites and helpers |
-| `scripts/` | seeding, reindexing, one-off admin tasks |
-| `docs/` | architecture, environment, decisions, runbooks |
+| Path | Holds | Exists |
+|---|---|---|
+| `src/app/(frontend)/` | storefront routes, layouts, pages | Phase 2 |
+| `src/app/(payload)/` | Payload admin + REST API routes | Phase 2 |
+| `src/payload.config.ts` | the Payload config, aliased as `@payload-config` | Phase 2 |
+| `src/payload/` | collections, globals, access rules, hooks, migrations | Phase 2 |
+| `src/components/` | reusable presentation and interaction components | Phase 3 |
+| `src/lib/` | integrations, infrastructure, **server-only** modules | Phase 4 |
+| `src/features/` | domain-oriented modules, where complexity warrants isolation | as needed |
+| `emails/` | React Email templates | Phase 19 |
+| `tests/` | unit / component / e2e suites and helpers | Phase 27 |
+| `scripts/` | seeding, reindexing, one-off admin tasks | Phase 6 |
+| `docs/` | architecture, environment, decisions, runbooks | Phase 1 |
+
+### Route-group topology
+
+Two sibling route groups, **each with its own root layout** and no shared parent layout:
+
+```text
+src/app/
+├─ (frontend)/          storefront
+│   ├─ layout.tsx       <html> shell - imports globals.css (Tailwind)
+│   ├─ globals.css
+│   └─ page.tsx
+└─ (payload)/           CMS
+    ├─ layout.tsx       <html> shell - imports @payloadcms/next/css + custom.css
+    ├─ custom.css
+    ├─ admin/[[...segments]]/   the admin panel
+    └─ api/[...slug]/           Payload REST API
+```
+
+This is Payload's officially supported structure, and it is also what keeps Tailwind's global
+Preflight out of the admin panel: separate root layouts compile to separate CSS graphs, so the
+Tailwind chunk is never referenced by an admin document. **Two invariants preserve that** —
+`(payload)/layout.tsx` must never import the storefront stylesheet, and no shared
+`src/app/layout.tsx` may be introduced above the two groups. See decision **D-08**.
+
+No GraphQL routes are generated; see **D-02**.
 
 ---
 
@@ -240,11 +269,63 @@ Checkout Session, both are finalized by webhook, and the security model is ident
 
 ---
 
+### D-08 — The admin panel is insulated by topology, not by CSS patching
+
+The anticipated Tailwind-v4-preflight-leaks-into-`/admin` problem does not occur, because the two route
+groups are separate root layouts and therefore separate CSS graphs. Verified against the production build:
+the Tailwind chunk is referenced by the storefront document and by none of the admin bundles.
+
+No `@source` scoping, `important` selector, or preflight opt-out is needed — and none should be added. The
+fix is the file layout, so the invariants in "Route-group topology" above are what must be defended.
+
+*Confirmed in Phase 2.*
+
+### D-09 — Postgres is a Phase 2 prerequisite, not a Phase 5 one
+
+Payload connects to the database inside `payload.init()`, which runs when `/admin` renders. Without a
+reachable Postgres, `/admin` and `/api/*` return HTTP 500 (`ECONNREFUSED`), so Gate 1's *"Payload admin
+loads"* cannot pass. Build, typecheck, lint and the storefront route are all unaffected — `/admin` is a
+dynamic route and is never prerendered.
+
+A local Postgres install and a dev-only PGlite shim were both rejected: each adds an unapproved local
+dependency to substitute for a free Neon branch that Phase 5 requires regardless.
+
+*Recorded in Phase 2. Full detail: DEV-15.*
+
+### D-10 — Drizzle schema push is off from the first commit
+
+`@payloadcms/db-postgres` enables Drizzle's `push` in development by default, which syncs schema changes
+into the database without a migration. It is set to `push: false` from Phase 2, with `migrationDir` at
+`src/payload/migrations`.
+
+Plan §5.1c makes explicit, reviewable migrations the only path schema takes to a database. Leaving the
+default on until Phase 5 would mean Phase 5's migration baseline is generated from a schema no one
+reviewed. From Phase 6 onward, a schema change is not live until a migration is generated and run.
+
+*Confirmed in Phase 2. Full detail: DEV-17.*
+
 ## 5. Current position
 
 **Phase 1 — Workspace, repository and baseline: complete.** Repository initialized on `main`, baseline
 config and documentation in place, consistency gate executed and recorded above.
 
-**Next: Phase 2 — Scaffold the Next.js + Payload application.** Gate 1 must pass before anything else
-begins: frontend renders, Payload Admin loads, and `build`, `typecheck` and `lint` all succeed, with a
-commit capturing the known-good baseline.
+**Phase 2 — Scaffold the Next.js + Payload application: built; Gate 1 partially verified.**
+
+Next 16.3.2 with Payload 3.88.0 embedded in one deployable. 706 packages from 16 direct dependencies,
+no peer-dependency warnings. TypeScript strict, ESLint flat config at `--max-warnings 0`, Prettier,
+Tailwind v4, and the two-route-group structure above.
+
+| Gate 1 criterion | Status |
+|---|---|
+| 1. Frontend loads | **pass** — `/` returns 200, renders as an RSC with Tailwind applied |
+| 2. Payload admin loads | **blocked** — needs a Postgres connection string. See **D-09** |
+| 3. Build passes | **pass** — `pnpm build`, 4 routes, `/admin` and `/api/*` correctly dynamic |
+| 4. Typecheck passes | **pass** — `tsc --noEmit`, strict |
+| 5. Lint passes | **pass** — `eslint --max-warnings 0` |
+| 6. Commit captures a known-good baseline | **pass** — branch `phase-2-scaffold-next-payload` |
+
+**Next: supply `DATABASE_URL` from a Neon development branch, confirm `/admin` and `/api/users` return
+200, then Phase 3 — design system and UI foundation.** Phase 3 owes the token layer (**G-12**, **G-14**),
+the type scale, the core primitives, and the global shell.
+
+Phase 3 needs no third-party account.

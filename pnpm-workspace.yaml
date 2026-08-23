@@ -1,0 +1,11 @@
+# Generated and maintained by pnpm 11. Must stay committed so CI resolves identically to local.
+#
+# Build scripts are denied by default. Each entry below is an explicit allow, and each is
+# required rather than convenient:
+#   esbuild        - Payload's config loader compiles payload.config.ts through esbuild;
+#                    its postinstall fetches the platform-native binary.
+#   unrs-resolver  - the module resolver behind eslint-plugin-import-x, which
+#                    eslint-config-next depends on; same native-binary postinstall.
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true

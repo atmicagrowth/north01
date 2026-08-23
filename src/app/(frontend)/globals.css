@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+
+/*
+ * Phase 2 baseline only.
+ *
+ * The design-token system - full palette, type scale, spacing rhythm, radius, shadow and
+ * motion - is defined in Phase 3 (plan §3.1a). What is here is the minimum needed to prove
+ * Tailwind is wired correctly and to keep the baseline page on-brand rather than default
+ * white. Do not grow this file ad hoc; extend the token layer in Phase 3.
+ *
+ * This stylesheet is imported by the (frontend) root layout ONLY. The (payload) route group
+ * has its own root layout and never imports it, which is what keeps Tailwind Preflight out
+ * of the Payload admin panel.
+ */
+
+@theme {
+  --color-obsidian: #0a0a0a;
+  --color-bone: #f1eee8;
+  --color-stone: #a9a39a;
+  --color-graphite: #33312d;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--color-obsidian);
+    color: var(--color-bone);
+  }
+}
