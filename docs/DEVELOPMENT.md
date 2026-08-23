@@ -118,6 +118,33 @@ Do not hand-edit these; regenerate them:
 `AGENTS.md` is re-created by `next dev` if deleted, so it is committed rather than fought. Project-owned
 content lives **below** the `END:nextjs-agent-rules` marker, which Next does not touch.
 
+## Expected dev-server output
+
+`pnpm dev` prints several lines that look like problems and are not. Verified in Phase 2.
+
+| Line | What it is |
+|---|---|
+| `⨯ turbopackServerFastRefresh` under *Experiments (use with caution)* | **Payload sets this**, not us. `withPayload` forces `experimental.turbopackServerFastRefresh: false` with the comment *"Server fast refresh breaks HMR"*. `⨯` is Next's marker for "this boolean is false", not an error. |
+| `WARN: No email adapter provided. Email will be written to console.` | Expected until **Phase 19** adds Resend. Payload prints emails to the terminal meanwhile. |
+| `[✓] Pulling schema from database...` | Drizzle's development push. Expected in dev, off everywhere else — see **D-10**. |
+
+### The `/admin` hydration warning is a browser extension
+
+Logging into `/admin` may show *"A tree hydrated but some attributes of the server rendered HTML didn't
+match"*, with the diff pointing at `<body className="vc-init">` and a stack inside
+`node_modules/@payloadcms/next/.../Root/index.tsx`.
+
+**Not a project bug.** Verified three ways:
+
+1. The server-rendered HTML for `/admin` contains a bare `<body>` — `curl -s localhost:3000/admin | grep '<body'`.
+2. `vc-init` appears in no file in `src/` and in no dependency in `node_modules/`.
+3. The stack lands in Payload's own `<body>` because that element belongs to `@payloadcms/next`, not to us.
+
+Something injects the class into the DOM after the server responds and before React hydrates — the
+browser-extension case React's own error message lists. **Confirm it by opening `/admin` in a private
+window with extensions disabled**; the warning disappears. It is a development-only warning and cannot
+be fixed from this codebase.
+
 ## Working agreement
 
 Taken from the master implementation plan. These are not suggestions.
