@@ -351,6 +351,33 @@ more — `auth: true`, no roles, no custom fields, no access rules. Roles and ac
 (§7.1a–7.1e); customer accounts and the rest of the data model are Phase 6. **This file must not
 accumulate fields in the meantime.**
 
+### 1.7.6 Visual review of the Phase 2 baseline page
+
+Required by the plan's visual-reference rule 6 — *"Every new page ... must be reviewed against the visual
+guide before its phase is considered complete"* — and by step 8 of the phase completion gate in
+`docs/DEVELOPMENT.md`. Reviewed in a real browser at 1440×900 and 390×844, with computed styles read back
+rather than judged by eye.
+
+| Guide requirement | Measured |
+|---|---|
+| Obsidian `#0A0A0A` primary background | `rgb(10, 10, 10)` ✓ |
+| Bone `#F1EEE8` primary text | `rgb(241, 238, 232)` ✓ |
+| Stone secondary text, Graphite rules | applied to metadata labels and hairlines ✓ |
+| "Oversized type with tiny metadata" (§01 Visual Tension) | 72px serif display against 12px tracked uppercase ✓ |
+| No SaaS card system, pills, glassmorphism, gradients (rule 5) | none present ✓ |
+| Responsive, no horizontal overflow | `scrollWidth === clientWidth` at both 1440 and 390 ✓ |
+| Payload admin unaffected by Tailwind | admin `<body>` computes to Payload's own colours, not Bone ✓ |
+
+**Known and accepted:** the display face resolves to Tailwind's generic `ui-serif, Georgia, …` stack, not
+the *"refined, high-contrast serif"* the guide specifies. **Phase 3 (§3.1b) owns typography** and replaces
+it. Phase 2 deliberately installs no font.
+
+**Hazard found while doing this review — verify what a port is serving before trusting it.** Two unrelated
+projects were listening on `localhost:3000` and `:3001` on this machine, and an earlier screenshot pass
+captured *a different application entirely*. Any browser-based check must first confirm identity — for this
+project, `GET /api/users` returning Payload's `{"errors":[{"message":"You are not allowed to perform this
+action."}]}`. Prefer an explicit `PORT=` over the 3000 default.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -693,6 +720,7 @@ moved intact to notes **§1.7.5**. The identifier is retained rather than reused
 | Phase 2 — scaffold | 2026-08-22 | Notes §1.7.1: resolved install (706 packages, 16 direct), pnpm 11 `allowBuilds`, native flat ESLint config, Next-generated agent files, tsconfig rewrite, Prettier scope. Closed both §1.4 hazards. Corrected §1.5 — Neon moves from Phase 5 to Phase 2. Deviations **DEV-15**, **DEV-16**. |
 | Phase 2 — Gate 1 closed | 2026-08-22 | Notes §1.7.2: all six Gate 1 criteria verified against Neon PostgreSQL 17.11, full Payload auth round-trip, runtime confirmation of D-08, the PG 17-vs-18 reasoning. **DEV-17 withdrawn** — it contradicted plan §5.1d; push is development-only. Neon unblocked in §1.5. |
 | Phase 2 — debt clearance | 2026-08-23 | Notes §1.7.4: empty-string env fallbacks replaced with fail-fast (§4.1b), `sslmode` hardened to `verify-full` (closes the pg-v9 item), `/api` namespace sharing verified empirically and the collision rule recorded for Phase 6. |
+| Phase 2 — visual review | 2026-08-23 | Note §1.7.6: the baseline page reviewed in a real browser at 1440×900 and 390×844 against the visual guide — palette, visual tension, guardrails and responsive behaviour all measured rather than eyeballed. Closes step 8 of the phase completion gate, which the earlier Phase 2 commits had skipped. Records the port-identity hazard found while doing it. |
 | Phase 2 — append audit | 2026-08-23 | Structural corrections to this document. Phase 2 notes renumbered from `1.5a–1.5c`, which sat *before* §1.5 and implied they subdivided it, to **§1.7** with subsections. Append log put back in date order. Step 4 of the append rule carried out and recorded as **§1.7.3** — **DEV-04** and **DEV-14** confirmed; DEV-05 (Phase 8) and DEV-03 (Phase 18) still pending, not due. **DEV-18** and **DEV-19** moved to §1.7.5: both recorded compliance, not departure, and did not belong in Section 2. |
 
 > **Append this table, and the sections above it, at the end of every phase.**
