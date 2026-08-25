@@ -602,6 +602,17 @@ in-page as internal documentation. It is deliberately *not* env-gated: the typed
 Phase 4's (§4.1a), and inventing a second mechanism now would duplicate it. **Phase 32 should decide
 whether it ships publicly.**
 
+**The one clause of the acceptance criteria with nothing to show: "dark/light context where
+relevant".** There is no light context, and that is a decision rather than an omission. The storefront
+is dark-only — guide §02 gives Warm White the role "bright text / light surfaces", and this system
+takes only the first half, mapping it to `--color-foreground-bright`. No light *surface* token exists,
+so no primitive has a light variant to demonstrate.
+
+Building one now would be speculative: nothing in Phases 3–18 renders on a light field. **The first
+surface that genuinely needs one is Phase 19's transactional email**, where a light treatment is the
+norm and where **G-13** already records that the visual guide gives no art direction at all. That is
+where the inverse palette should be decided, against a real requirement.
+
 **Forcing the un-renderable states.** §3.1d requires hover, focus and active, which cannot be rendered
 statically. Rather than hand-copying each variant's hover classes onto a second copy of the component
 — which proves only that the transcription is correct — the three built-in Tailwind variants are
