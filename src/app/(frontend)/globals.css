@@ -1,33 +1,570 @@
 @import 'tailwindcss';
 
-/*
- * Phase 2 baseline only.
+/* =============================================================================
+ * NORTH / 01 — design tokens
  *
- * The design-token system - full palette, type scale, spacing rhythm, radius, shadow and
- * motion - is defined in Phase 3 (plan §3.1a). What is here is the minimum needed to prove
- * Tailwind is wired correctly and to keep the baseline page on-brand rather than default
- * white. Do not grow this file ad hoc; extend the token layer in Phase 3.
+ * Plan §3.1a. The visual guide (NORTH01_Visual_Guide_OnlineOnly.md) is the source
+ * of truth for everything here; where it speaks in adjectives rather than numbers,
+ * the number was chosen in Phase 3 and recorded in
+ * NORTH01_Implementation_Notes_and_Deviations.md §1.8.1 (gap G-12) and §1.8.2 (G-14).
  *
- * This stylesheet is imported by the (frontend) root layout ONLY. The (payload) route group
- * has its own root layout and never imports it, which is what keeps Tailwind Preflight out
- * of the Payload admin panel.
- */
+ * Three rules govern this file:
+ *
+ *   1. The raw palette below is NOT addressable from components. It defines the
+ *      hex values once; only the semantic tokens in `@theme` generate utilities.
+ *      There is no `bg-obsidian` — there is `bg-canvas`.
+ *   2. Tailwind's own default palette, type scale, radius scale and shadow scale
+ *      are cleared with `*: initial`. That is deliberate: it makes `bg-red-500`,
+ *      `text-lg`, `rounded-2xl` and `shadow-xl` fail to compile rather than
+ *      quietly contradict the guide.
+ *   3. This stylesheet is imported by the (frontend) root layout ONLY. The
+ *      (payload) route group has its own root layout and never imports it, which
+ *      is what keeps Tailwind Preflight out of the admin panel — see D-08.
+ * ========================================================================== */
 
-@theme {
-  --color-obsidian: #0a0a0a;
-  --color-bone: #f1eee8;
-  --color-stone: #a9a39a;
-  --color-graphite: #33312d;
+/* -----------------------------------------------------------------------------
+ * Raw palette — visual guide §02, verbatim, plus one signal colour.
+ *
+ * Deliberately plain custom properties rather than `@theme` entries, so that
+ * Tailwind generates no utilities for them. Components must reach for a semantic
+ * token; nothing should ever need the brand name of a colour to do its job.
+ * -------------------------------------------------------------------------- */
+:root {
+  --palette-obsidian: #0a0a0a;
+  --palette-charcoal: #151515;
+  --palette-warm-black: #1d1c1a;
+  --palette-bone: #f1eee8;
+  --palette-warm-white: #faf8f4;
+  --palette-stone: #a9a39a;
+  --palette-muted-stone: #77726b;
+  --palette-graphite: #33312d;
+  --palette-soft-taupe: #c7b8a0;
+
+  /*
+   * Oxide is the one colour in the system that the visual guide does not list.
+   * The guide permits an additional colour where there is "a strong brand reason";
+   * an error a customer must notice is a stronger one, and WCAG 1.4.1 forbids
+   * signalling it by shape alone. It is deliberately the least saturated hue that
+   * still reads as a warning: H13 S43 L56, against the palette's own warm H35-40.
+   * Contrast on the three surfaces: 5.57 / 5.13 / 4.79 — AA for normal text on all
+   * three. See DEV-21.
+   */
+  --palette-oxide: #c0745f;
+
+  /* ---------------------------------------------------------------------------
+   * Motion durations — guide §08 "keep it slow, keep it subtle", §11 "use motion
+   * sparingly and slowly". Tailwind v4 has no `--duration-*` theme namespace, so
+   * these are plain properties consumed as `duration-(--duration-fast)`.
+   *
+   * Always use a token; never a bare `duration-200`. The reduced-motion block at
+   * the bottom of this file collapses every one of these to 1ms in a single place,
+   * and a hard-coded duration escapes it.
+   * ------------------------------------------------------------------------ */
+  --duration-instant: 80ms; /* pressed / active feedback — must feel immediate */
+  --duration-fast: 160ms; /* hover and focus colour, border, opacity           */
+  --duration-base: 240ms; /* dropdowns, tabs, accordions, toasts               */
+  --duration-slow: 400ms; /* drawers, dialogs, overlay fades                   */
+  --duration-editorial: 700ms; /* image reveals and crossfades                 */
 }
 
+@theme {
+  /* ===========================================================================
+   * Colour — semantic only
+   * ======================================================================== */
+
+  /* Clear Tailwind's default palette. The system has ten colours; `bg-red-500`
+     is not one of them and should not compile. */
+  --color-*: initial;
+
+  /* Surfaces. Elevation on a near-black page comes from surface lightness and a
+     1px rule, never from a shadow — guide §06 "minimal shadowing". */
+  --color-canvas: var(--palette-obsidian); /* page background          */
+  --color-surface: var(--palette-charcoal); /* inputs, drawers, menus  */
+  --color-surface-raised: var(--palette-warm-black); /* dialogs, hover */
+
+  /* Foreground. Ratios are against --color-canvas (#0A0A0A). */
+  --color-foreground: var(--palette-bone); /*        17.10:1 */
+  --color-foreground-bright: var(--palette-warm-white); /* 18.67:1 */
+  --color-foreground-muted: var(--palette-stone); /*   7.91:1 */
+
+  /*
+   * Muted Stone is 4.15:1 — below AA (4.5:1) for normal-size text.
+   *
+   * There was briefly a `--color-foreground-subtle` alias for it, intended as a
+   * "tertiary text" tone with a comment restricting it to large text and disabled
+   * content. Every one of its first uses broke that restriction, and axe-core caught
+   * them. A token whose correct use has to be remembered is a trap, so the alias was
+   * removed rather than re-documented: the only name Muted Stone answers to now is
+   * `disabled`, where WCAG 1.4.3 genuinely exempts it.
+   *
+   * The hierarchy below primary is therefore carried by size and tracking, not by a
+   * third grey — which is closer to guide §02 anyway: "the luxury comes from
+   * proportion, texture, and contrast, not from having many colors."
+   */
+  --color-foreground-disabled: var(--palette-muted-stone);
+
+  /* Borders. Guide §02: "borders should usually be low-contrast graphite" — and
+     they are, for the structural rules that make up most of them. Interactive
+     control boundaries must reach 3:1 to satisfy WCAG 1.4.11, which Graphite's
+     1.53:1 cannot, so those use Muted Stone (4.15:1) — still a palette colour,
+     still quiet. See notes §1.8.2. */
+  --color-border: var(--palette-graphite); /* rules, dividers, hairlines  */
+  --color-border-control: var(--palette-muted-stone); /* inputs, controls */
+  --color-border-strong: var(--palette-bone); /* selected / current       */
+
+  /* Accent. Guide §02: "soft taupe is a rare accent, not a general-purpose
+     highlight." It is only ever a 1px rule, ring or underline, or a ≤10px
+     uppercase label — never a fill, never body text, never an icon colour. */
+  --color-accent: var(--palette-soft-taupe);
+
+  /* Signal. One colour, one job. */
+  --color-error: var(--palette-oxide);
+
+  /* The scrim behind a modal overlay. Clearing Tailwind's palette also removed
+     `bg-black`, which is the point: the one place this system darkens the page is
+     named, so it cannot drift into a family of ad-hoc black washes. */
+  --color-scrim: rgb(10 10 10 / 0.82);
+
+  /* Focus. Bone at 17.10:1 on canvas — the only monochrome option that clears
+     WCAG 1.4.11 comfortably on every surface in the system. */
+  --color-focus: var(--palette-bone);
+
+  /* ===========================================================================
+   * Typography
+   *
+   * Families are supplied by next/font at runtime (see fonts/index.ts) and
+   * referenced here through the CSS variables it declares.
+   * ======================================================================== */
+  --font-*: initial;
+  --font-display: var(--font-north-display), 'Didot', 'Bodoni MT', Georgia, serif;
+  --font-sans:
+    var(--font-north-sans), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Not a brand face. Declared only because Preflight styles `code`/`pre` with
+     `--default-mono-font-family`, which resolves through `--font-mono`; clearing the
+     namespace without replacing this leaves those elements rendering in the body font. */
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* Weights. Guide §03: "avoid excessive font-weight variation." Three are
+     defined and two are used — 400 for reading copy, 500 for everything else.
+     600 exists for the rare moment that genuinely needs it. */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
+  /* ---------------------------------------------------------------------------
+   * Type scale — guide §03. The guide gives size ranges and nothing else; the
+   * line-heights, weights and tracking here are Phase 3's, recorded under G-12.
+   * Every level stays inside the guide's stated range at both ends of its clamp.
+   *
+   * Display levels use the serif and are fluid; UI levels use the sans and are
+   * fixed, because metadata that resizes with the viewport stops being precise.
+   * ------------------------------------------------------------------------ */
+  --text-*: initial;
+
+  /* Display XL — campaign statements. Guide: 48–72px. */
+  --text-display-xl: clamp(3rem, 1.5rem + 6vw, 4.5rem);
+  --text-display-xl--line-height: 1.02;
+  --text-display-xl--letter-spacing: -0.02em;
+  --text-display-xl--font-weight: 500;
+
+  /* Display L — collection and editorial headlines. Guide: 36–52px. */
+  --text-display-l: clamp(2.25rem, 1.5rem + 3vw, 3.25rem);
+  --text-display-l--line-height: 1.06;
+  --text-display-l--letter-spacing: -0.015em;
+  --text-display-l--font-weight: 500;
+
+  /* Heading M — section titles. Guide: 24–34px. */
+  --text-heading-m: clamp(1.5rem, 1.125rem + 1.5vw, 2.125rem);
+  --text-heading-m--line-height: 1.15;
+  --text-heading-m--letter-spacing: -0.01em;
+  --text-heading-m--font-weight: 500;
+
+  /* Heading S — subheadings. Guide: 16–20px. Sans, not serif: the guide forbids
+     display serif in dense UI, and this level is where UI begins. */
+  --text-heading-s: clamp(1rem, 0.9rem + 0.4vw, 1.25rem);
+  --text-heading-s--line-height: 1.3;
+  --text-heading-s--letter-spacing: 0em;
+  --text-heading-s--font-weight: 500;
+
+  /* Body — reading copy. Guide: 14–16px. */
+  --text-body: 1rem;
+  --text-body--line-height: 1.6;
+  --text-body--letter-spacing: 0em;
+  --text-body--font-weight: 400;
+
+  --text-body-sm: 0.875rem;
+  --text-body-sm--line-height: 1.55;
+  --text-body-sm--letter-spacing: 0em;
+  --text-body-sm--font-weight: 400;
+
+  /* Meta — labels, product metadata, pricing, controls. Guide: 11–13px.
+     Tracked and uppercase in use; the tracking is part of the token because
+     every appearance of this level in the guide is tracked. */
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1.4;
+  --text-meta--letter-spacing: 0.12em;
+  --text-meta--font-weight: 500;
+
+  /* Micro — tiny metadata. Guide: 9–10px. */
+  --text-micro: 0.625rem;
+  --text-micro--line-height: 1.3;
+  --text-micro--letter-spacing: 0.18em;
+  --text-micro--font-weight: 500;
+
+  /* ===========================================================================
+   * Spacing — guide §05. Tailwind's numeric scale is kept for component
+   * internals; these named steps are the editorial rhythm and are what section
+   * padding and stack gaps must use, so that vertical rhythm cannot drift.
+   * Each value sits inside the guide's stated range.
+   * ======================================================================== */
+  --spacing-xs: 0.375rem; /* 6px   — guide XS 4–6      */
+  --spacing-s: 0.75rem; /* 12px  — guide S  8–12     */
+  --spacing-m: 1.5rem; /* 24px  — guide M  16–24    */
+  --spacing-l: 2.5rem; /* 40px  — guide L  32–48    */
+  --spacing-xl: 5rem; /* 80px  — guide XL 64–96    */
+  --spacing-xxl: 9rem; /* 144px — guide XXL 120–180 */
+
+  /* ===========================================================================
+   * Radius — guide §06 "mostly rectangular or softly squared", §11 avoid
+   * "rounded-card overload" and "oversized pill buttons".
+   *
+   * Nothing in this system is rounder than 4px except things that are actually
+   * circles. Tailwind's lg/xl/2xl/3xl steps are cleared so they cannot be used.
+   * ======================================================================== */
+  --radius-*: initial;
+  --radius-none: 0px;
+  --radius-sm: 2px; /* buttons, inputs, controls              */
+  --radius-md: 4px; /* dialogs, drawers, dropdown panels      */
+  --radius-full: 9999px; /* colour swatches, bag count — circles only */
+
+  /* ===========================================================================
+   * Shadow — guide §11 lists "excessive shadows" under Avoid, §06 asks for
+   * "minimal shadowing". On a #0A0A0A page a shadow is nearly invisible anyway.
+   *
+   * There is no shadow scale, because a scale invites use. There is one shadow,
+   * for the one job that needs it: separating something that genuinely floats
+   * above the page from the page.
+   * ======================================================================== */
+  --shadow-*: initial;
+  --shadow-overlay: 0 24px 64px -24px rgb(0 0 0 / 0.72);
+
+  /* ===========================================================================
+   * Motion easing — guide §08: slow, subtle, gentle reveals, no exaggeration.
+   * ======================================================================== */
+  --ease-entrance: cubic-bezier(0.22, 1, 0.36, 1); /* decelerating settle */
+  --ease-exit: cubic-bezier(0.64, 0, 0.78, 0); /* accelerating departure  */
+  --ease-editorial: cubic-bezier(0.65, 0, 0.35, 1); /* symmetric movement */
+
+  /* The bare `transition` utility inherits these. */
+  --default-transition-duration: var(--duration-fast);
+  --default-transition-timing-function: var(--ease-entrance);
+
+  /* ===========================================================================
+   * Layout widths — guide §04 "a disciplined max-width grid", "generous outer
+   * margins". Breakpoints are Tailwind's defaults, read as:
+   * mobile < 48rem · tablet 48–63.99rem (md) · desktop ≥ 64rem (lg).
+   * ======================================================================== */
+  --container-page: 90rem; /* 1440px — full editorial width   */
+  --container-narrow: 64rem; /* 1024px — utility and account  */
+  --container-prose: 42rem; /* 672px  — reading measure       */
+
+  /* ===========================================================================
+   * Named animations
+   *
+   * Overlays animate in CSS, driven by the `data-state` attribute Radix already
+   * writes, rather than through an animation library. Radix's Presence waits for
+   * `animationend` before unmounting, so exits play in full. Three consequences,
+   * all of them wanted: no JavaScript runs to move a drawer, the animations cannot
+   * drift out of step with the duration tokens, and `prefers-reduced-motion` is
+   * honoured by the one media query at the foot of this file.
+   *
+   * The vocabulary is deliberately small — fades, a short slide, a height reveal.
+   * Guide §08: "prefer crossfades and gentle reveals, avoid exaggerated zooms."
+   * Nothing here scales, and nothing bounces.
+   * ======================================================================== */
+  --animate-fade-in: fade-in var(--duration-base) var(--ease-entrance);
+  --animate-fade-out: fade-out var(--duration-fast) var(--ease-exit);
+  --animate-scrim-in: fade-in var(--duration-slow) var(--ease-entrance);
+  --animate-scrim-out: fade-out var(--duration-base) var(--ease-exit);
+  --animate-dialog-in: dialog-in var(--duration-slow) var(--ease-entrance);
+  --animate-dialog-out: dialog-out var(--duration-base) var(--ease-exit);
+  --animate-drawer-in-right: drawer-in-right var(--duration-slow) var(--ease-entrance);
+  --animate-drawer-out-right: drawer-out-right var(--duration-base) var(--ease-exit);
+  --animate-drawer-in-left: drawer-in-left var(--duration-slow) var(--ease-entrance);
+  --animate-drawer-out-left: drawer-out-left var(--duration-base) var(--ease-exit);
+  --animate-drawer-in-bottom: drawer-in-bottom var(--duration-slow) var(--ease-entrance);
+  --animate-drawer-out-bottom: drawer-out-bottom var(--duration-base) var(--ease-exit);
+  --animate-menu-in: menu-in var(--duration-base) var(--ease-entrance);
+  --animate-menu-out: fade-out var(--duration-fast) var(--ease-exit);
+  --animate-accordion-open: accordion-open var(--duration-base) var(--ease-editorial);
+  --animate-accordion-close: accordion-close var(--duration-base) var(--ease-editorial);
+
+  /*
+   * Skeletons pulse in opacity. The moving-gradient "shimmer" that most component
+   * libraries use is a gradient, and guide §11 lists gradients under Avoid.
+   */
+  --animate-skeleton: skeleton 1.8s var(--ease-editorial) infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* 8px, not a scale-and-pop. The dialog settles rather than arrives. */
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dialog-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes drawer-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes drawer-out-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes drawer-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes drawer-out-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes drawer-in-bottom {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes drawer-out-bottom {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Radix measures the panel and publishes the height; CSS animates to it. */
+@keyframes accordion-open {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-close {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
+@keyframes skeleton {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * Forced interaction states, for the design-system specimen sheet
+ *
+ * Plan §3.1d requires every primitive to be shown in hover, focus and active. Those
+ * states cannot be rendered statically, and the usual workaround — hand-copying each
+ * variant's hover classes onto a second copy of the component — proves nothing, because
+ * it demonstrates a transcription rather than the component.
+ *
+ * Instead the three built-in variants are extended with an attribute hook, so
+ * `data-preview="hover"` makes a component's *own* `hover:` classes apply. What the
+ * specimen sheet shows is therefore the real rule, not a lookalike.
+ *
+ * `hover` keeps its `@media (hover: hover)` guard — dropping it is how a design system
+ * ends up with sticky hover states on touch devices.
+ *
+ * This is inert wherever the attribute is absent, which is everywhere but that page.
+ * -------------------------------------------------------------------------- */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
+  &[data-preview~='hover'] {
+    @slot;
+  }
+}
+
+@custom-variant active (&:active, &[data-preview~='active']);
+@custom-variant focus-visible (&:focus-visible, &[data-preview~='focus']);
+
+/* -----------------------------------------------------------------------------
+ * Base
+ * -------------------------------------------------------------------------- */
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
 
   body {
-    background-color: var(--color-obsidian);
-    color: var(--color-bone);
+    background-color: var(--color-canvas);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    font-weight: var(--font-weight-regular);
+  }
+
+  /*
+   * A single visible focus indicator for the whole system. Bone on Obsidian is
+   * 17.10:1, and the 2px canvas-coloured offset keeps the ring legible when the
+   * focused control sits on a lighter surface.
+   *
+   * `:focus-visible` rather than `:focus` so a pointer click does not ring, but
+   * every keyboard path does. Primitives may thicken this; none may remove it.
+   */
+  :focus-visible,
+  [data-preview~='focus'] {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: var(--color-accent);
+    color: var(--palette-obsidian);
+  }
+
+  /* Headings inherit the display serif; sizes come from the type scale, applied
+     explicitly. Nothing gets a size by virtue of its tag. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: var(--font-weight-medium);
+  }
+
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-sans);
+    font-weight: var(--font-weight-medium);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * Reduced motion
+ *
+ * Overriding the duration tokens in one place is what disables motion across the
+ * system — which only works because components consume the tokens rather than
+ * hard-coded values. The blanket rule underneath catches anything that does not,
+ * including third-party keyframes inside Radix.
+ * -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 1ms;
+    --duration-fast: 1ms;
+    --duration-base: 1ms;
+    --duration-slow: 1ms;
+    --duration-editorial: 1ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /*
+   * One deliberate exception. Progress feedback is information, not decoration — a
+   * frozen spinner reads as a hung interface, which is worse for the user than the
+   * motion it avoids. Slowed and kept running, not stopped.
+   *
+   * Carried by `data-motion="essential"`, which is applied in exactly one place
+   * (the Button's loading indicator). Anything else that claims the attribute needs
+   * to justify it the same way.
+   */
+  [data-motion='essential'] {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
   }
 }

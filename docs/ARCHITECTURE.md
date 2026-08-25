@@ -47,7 +47,7 @@ pointed for generated types.
 | `src/payload.config.ts` | the Payload config, aliased as `@payload-config` | Phase 2 |
 | `src/payload/` | collections, globals, access rules, hooks, migrations | Phase 2 |
 | `src/components/` | reusable presentation and interaction components | Phase 3 |
-| `src/lib/` | integrations, infrastructure, **server-only** modules | Phase 4 |
+| `src/lib/` | integrations, infrastructure, helpers, **server-only** modules | Phase 3 (`cn.ts`); server-only modules from Phase 4 |
 | `src/features/` | domain-oriented modules, where complexity warrants isolation | as needed |
 | `emails/` | React Email templates | Phase 19 |
 | `tests/` | unit / component / e2e suites and helpers | Phase 27 |
@@ -148,7 +148,7 @@ one artifact and the entity, route, or field it needs was never defined anywhere
 | C-07 | Structure doc §2 lists `JOURNAL` as a top-level site-map node; its own Simplicity rule keeps it out of the top navigation. | Structure doc, internally — the Simplicity rule is the more specific statement | Journal is a real route reachable from the footer and editorial surfaces, not a primary nav item. A site map is not a navigation bar. |
 | C-08 | The reference image draws a **five-item** primary nav (SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT) — no `NEW`. Three written documents specify six. | Visual guide §10 and the plan's visual-reference rules: the written guide beats the image | Six items: **NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT**. |
 | C-09 | Structure doc §16 puts Wishlist under Account; §2 also lists it as a global destination. | Structure doc, internally | Both — they do not conflict. A global header affordance routing to `/account/wishlist`. Guests get a local wishlist that merges on login. |
-| C-10 | Storybook is *"Recommended"* in the tech stack, a mandated feature area in feature matrix §33, and plan §3.1d permits *"a Storybook **or equivalent** visual test page"*. | Plan (rank 1) — most permissive and most specific | Storybook is the intent; the obligation is that every primitive is demonstrable in all its states. Settled in Phase 3. |
+| C-10 | Storybook is *"Recommended"* in the tech stack, a mandated feature area in feature matrix §33, and plan §3.1d permits *"a Storybook **or equivalent** visual test page"*. | Plan (rank 1) — most permissive and most specific | **Settled in Phase 3: the equivalent.** An in-app route at `/design-system` renders every primitive in every required state. Storybook was built against this stack first and does work — it was declined on fit, not compatibility. See **DEV-20**. |
 | C-11 | Turnstile, Sentry, PostHog, GA4 and Speed Insights are *"Optional but planned"* in the tech stack yet appear in plan acceptance gates §37. | Not a true conflict once scoped | Optional *to the running store* — they must never block commerce — but required *to the definition of done*. Both hold at once. |
 
 ### 3.2 Specification gaps — requirement exists, definition does not
@@ -169,9 +169,9 @@ assigned to the phase that first needs it.
 | G-09 | **Recommendations** are fully specified in feature matrix §10 but have no phase of their own — only incidental mentions inside the Phase 11 and 13 prompts. | Phase 13 |
 | G-10 | **Checkout preflight** (plan §17.1a) never validates a shipping address, though the tech stack makes one mandatory for physical goods. | Phase 17 |
 | G-11 | **Payment status vs fulfillment status.** Feature matrix §21 models them as two fields; the plan's §18.1b machine is a single linear axis mixing both. | Phase 18 |
-| G-12 | Design tokens for **radius, shadow, motion duration and accent** are required numerically by plan §3.1a; the visual guide describes them only in adjectives. The type scale gives sizes but no weights, line-heights or tracking. | Phase 3 |
-| G-13 | The visual guide gives page-level art direction for seven page types — **Cart and Checkout are absent**, as are Payload Admin and transactional email. | Phases 3, 14, 17, 19 |
-| G-14 | **Sale / compare-at price** and **selected/active** states need a visible accent, but the palette forbids saturated colour and prescribes low-contrast borders. | Phase 3 |
+| G-12 | Design tokens for **radius, shadow, motion duration and accent** are required numerically by plan §3.1a; the visual guide describes them only in adjectives. The type scale gives sizes but no weights, line-heights or tracking. | ~~Phase 3~~ **Closed in Phase 3** — every number fixed and recorded in notes §1.8.1. |
+| G-13 | The visual guide gives page-level art direction for seven page types — **Cart and Checkout are absent**, as are Payload Admin and transactional email. | Phases ~~3~~, 14, 17, 19 — Phase 3's part is answered: guide §09's "Account / Utility" direction plus the token layer is what Cart and Checkout compose from, so no new visual language is needed for them. |
+| G-14 | **Sale / compare-at price** and **selected/active** states need a visible accent, but the palette forbids saturated colour and prescribes low-contrast borders. | ~~Phase 3~~ **Closed in Phase 3** — selection is carried by contrast, compare-at is typographic, and the border rule is split. See notes §1.8.2, **DEV-21**, **DEV-22**. |
 
 ### 3.3 Image-only elements — present in the reference, defined nowhere
 
@@ -325,6 +325,51 @@ structurally impossible rather than merely unlikely — that is an outstanding o
 
 *Revised in Phase 2. Full detail: DEV-17 (withdrawn entry retained).*
 
+### D-11 — The design system is enforced by the compiler, not by review
+
+Tailwind's default colour, type, radius and shadow scales are cleared (`--color-*: initial` and its
+siblings) and replaced with semantic tokens. The raw palette lives in plain `:root` custom properties
+that generate no utilities, so `bg-obsidian` does not exist — only `bg-canvas`.
+
+The consequence is the point: `bg-red-500`, `text-lg`, `rounded-2xl` and `shadow-xl` **fail to
+compile**. A guardrail that is a build error does not depend on anyone remembering the guide. Verified
+against the built stylesheet — no default palette entry survives.
+
+`src/lib/cn.ts` mirrors the same overrides into `tailwind-merge`, which otherwise cannot tell that
+`text-meta` is a font size and `text-foreground` a colour, and would drop one of them silently.
+
+*Recorded in Phase 3. Full detail: notes §1.8.1.*
+
+### D-12 — Accessibility requirements are expressed as types where they can be
+
+Three of plan §3.1d's accessibility requirements are enforced by the component API rather than left to
+review:
+
+- `IconButton` requires `label` — an icon-only control cannot be rendered without an accessible name.
+- `DialogContent` and `DrawerContent` require `title`, with `titleHidden` for designs with no visible
+  heading. This exists because **`@radix-ui/react-dialog@1.1.23` removed the missing-title warning**:
+  a dialog without one is now announced with no name at all, silently, in every environment.
+- `TabsList` requires `label`, because Radix supplies no `aria-label` for a tab list.
+
+The corresponding runtime obligations Radix *does* discharge — focus trap, focus restoration, Escape,
+scroll locking, `aria-hidden` on the rest of the page, roving focus, typeahead — are not
+reimplemented, and were verified in a browser rather than assumed.
+
+*Recorded in Phase 3. Full detail: notes §1.8.5 and §1.8.7.*
+
+### D-13 — Overlay motion is CSS driven by Radix's `data-state`, and there is no animation library
+
+Radix's `Presence` keeps an element mounted until `animationend`, so exits play in full from CSS
+keyframes alone. No JavaScript runs to move a drawer, the animations cannot drift out of step with the
+duration tokens, and `prefers-reduced-motion` is honoured from the single media query that overrides
+those tokens.
+
+`motion` was installed early in Phase 3 and removed: nothing in the design system needed it. It
+remains approved and moves to **Phase 10**, with the editorial reveals that first have something to
+reveal. See **DEV-24**.
+
+*Recorded in Phase 3.*
+
 ## 5. Current position
 
 **Phase 1 — Workspace, repository and baseline: complete.** Repository initialized on `main`, baseline
@@ -349,8 +394,30 @@ The Payload API was verified through a full auth round-trip — register, login,
 identity — not merely a liveness check. Unauthenticated `GET /api/users` returns 403, which is the
 default access control working as intended. Details and evidence: notes §1.7.2.
 
-**Next: Phase 3 — design system and UI foundation.** It owes the token layer (**G-12**, **G-14**), the
-type scale, the core primitives, and the global shell. It needs no third-party account and no database.
+**Phase 3 — Design system and UI foundation: complete.**
+
+The token layer (**G-12**, **G-14**), the type scale, two self-hosted typefaces, all eighteen §3.1c
+primitives, and the global shell. 782 packages from 21 direct dependencies, still no peer-dependency
+warnings. Typecheck, lint at `--max-warnings 0`, and the production build all pass; `/design-system`
+prerenders static, `/admin` and `/api/*` stay dynamic.
+
+| Phase 3 acceptance | Status |
+|---|---|
+| Central tokens for colour, type, spacing, radius, shadow, motion, breakpoints (§3.1a) | **pass** — and the defaults are cleared, so off-system values do not compile (**D-11**) |
+| Display serif + UI sans, licensed, self-hosted, via `next/font` (§3.1b) | **pass** — Bodoni Moda + Instrument Sans, SIL OFL 1.1, no RFN, 76 KB |
+| All eighteen core primitives (§3.1c) | **pass** — on `radix-ui@1.6.7`, styled to the guide |
+| Global shell components (§3.1d) | **pass** — built and proved; **mounted in Phase 9**, see notes §1.8.6 |
+| Every primitive in every state, on a visual test page | **pass** — `/design-system`; **C-10 settled**, see **DEV-20** |
+| Keyboard, visible focus, Escape, focus trap, focus restoration | **pass** — driven in a real browser, not asserted |
+| Accessibility | **0 axe-core violations**, WCAG 2.0/2.1/2.2 A + AA, desktop and mobile |
+| Visual review against the guide | **pass** — notes §1.8.8 |
+
+The reviewing pass found two real defects — a loading button with no accessible name, and a tertiary
+grey that failed AA wherever it was used — and both were fixed by changing the system rather than the
+instances. Details: notes §1.8.7.
+
+**Next: Phase 4 — environment configuration and secret management.** It owes the typed Zod module
+(§4.1a) and the guard that **D-10** has been waiting for.
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 

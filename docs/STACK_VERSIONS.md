@@ -63,10 +63,12 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
 | Package | Available | Introduced in |
 |---|---|---|
 | `tailwindcss` + `@tailwindcss/postcss` | 4.3.3 | Phase 2/3 |
-| `shadcn` (CLI) | 4.19.0 | Phase 3 |
-| `motion` | 13.1.1 | Phase 3 |
-| `lucide-react` | 1.33.0 | Phase 3 |
-| `class-variance-authority` / `tailwind-merge` / `clsx` | 0.7.1 / 3.6.0 / 2.1.1 | Phase 3 |
+| `radix-ui` (unified) | 1.6.7 | **Phase 3 — installed** |
+| `lucide-react` | 1.33.0 | **Phase 3 — installed** |
+| `class-variance-authority` / `tailwind-merge` / `clsx` | 0.7.1 / 3.6.0 / 2.1.1 | **Phase 3 — installed** |
+| `shadcn` (CLI) | 4.19.0 | **not installed — see §7** |
+| `motion` | 13.1.1 | ~~Phase 3~~ **Phase 10** — see **DEV-24** |
+| `storybook` | 10.5.10 | **not installed — see DEV-20**; revisit at Phase 27 |
 | `zod` | 4.4.3 | Phase 4 |
 | `react-hook-form` + `@hookform/resolvers` | 7.86.0 / 5.9.1 | Phase 7 |
 | `nuqs` | 2.10.0 | Phase 11 |
@@ -162,3 +164,48 @@ pnpm 11 denies package build scripts by default and records allowances under **`
 `eslint-config-next@16.3.2` exports native `Linter.Config[]` arrays from `./core-web-vitals` and
 `./typescript`. `eslint.config.mjs` spreads them directly — **no `FlatCompat`, no `@eslint/eslintrc`**,
 contrary to most Next 15-era guidance.
+
+---
+
+## 7. Phase 3 — what the design system actually installs
+
+**Five runtime packages**, taking the tree from 706 to **782**, resolved with
+`pnpm add --strict-peer-dependencies`, exit 0, no unmet peers.
+
+| Package | Pin | Why |
+|---|---|---|
+| `radix-ui` | 1.6.7 | The **unified** package. One dependency supplies Dialog, DropdownMenu, Select, Tabs, Accordion, Checkbox, RadioGroup, Label, Separator, Toast, VisuallyHidden and Slot — every primitive plan §3.1c asks for. Peers accept React 19.2.8. |
+| `class-variance-authority` | 0.7.1 | Variant composition, the shadcn abstraction plan §3.1c points at. |
+| `clsx` | 2.1.1 | Conditional class flattening. |
+| `tailwind-merge` | 3.6.0 | Conflict resolution, configured against this project's overridden scales in `src/lib/cn.ts`. |
+| `lucide-react` | 1.33.0 | Icons. Note this is the **1.x** line; icon names differ from the 0.x releases most guidance assumes (`LoaderCircle`, `CircleAlert`). |
+
+### Three things that are *not* installed, deliberately
+
+- **`shadcn` (the CLI).** shadcn is copy-in source, not a runtime dependency, and `shadcn init` is
+  actively destructive here: it merges `@apply bg-background text-foreground` into `body`, and since
+  its `:root` is the light palette with dark values under a `.dark` class this app does not have, it
+  **flips the storefront from `#0A0A0A` to white**. It also writes the self-referencing
+  `--font-sans: var(--font-sans)`. `--no-css-variables` does not prevent either. Reproduced four times
+  in throwaway sandboxes. The abstraction is followed by hand instead — see **DEV-23**.
+- **`vaul` and `sonner` + `next-themes`.** The current shadcn registry reaches outside Radix for
+  Drawer and Toast. Both are built on Radix here instead, dropping three dependencies. **DEV-23**.
+- **`motion`.** Installed early in Phase 3, then removed — nothing in the design system needed it.
+  Overlay animation is CSS driven by Radix's `data-state`. Moves to **Phase 10**. **DEV-24**.
+
+### Fonts are vendored, not depended on
+
+`Bodoni Moda` and `Instrument Sans`, SIL OFL 1.1 with no Reserved Font Name, committed as
+`latin`-subset variable `.woff2` under `src/app/(frontend)/fonts/` with their licence texts. 76 KB
+total. Loaded with `next/font/local`, **not** `next/font/google` — the Google loader performs a
+build-time fetch and would make `pnpm build` fail without network egress.
+
+**The Bodoni Moda file matters.** Google serves two variable builds; the default 25,884-byte one is
+`BodoniModa11pt-Regular` with the optical-size axis physically absent. The committed 46,260-byte file
+carries `wght 400–900` **and** `opsz 6–96`. If these files are ever re-fetched, check the byte count.
+
+### Verification tooling is borrowed, not installed
+
+Playwright 1.62.1 and axe-core 4.13.0 are **Phase 27** dependencies. Phase 3's browser and
+accessibility pass ran them from the scratchpad directory against the dev server, so `package.json` is
+unchanged by it.

@@ -84,10 +84,17 @@ committed and the build assumes they are current.
 ```text
 src/
 ├─ app/
-│  ├─ (frontend)/     storefront — its own root layout, imports Tailwind
-│  └─ (payload)/      admin panel + Payload REST API — its own root layout
-├─ payload.config.ts  aliased as @payload-config
-└─ payload/           collections, access rules, hooks, migrations
+│  ├─ (frontend)/        storefront — its own root layout, imports Tailwind
+│  │  ├─ globals.css     the design-token layer (Phase 3)
+│  │  ├─ fonts/          self-hosted .woff2 + their OFL licence texts
+│  │  └─ design-system/  the specimen sheet — see below
+│  └─ (payload)/         admin panel + Payload REST API — its own root layout
+├─ components/
+│  ├─ ui/                primitives (button, input, dialog, drawer, …)
+│  └─ layout/            global shell (header, nav, footer, containers)
+├─ lib/cn.ts             class composition, configured for this project's scales
+├─ payload.config.ts     aliased as @payload-config
+└─ payload/              collections, access rules, hooks, migrations
 ```
 
 Two things must stay true, or the Payload admin panel starts inheriting Tailwind's Preflight reset:
@@ -103,6 +110,50 @@ name. Keep app handlers on names no collection would claim, such as `/api/stripe
 
 Also: a folder starting with `_` is a Next.js *private folder* and is excluded from routing with no
 warning. `api/_webhook/route.ts` will simply never exist.
+
+## The design system
+
+Everything visual is governed by `src/app/(frontend)/globals.css`. Read the comments in it before
+changing anything there — several of the choices are load-bearing and were made against measurements
+recorded in `NORTH01_Implementation_Notes_and_Deviations.md` §1.8.
+
+**`/design-system` is the specimen sheet.** It renders every primitive and shell component in
+default / hover / focus / active / disabled / error / loading and at mobile width. It is the project's
+answer to plan §3.1d, in place of Storybook — see **DEV-20**. It is `noindex, nofollow` and is not
+linked from the storefront navigation. Open it after any visual change.
+
+Four rules that are easy to break by accident:
+
+1. **Do not use a raw palette colour.** There is no `bg-obsidian` — only `bg-canvas`. Tailwind's
+   default colour, type, radius and shadow scales are cleared, so `bg-red-500`, `text-lg`,
+   `rounded-2xl` and `shadow-xl` are compile errors rather than style bugs. That is deliberate.
+2. **Add a token to `globals.css` and to `src/lib/cn.ts` together.** The second file teaches
+   `tailwind-merge` which scale a class belongs to. Miss it and class overrides start failing
+   silently.
+3. **Use a duration token, never a bare `duration-200`.** `prefers-reduced-motion` is honoured by
+   overriding the tokens in one media query; a hard-coded duration escapes it.
+4. **Every `border-*` width needs a `border-<colour>` beside it.** Tailwind v4's Preflight resets
+   borders to `currentColor`, so a bare `border` inherits the text colour. Use `border-border` for
+   rules and dividers, `border-border-control` for anything interactive — the second is the one that
+   meets WCAG 1.4.11, see **DEV-22**.
+
+`Button`, `Link`, `Badge`, `Skeleton` and the layout wrappers are server components. Anything wrapping
+Radix carries `'use client'`; importing it from a server component is fine and creates the boundary
+for you.
+
+## Browser and accessibility checks
+
+Playwright and axe-core are **Phase 27** dependencies and are not in `package.json`. Until then, run
+them from a scratch directory against the dev server rather than installing them here.
+
+Start the server on an explicit port and **confirm what it is serving before trusting it** — two
+unrelated projects occupy `:3000` and `:3001` on the original development machine, and an early
+screenshot pass once captured a different application entirely:
+
+```bash
+PORT=3210 pnpm dev
+curl -s localhost:3210/api/users   # must return Payload's 403 JSON, not something else
+```
 
 ## Generated files that are committed
 

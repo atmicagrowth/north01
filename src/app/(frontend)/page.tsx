@@ -1,55 +1,78 @@
 import type { Metadata } from 'next'
 
+import { PageContainer } from '@/components/layout/page-container'
+import { PageTitle } from '@/components/layout/page-title'
+import { Section } from '@/components/layout/section'
+import { Link } from '@/components/ui/link'
+
 export const metadata: Metadata = {
   title: 'Foundation',
 }
 
 /**
- * Phase 2 baseline page.
+ * Phase 3 baseline page.
  *
- * It exists to prove the storefront route group renders as a React Server Component with
- * Tailwind applied. It is not the homepage and states plainly that nothing is built yet -
- * the plan forbids UI that implies functionality which does not exist. Phase 9 replaces it.
+ * Still not the homepage — Phase 10 builds that. It exists to prove the storefront route
+ * group renders as a server component with the design system applied, and it says plainly
+ * that no storefront feature has been built yet, because the plan forbids UI that implies
+ * functionality which does not exist.
+ *
+ * The global header and footer are not mounted here: Phase 3 builds those components and
+ * proves them on the design-system route; plan §9.1a mounts them once the search overlay,
+ * mega menu and cart drawer behind their controls exist.
  */
 export default function FoundationPage() {
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-12 px-6 py-24">
-      <header className="flex flex-col gap-6">
-        <p className="text-stone text-xs tracking-[0.35em] uppercase">Foundation</p>
-        <h1 className="font-serif text-5xl leading-[1.05] tracking-tight sm:text-7xl">
-          NORTH / 01
-        </h1>
-        <p className="text-stone max-w-prose text-base leading-relaxed">
-          The application shell is running. Next.js renders this route as a server component,
-          Payload is mounted in the same deployable, and Tailwind is applied. No storefront feature
-          has been built yet.
-        </p>
-      </header>
+    <main>
+      <PageContainer width="narrow">
+        <Section spacing="loose">
+          <PageTitle eyebrow="Foundation" size="display-xl">
+            NORTH / 01
+          </PageTitle>
 
-      <dl className="border-graphite grid gap-px border-t text-sm sm:grid-cols-2">
-        <div className="border-graphite flex flex-col gap-1 border-b py-5">
-          <dt className="text-stone text-xs tracking-[0.2em] uppercase">Storefront</dt>
-          <dd>Phase 2 baseline — replaced in Phase 9</dd>
-        </div>
-        <div className="border-graphite flex flex-col gap-1 border-b py-5">
-          <dt className="text-stone text-xs tracking-[0.2em] uppercase">Content</dt>
-          <dd>
-            {/*
-              Intentionally an anchor, not next/link. /admin lives in the (payload) route
-              group under a different root layout, so crossing into it must be a full
-              document load - and prefetching the admin bundle from the storefront would
-              be pure waste.
-            */}
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a
-              className="underline underline-offset-4 transition-opacity hover:opacity-70"
-              href="/admin"
-            >
-              Payload admin
-            </a>
-          </dd>
-        </div>
-      </dl>
+          <p className="mt-m max-w-prose font-sans text-body text-foreground-muted">
+            The application shell is running. Next.js renders this route as a server component,
+            Payload is mounted in the same deployable, and the Phase 3 design system — tokens,
+            typography, primitives and the global shell — is in place. No storefront feature has
+            been built yet.
+          </p>
+
+          <dl className="mt-xl grid gap-px border-t border-border text-body-sm sm:grid-cols-3">
+            <div className="flex flex-col gap-1 border-b border-border py-5">
+              <dt className="font-sans text-micro uppercase text-foreground-muted">Storefront</dt>
+              <dd>Phase 3 baseline — replaced in Phase 10</dd>
+            </div>
+
+            <div className="flex flex-col gap-1 border-b border-border py-5">
+              <dt className="font-sans text-micro uppercase text-foreground-muted">
+                Design system
+              </dt>
+              <dd>
+                <Link href="/design-system">Specimen sheet</Link>
+              </dd>
+            </div>
+
+            <div className="flex flex-col gap-1 border-b border-border py-5">
+              <dt className="font-sans text-micro uppercase text-foreground-muted">Content</dt>
+              <dd>
+                {/*
+                  Intentionally an anchor, not next/link. /admin lives in the (payload) route
+                  group under a different root layout, so crossing into it must be a full
+                  document load — and prefetching the admin bundle from the storefront would
+                  be pure waste.
+                */}
+                {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+                <a
+                  className="rounded-sm text-foreground underline decoration-border-control decoration-1 underline-offset-4 transition-colors duration-(--duration-fast) hover:decoration-foreground"
+                  href="/admin"
+                >
+                  Payload admin
+                </a>
+              </dd>
+            </div>
+          </dl>
+        </Section>
+      </PageContainer>
     </main>
   )
 }

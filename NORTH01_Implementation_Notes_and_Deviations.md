@@ -378,6 +378,424 @@ captured *a different application entirely*. Any browser-based check must first 
 project, `GET /api/users` returning Payload's `{"errors":[{"message":"You are not allowed to perform this
 action."}]}`. Prefer an explicit `PORT=` over the 3000 default.
 
+---
+
+## 1.8 Phase 3 — design system and UI foundation
+
+Phase 3 needed no third-party account and no database. It resolved four questions no canonical
+document settles — **G-12** (numbers for radius, shadow, motion and the type scale), **G-14** (an
+accent the palette forbids), **C-10** (Storybook or equivalent), and the choice of typefaces — and
+each is recorded below with its evidence rather than its conclusion alone.
+
+### 1.8.1 The token layer, and the numbers behind the adjectives — G-12
+
+The visual guide describes radius, shadow, motion and accent in adjectives, and gives type sizes with
+no weights, line-heights or tracking. Plan §3.1a needs numbers. These are them. Every value sits
+inside the guide's stated range wherever it gave one.
+
+**Radius.** Guide §06 asks for "mostly rectangular or softly squared"; §11 forbids "rounded-card
+overload". The rule adopted: **nothing is rounder than 4px unless it is literally a circle.**
+
+| Token | Value | Use |
+|---|---|---|
+| `--radius-none` | 0 | surfaces, cards, images, sections |
+| `--radius-sm` | 2px | buttons, inputs, controls |
+| `--radius-md` | 4px | dialogs, drawers, dropdown panels |
+| `--radius-full` | 9999px | colour swatches, radio dots, bag count — circles only |
+
+**Shadow.** Guide §06 "minimal shadowing"; §11 lists "excessive shadows" under Avoid. On a `#0A0A0A`
+page a shadow is nearly invisible anyway, so elevation is carried by surface lightness plus a 1px
+rule. There is **one** shadow, not a scale — a scale invites use:
+
+```
+--shadow-overlay: 0 24px 64px -24px rgb(0 0 0 / 0.72);
+```
+
+Verified in the browser: exactly one distinct `box-shadow` value exists across the whole specimen
+sheet.
+
+**Motion.** Guide §08 "keep it slow, keep it subtle"; §11 "use motion sparingly and slowly".
+
+| Token | Value | Use |
+|---|---|---|
+| `--duration-instant` | 80ms | pressed / active feedback |
+| `--duration-fast` | 160ms | hover and focus colour, border, opacity |
+| `--duration-base` | 240ms | dropdowns, tabs, accordions, toasts |
+| `--duration-slow` | 400ms | drawers, dialogs, overlay fades |
+| `--duration-editorial` | 700ms | image reveals and crossfades |
+
+Easing is three curves: `--ease-entrance` `cubic-bezier(.22,1,.36,1)`, `--ease-exit`
+`cubic-bezier(.64,0,.78,0)`, `--ease-editorial` `cubic-bezier(.65,0,.35,1)`. Nothing scales and
+nothing bounces.
+
+**Type scale.** The guide's size ranges, with the missing three-quarters filled in. Display levels use
+the serif and are fluid; UI levels use the sans and are fixed, because metadata that resizes with the
+viewport stops being precise.
+
+| Token | Size | Line-height | Weight | Tracking | Family | Guide range |
+|---|---|---|---|---|---|---|
+| `display-xl` | clamp 48→72px | 1.02 | 500 | −0.02em | serif | 48–72 |
+| `display-l` | clamp 36→52px | 1.06 | 500 | −0.015em | serif | 36–52 |
+| `heading-m` | clamp 24→34px | 1.15 | 500 | −0.01em | serif | 24–34 |
+| `heading-s` | clamp 16→20px | 1.30 | 500 | 0 | sans | 16–20 |
+| `body` | 16px | 1.60 | 400 | 0 | sans | 14–16 |
+| `body-sm` | 14px | 1.55 | 400 | 0 | sans | 14–16 |
+| `meta` | 12px | 1.40 | 500 | 0.12em | sans | 11–13 |
+| `micro` | 10px | 1.30 | 500 | 0.18em | sans | 9–10 |
+
+Three weights are defined (400 / 500 / 600) and two are used. Guide §03: "avoid excessive
+font-weight variation."
+
+**Spacing** uses the guide's own XS–XXL names at 6 / 12 / 24 / 40 / 80 / 144px, each inside its stated
+range. Section rhythm is fluid between XL and XXL, so §10's "reduce oversized spacing where necessary,
+but never remove the breathing room" is handled by the scale rather than by per-page overrides.
+
+**The structural decision underneath all of it.** Tailwind's default colour, type, radius and shadow
+scales are **cleared** with `--color-*: initial` and its siblings, then rebuilt with semantic names.
+The raw palette lives in plain `:root` custom properties that generate no utilities, so a component
+cannot address a brand colour directly — there is no `bg-obsidian`, only `bg-canvas`. Consequently
+`bg-red-500`, `text-lg`, `rounded-2xl` and `shadow-xl` **fail to compile** rather than quietly
+contradicting the guide. Verified against the built stylesheet: zero default palette entries survive.
+
+`src/lib/cn.ts` mirrors those overrides into `tailwind-merge`. Without it, tailwind-merge cannot tell
+that `text-meta` is a font size while `text-foreground` is a colour, and would silently drop one when
+a caller overrides a primitive's class.
+
+### 1.8.2 Accent, selection, and the border problem — G-14
+
+G-14: sale/compare-at prices and selected states need a visible accent, but the palette forbids
+saturated colour and prescribes low-contrast graphite borders. Three separate answers were needed.
+
+**1. Selection is contrast, not colour.** A checked checkbox is a solid Bone fill at 17.10:1; a
+selected tab is Stone→Bone plus a 1px Bone rule; a current nav item is the same. That is a louder
+signal than any hue this palette permits, and it costs nothing from the colour budget. Soft Taupe
+stays what guide §02 calls it — "a rare accent, not a general-purpose highlight" — restricted by rule
+to **a 1px rule, ring or underline, or a ≤10px uppercase label. Never a fill, never body text, never
+an icon colour.**
+
+**2. Compare-at price is typographic.** The live price stays Bone; the struck-through price is Stone
+(7.91:1) with `line-through`; an optional `SALE` marker is a Micro-sized Soft Taupe outline badge. No
+red, no fill. Deliberately **Stone and not the dimmer tone** — a struck price is still information a
+customer reads.
+
+**3. The border contradiction is real, and it is split rather than resolved.** Graphite `#33312D` is
+**1.53:1** against the page. WCAG 1.4.11 requires **3:1** for the boundary of a control a user must be
+able to find, so a graphite-bordered input is not identifiable at AA. The split:
+
+- **Structural rules, dividers, hairlines → Graphite.** Decorative under 1.4.11 and exempt. This is
+  the "usually low-contrast graphite" the guide asks for, and it is the majority of borders.
+- **Interactive control boundaries → Muted Stone `#77726B` (4.15:1).** Still a palette colour, still
+  quiet, and now findable. Recorded as **DEV-22**.
+
+**4. An error needs a colour the palette does not contain.** See **DEV-21**.
+
+**Measured contrast, computed from the hex values and re-verified in the live DOM**, against Obsidian
+`#0A0A0A`:
+
+| Colour | Ratio | Verdict |
+|---|---:|---|
+| Warm White `#FAF8F4` | 18.67:1 | AAA |
+| Bone `#F1EEE8` | 17.10:1 | AAA |
+| Soft Taupe `#C7B8A0` | 10.17:1 | AAA |
+| Stone `#A9A39A` | 7.91:1 | AAA |
+| Oxide `#C0745F` | 5.57:1 | AA |
+| Muted Stone `#77726B` | 4.15:1 | **fails AA for normal text** |
+| Graphite `#33312D` | 1.53:1 | decorative only |
+
+**A token was deleted because of that second-to-last row.** The first draft had
+`--color-foreground-subtle` (Muted Stone) as a "tertiary text" tone, with a comment restricting it to
+large text and disabled content. Every one of its first uses broke that restriction, and axe-core
+caught them as `color-contrast` violations. **A token whose correct use has to be remembered is a
+trap**, so it was removed rather than re-documented. Muted Stone now answers only to `disabled`, where
+WCAG 1.4.3 genuinely exempts it, and the hierarchy below primary is carried by size and tracking
+instead — which is closer to guide §02 anyway: "the luxury comes from proportion, texture, and
+contrast, not from having many colors."
+
+### 1.8.3 Typography — what was chosen, and the two traps that were avoided
+
+**Display: Bodoni Moda. UI: Instrument Sans.** Both SIL OFL 1.1 with **no Reserved Font Name**, both
+verified against the upstream licence text in `google/fonts`, both committed as `latin`-subset
+variable `.woff2` alongside their full licence files as the OFL requires. 76 KB for the pair.
+
+**Self-hosted through `next/font/local`, not `next/font/google`.** The Google loader self-hosts the
+*browser* request but performs a **build-time fetch** of `fonts.googleapis.com`, which fails on an
+egress-restricted or offline build. Plan §3.1b says "self-host where practical"; at 76 KB, committing
+the files is entirely practical and removes a network dependency from `pnpm build`.
+
+**Why Bodoni Moda.** Guide §03 asks for a serif that is "elegant, high contrast, fashion-oriented,
+slightly dramatic, never playful". That describes a Didone — the lineage of fashion mastheads — and
+this is the closest libre face to it.
+
+**Why Instrument Sans, and what it beat.** The sans is used almost entirely for small tracked
+uppercase sitting against serif cap lines, so cap height is the alignment metric that matters. Bodoni
+Moda's cap is 0.750 em; **Instrument Sans is 0.720 (≈4% off), Inter 0.7275, Archivo 0.686 — nearly 9%
+short**, which makes a nav label look visibly smaller than the serif beside it at the same pixel size.
+Its weight range is also only 400–700, which makes guide §03's "avoid excessive font-weight variation"
+structural rather than a matter of discipline. *Archivo was chosen first and changed on that
+cap-height evidence.* **Inter and Geist were rejected on brand distance** — Inter is the UI face of
+every SaaS dashboard and Geist is Vercel's corporate typeface, and guide §12's final test ("if a page
+feels like it could belong to any generic ecommerce template, it is not finished") makes that a
+requirement rather than a preference.
+
+**Trap 1 — Google serves two different Bodoni Moda variable fonts, and the default one is wrong.**
+Without an explicit optical-size request you get a 25,884-byte file whose PostScript name is
+`BodoniModa11pt-Regular`: the 11-point *text* cut, **with the `opsz` axis physically absent**. The
+correct file is 46,260 bytes and carries `wght 400–900` **and `opsz 6–96`**. Since
+`font-optical-sizing: auto` is the browser default, a 72px campaign headline then gets the fine
+display cut automatically. Ship the wrong 26 KB and the headlines quietly become a competent serif
+instead of a fashion Didone, with nothing to indicate why. **Verified in the browser rather than
+assumed:** measuring a string at `opsz 6` versus `opsz 96` gives a 45.45px width difference, so the
+axis is live in what we ship.
+
+**Trap 2 — `next/font/local` never emits `unicode-range`.** These files hold roughly 250 glyphs.
+Without the descriptor the browser assumes the file covers everything, uses it for characters it
+lacks, and draws `.notdef` tofu instead of falling through to the fallback stack — so a customer name
+or product description outside Latin-1 would render as boxes. The range is supplied through
+`declarations`.
+
+**And a build-breaking detail worth knowing:** Next's font loader reads these options **statically at
+build time**, so every value must be a literal. Sharing the unicode range through a `const` fails the
+build with `missing field 'value' at line 1 column 325`. It is written out at both call sites for
+that reason, not by oversight.
+
+Two further specifics that fail *silently* rather than loudly, both handled: a variable font still
+needs an explicit `weight` range string (omit it and the `@font-face` gets no `font-weight`, the
+browser pins the face to `normal`, and the whole axis is dead), and a `wdth`-axis file additionally
+needs a `font-stretch` descriptor the loader never emits — which is part of why the **wght-only**
+Instrument Sans file is the one committed.
+
+FOIT/FOUT is answered by `display: 'swap'` **plus** `adjustFontFallback`, which generates a
+metric-matched fallback so the swap does not move the layout. It is the combination, not `display`
+alone.
+
+### 1.8.4 C-10 settled — an in-app specimen route, not Storybook
+
+Plan §3.1d permits "a Storybook **or equivalent** visual test page"; the tech stack lists Storybook as
+*Recommended*; feature matrix §33 names it. **The equivalent was chosen.** See **DEV-20**.
+
+**This is a cost-and-fit judgment, not a compatibility verdict — Storybook works.** It was built, on
+this machine and this stack, before the decision was taken: Storybook 10.5.10 declares
+`next: ^14.1.0 || ^15.0.0 || ^16.0.0`, resolves clean under `--strict-peer-dependencies`, and compiles
+Tailwind v4 through the project's own PostCSS config. Three project-specific facts decided it anyway:
+
+1. **Typography would not be production-faithful.** In Storybook, `next/font/google` resolves to
+   `fonts.gstatic.com`; the real app self-hosts. For a brand that is fundamentally a display serif on
+   `#0A0A0A`, verifying type on the one surface where type is delivered differently defeats the point.
+2. **A second bundler, permanently.** Next 16 builds with Turbopack; Storybook offers webpack or Vite.
+   A green Storybook build is not evidence the app builds, and vice versa.
+3. **It cannot model this repository's real styling risk.** The `(frontend)`/`(payload)` split — the
+   thing that keeps Tailwind out of `/admin` — has no representation in Storybook at all.
+
+Against that, roughly 250–370 added packages, some 24 phases before its testing story (Vitest-based)
+arrives. Meanwhile plan §27.1e already runs `@axe-core/playwright` against representative **routes**,
+so an in-app route joins that sweep as one more entry — which is exactly how the zero-violation result
+in §1.8.7 was obtained.
+
+**What was given up, stated plainly:** the args/controls panel, per-component URL addressing,
+autodocs, the viewport toolbar, and true component isolation. The last is mitigated by giving every
+specimen its own bordered cell. Play-function interaction tests are replaced — arguably upgraded — by
+Playwright driving the real route.
+
+**The route is `/design-system`**, inside `(frontend)` so it inherits the real layout, CSS graph and
+fonts. It is `robots: noindex, nofollow`, is absent from the primary navigation, and announces itself
+in-page as internal documentation. It is deliberately *not* env-gated: the typed environment module is
+Phase 4's (§4.1a), and inventing a second mechanism now would duplicate it. **Phase 32 should decide
+whether it ships publicly.**
+
+**Forcing the un-renderable states.** §3.1d requires hover, focus and active, which cannot be rendered
+statically. Rather than hand-copying each variant's hover classes onto a second copy of the component
+— which proves only that the transcription is correct — the three built-in Tailwind variants are
+extended with an attribute hook, so `data-preview="hover"` makes a component's **own** `hover:`
+classes apply:
+
+```css
+@custom-variant hover {
+  @media (hover: hover) { &:hover { @slot; } }
+  &[data-preview~='hover'] { @slot; }
+}
+@custom-variant active (&:active, &[data-preview~='active']);
+@custom-variant focus-visible (&:focus-visible, &[data-preview~='focus']);
+```
+
+`hover` keeps its `@media (hover: hover)` guard — dropping it is how a design system ends up with
+sticky hover states on touch devices. The hook is inert wherever the attribute is absent, which is
+everywhere but that page.
+
+### 1.8.5 What the primitives are built on
+
+All eighteen of plan §3.1c's primitives exist, plus a `FieldMessage` — the text half of an error
+state, since §3.1d requires one and WCAG 1.4.1 forbids signalling it by colour alone.
+
+**One dependency covers every primitive: `radix-ui@1.6.7`,** the unified package, rather than a dozen
+individual `@radix-ui/react-*` packages. Phase 3's full install is five runtime packages —
+`radix-ui`, `class-variance-authority@0.7.1`, `clsx@2.1.1`, `tailwind-merge@3.6.0` and
+`lucide-react@1.33.0` — taking the tree from 706 to **782 packages**, clean under
+`--strict-peer-dependencies`.
+
+**`shadcn init` was deliberately not run, and that was verified rather than assumed.** Reproduced four
+times against a byte-faithful replica of this repository: `init` does not overwrite `globals.css`, it
+*merges* — and it injects `@apply bg-background text-foreground` into the existing `body {}` rule.
+shadcn's `:root` is the **light** palette, its dark values live under a `.dark` class this app does
+not have, so **running it flips the storefront from `#0A0A0A` to white.** It also writes
+`--font-sans: var(--font-sans)`, a self-referencing custom property that destroys the font stack
+(upstream issue #10768). `--no-css-variables` does **not** prevent any of this; it only flips a
+boolean in `components.json`. Also worth knowing for later phases: the current CLI's default component
+base is **Base UI, not Radix**, and `new-york`/`default` are legacy style ids — most existing shadcn
+knowledge is stale for 4.19.0.
+
+What *is* used is the shadcn **abstraction**, exactly as plan §3.1c directs — the same file layout,
+the same `cn()` + `cva` variant composition, the same `data-slot` attributes, the same Radix
+composition — with every class written against NORTH / 01's tokens instead of shadcn's
+`--background`/`--primary` vocabulary. shadcn is a source pattern here, not a runtime dependency.
+
+**Two components depart from what the current shadcn registry would install**, and both drop a
+dependency rather than adding one. Recorded as **DEV-23**:
+
+- **Drawer is Radix Dialog, not `vaul`.** vaul exists to provide drag-to-dismiss and iOS bottom-sheet
+  physics, neither of which any document asks for and both of which cut against §06's "restrained
+  motion". Radix Dialog already supplies the focus trap, focus restoration, Escape, scroll containment
+  and `aria-hidden` management that plan §9.1c requires of the mobile drawer; the slide is six lines
+  of CSS.
+- **Toast is Radix Toast, not `sonner`.** sonner would add a second animation and stacking model plus
+  `next-themes` — a theme switcher, on a site with exactly one theme.
+
+**Overlays animate in CSS, driven by the `data-state` attribute Radix already writes**, not through an
+animation library. Radix's `Presence` waits for `animationend`, so exits play in full. Three
+consequences, all of them wanted: no JavaScript runs to move a drawer, the animations cannot drift out
+of step with the duration tokens, and `prefers-reduced-motion` is honoured from one media query.
+
+**A Radix regression that must not be forgotten.** `@radix-ui/react-dialog@1.1.23` — the version
+inside `radix-ui@1.6.7` — **removed the development warning for a missing `DialogTitle`.** It emits
+`aria-labelledby` only when a title exists, so a dialog without one is announced with no name at all,
+silently, in every environment. `DialogContent` and `DrawerContent` therefore take `title` as a
+**required prop**, with `titleHidden` rendering it inside `VisuallyHidden` when the design shows no
+heading. Two other things Radix does not supply, and which these components now require: an
+`aria-label` on `TabsList`, and an accessible name on the `Select` trigger.
+
+The same make-it-a-compile-error approach applies to `IconButton`, whose `label` prop is required —
+plan §3.1d asks for `aria-label` on icon-only buttons, and this moves it from a review item to a type
+error.
+
+**Where things live.** `src/components/ui/` for primitives, `src/components/layout/` for the shell,
+`src/lib/cn.ts` for the one class-composition helper — named for what it does rather than `utils.ts`,
+which plan §1.3 warns against becoming a dumping ground.
+
+### 1.8.6 Choices that follow the plan rather than depart from it
+
+Recorded here, not in Section 2, for the reason established in §1.7.5: Section 2 is reserved for
+entries that **override** a canonical document, and these do not.
+
+**The global shell is built but not mounted.** Plan §3.1d says *build* Header, Desktop nav, Mobile
+nav, Footer, Page container, Section wrapper, Page title, Editorial block wrapper. Plan §9.1a is what
+*mounts* the storefront shell, together with the mega menu, search overlay and cart drawer that make
+its controls do something. Mounting a header now whose Search and Bag buttons did nothing would be
+precisely the fake UI the plan forbids, so the components are proved on `/design-system` and the
+storefront root layout stays bare until Phase 9. The header's utility actions are **links** to their
+eventual routes rather than buttons wired to nothing, for the same reason.
+
+**Navigation data is a typed constant, not a content system.**
+`src/components/layout/navigation.ts` encodes **DEV-07**'s six primary items and **DEV-01**'s
+four-item Edit set with Essentials under Collections, plus C-07's Journal-in-the-footer. Plan §9.1a
+moves the content into Payload site settings; the types stay.
+
+**Phase 3 needed nothing from the project owner**, as §1.5 predicted. No database, no third-party
+account, no secret.
+
+### 1.8.7 What the real-browser pass found
+
+Run against `PORT=3210` with the identity check first — `GET /api/users` returning Payload's 403 JSON
+— because §1.7.6 records two unrelated projects occupying `:3000` and `:3001` on this machine.
+
+**Everything below was measured, not eyeballed.** Three suites: computed-style and geometry
+assertions, a keyboard and focus-management suite, and axe-core.
+
+| Checked | Result |
+|---|---|
+| Palette, type scale, tracking, weights, line-heights | all match §1.8.1 exactly; Display XL measures 72px / 73.44px / 500 at 1440 |
+| Both faces self-hosted and loaded, `unicode-range` present | pass |
+| `wght` and `opsz` axes live | Δ114.75px and Δ45.45px on a measured string |
+| Contrast of body copy, nav, error text | 7.91 / 7.91 / 5.57 — all AA |
+| Focus indicator | 2px solid Bone at 2px offset on every tab stop |
+| Radius guardrail | no element rounder than 4px unless circular |
+| Shadow guardrail | exactly one distinct `box-shadow` in the system |
+| Horizontal overflow at 1440 / 768 / 390 | none |
+| WCAG 2.5.8 target size | pass, with the inline and 24px-spacing exceptions computed explicitly rather than asserted |
+| Dialog · Drawer · Dropdown | focus trap in both directions, Escape, focus restoration to the trigger, page scroll released on close |
+| Modal isolation | the rest of the page really is `aria-hidden` while a dialog is open |
+| Drawer | body scrolls, header and footer stay pinned, overscroll contained |
+| Tabs · Accordion · Select | roving focus, single tab stop, real `<h3>` headings, `role="region"`, keyboard-selectable value |
+| Mobile nav at 390px | group headers expand rather than navigate; account and wishlist reachable; Escape restores focus |
+| `prefers-reduced-motion` | every duration token collapses to 1ms |
+| **axe-core, WCAG 2.0/2.1/2.2 A + AA, desktop and mobile** | **0 violations** |
+| `/admin` unaffected | body computes to Payload's own colours and font stack — **D-08 holds** |
+
+**Two genuine defects were found and fixed, both by axe rather than by eye:**
+
+1. **A loading button had no accessible name.** The label was hidden with `invisible`, and
+   `visibility: hidden` removes text from the accessibility tree — so `aria-busy` was being announced
+   on a nameless control. It is now `opacity-0`, which hides the label from sight and keeps the name.
+   The distinction between those two utilities is load-bearing and not obvious.
+2. **The `foreground-subtle` contrast failures** described in §1.8.2, which led to deleting the token.
+
+**One change came out of the visual review rather than a test.** A loading button initially rendered
+in its *disabled* colours, so a busy primary action read as unavailable. Each variant now restores its
+resting colours while loading, through `data-loading:disabled:*` — which compiles to
+`[data-loading]:disabled`, one class more specific than the `disabled:*` it overrides, so the win is
+by **specificity** rather than by stylesheet order, which Tailwind controls and we do not.
+
+**A reverted attempt worth recording, because it is a trap anyone would fall into.** Busy state was
+first implemented as `aria-disabled` plus an `onClick` guard, to keep the button focusable — a
+disabled `<button>` loses focus to the document body, which matters on submit. It broke the production
+build: `Event handlers cannot be passed to Client Component props`. Attaching an `onClick`
+unconditionally makes the component impossible to render from a Server Component, and `Button` is used
+from server components throughout. The real `disabled` attribute is used instead. **The focus-loss
+consequence is real and belongs to Phase 7**, which owns forms and has to move focus and announce the
+result anyway; a button primitive cannot solve it for its caller.
+
+**Playwright and axe-core were used as tools, not added to the project.** Both are Phase 27
+dependencies, and plan §2.1b forbids installing a later phase's packages early, so both run from the
+scratchpad directory against the dev server. `package.json` is untouched by the verification pass.
+
+### 1.8.8 Visual review against the guide
+
+Required by visual-reference rule 6 and step 8 of the completion gate in `docs/DEVELOPMENT.md`.
+Reviewed in a real browser at 1440×900 and 390×844 against `NORTH01_Visual_Guide_OnlineOnly.md`.
+
+| Guide requirement | Assessment |
+|---|---|
+| §02 palette, black and charcoal dominant | held; only ten colours exist and the defaults cannot compile |
+| §03 refined high-contrast serif for display | **the Phase 2 gap is closed** — Bodoni Moda replaces the generic `ui-serif` stack |
+| §03 serif/sans contrast used intentionally | the display serif never appears below 24px; metadata is always sans |
+| §01 visual tension, "oversized type with tiny metadata" | 12px tracked eyebrow above 72px Didone, throughout |
+| §04 disciplined max-width grid, generous outer margins | one container; gutter fluid 20→64px; no page sets its own |
+| §05 spacing language | six named steps, all inside the guide's ranges |
+| §06 thin borders, restrained fills, no pill buttons | 2px radius; one bone fill, reserved for the primary action |
+| §06 dividers 1px and low-contrast, never decorative noise | Graphite hairlines only |
+| §06 badges small, typographic, quiet, monochrome | 10px outlined; no filled stickers |
+| §11 no gradients, glow, glassmorphism, neon, rounded-card overload | none present; the radius and shadow guardrails are machine-checked |
+| §10 mobile quiet, monochrome, legible; hierarchy preserved | verified at 390px — no overflow, drawer nav, wordmark centred |
+| §12 final test — recognisable as NORTH / 01 with the text removed | yes: palette, Didone proportions, hairline rules and restraint carry it |
+
+The reference image was used as directional context only, per rule 10. Its five-item navigation is
+**not** followed — see **DEV-07**.
+
+### 1.8.9 Confirmation sweep of earlier deviations
+
+Required by the append rule, step 4.
+
+| Entry | Due | Status after Phase 3 |
+|---|---|---|
+| **DEV-14** — substantial work uses feature branches | ongoing | **Confirmed again.** Phase 3 ran on `phase-3-design-system`, not `main`. |
+| **DEV-16** — route-group topology insulates the admin | Phase 2 onward | **Confirmed under load.** Phase 3 is the first phase that could plausibly have broken it: it added a full token layer, two self-hosted typefaces and eighteen components. Re-verified two ways — no admin build manifest references the Tailwind chunk, and `/admin`'s live `<body>` computes to Payload's own colours and font stack. |
+| **DEV-01** — Essentials is a Collection | Phases 9, 11, 23 | **Encoded.** `navigation.ts` places Essentials under Collections and keeps the Edit set at four. Still to be exercised by Phase 9. |
+| **DEV-07** — six primary nav items, including NEW | Phase 9 | **Encoded.** Six items ship in `primaryNav`. Still to be exercised by Phase 9. |
+| DEV-05 — Cloudinary first-party adapter | Phase 8 | Still pending. Not due. |
+| DEV-03 — order state as two axes | Phase 18 | Still pending. Not due. |
+| DEV-06 — hosted vs embedded Checkout | Phase 17 | Still open. Not due. |
+| **D-10** — environment guard against schema push | Phase 4 | **Still owed.** Phase 3 did not touch it. |
+
+No other deviation was due for confirmation in Phase 3.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -712,6 +1130,158 @@ moved intact to notes **§1.7.5**. The identifier is retained rather than reused
 
 ---
 
+---
+
+### DEV-20 — Storybook is not installed; the visual test surface is an in-app route
+
+**The tech stack says:** Storybook is the "Component workbench", marked *Recommended*.
+**Feature matrix §33 says:** the Design System *"Uses: Storybook + Tailwind + Radix + Motion"* and
+lists what it must document.
+**Plan §3.1d says:** *"Create a Storybook **or equivalent** visual test page showing every primitive
+in..."*
+
+**We do:** build the equivalent — a real route at `/design-system` inside the `(frontend)` group,
+rendering every primitive and shell component in default / hover / focus / active / disabled / error /
+loading and at mobile width. Storybook is **not** installed.
+
+**Why:** the plan is rank 1 and is both the most specific and the most permissive of the three, so
+"or equivalent" governs. Compatibility was never the issue — **Storybook 10.5.10 was actually built
+against this exact stack before the decision, and it works.** The three reasons are project-specific:
+Storybook's `next/font` shim resolves to `fonts.gstatic.com` while the app self-hosts, so the one
+surface built to sign off typography would be the one surface where typography is not what ships; it
+requires a second bundler (webpack or Vite) alongside Next 16's Turbopack, so a green Storybook build
+is not evidence the app builds; and it cannot represent the `(frontend)`/`(payload)` route-group split
+that is this repository's actual styling risk. It would also arrive roughly 24 phases before its
+Vitest-based testing story does, for 250–370 packages.
+
+The obligation C-10 identified — *"every primitive is demonstrable in all its states"* — is met, and
+plan §27.1e's `@axe-core/playwright` route sweep picks the page up for free.
+
+**What is given up:** args/controls, per-component URL addressing, autodocs, the viewport toolbar, and
+component isolation. See notes §1.8.4.
+
+*Resolves C-10. Affects Phase 3 and Phase 27. **Revisit at Phase 27**, where Storybook's cost falls
+and its value peaks.*
+
+---
+
+### DEV-21 — Oxide: one signal colour the palette does not contain
+
+**The visual guide §02 says:** nine colours, and *"avoid introducing additional saturated colors
+unless there is a strong brand reason."*
+
+**We do:** add exactly one — **Oxide `#C0745F`** — used only for error text, error borders and the
+error badge.
+
+**Why:** an error a customer must notice cannot be signalled by shape alone, and WCAG 1.4.1 forbids
+signalling it by colour alone either — so the error state is *always* colour **plus** an icon **plus**
+text. But it still needs a colour, and the palette contains none that reads as a warning: reusing Bone
+would make an invalid field indistinguishable from a focused or selected one, which is worse than
+adding a hue.
+
+It is deliberately the least saturated hue that still reads as a warning — **H13 S43 L56**, against
+the palette's own warm H35–40 family, so it sits beside Soft Taupe rather than fighting it. Contrast
+on all three surfaces is **5.57 / 5.13 / 4.79**, so it clears AA for normal text everywhere it can
+appear. A true alarm red sits near S85; this is roughly half that.
+
+**What was not added:** no success colour. A success toast is Bone with a check icon. One non-neutral
+hue in the entire system, and it is the one that is a safety requirement.
+
+*Resolves part of G-14. Affects Phase 3 onward.*
+
+---
+
+### DEV-22 — Interactive control boundaries are Muted Stone, not Graphite
+
+**The visual guide §02 says:** *"Borders should usually be low-contrast graphite rather than bright
+white."* §06 asks inputs for *"thin graphite borders."*
+
+**We do:** keep Graphite `#33312D` for structural rules, dividers and hairlines — the majority of
+borders — and use **Muted Stone `#77726B`** for the boundary of anything interactive: inputs,
+textareas, selects, checkboxes, radios and outline buttons.
+
+**Why:** Graphite is **1.53:1** against the page. WCAG 1.4.11 requires **3:1** for the visual
+information needed to identify a user-interface component, so a graphite-bordered input is not
+identifiable at AA — a customer with low vision cannot see where the field is. Muted Stone is 4.15:1,
+is itself a palette colour, and is still unmistakably low-contrast; nothing brighter was introduced,
+and "bright white" borders remain forbidden. The guide's *"usually"* is satisfied, because dividers
+and rules outnumber control boundaries and all of them stay Graphite.
+
+*Resolves part of G-14. Affects Phase 3 onward.*
+
+---
+
+### DEV-23 — Drawer is built on Radix Dialog, and Toast on Radix Toast
+
+**The tech stack says:** UI primitives are *"shadcn/ui + Radix UI"*.
+**Plan §3.1c says:** *"Do not customize every Radix primitive from scratch if a good shadcn
+abstraction exists, but do customize all visible styling to match NORTH / 01."*
+
+**We do:** follow the shadcn abstraction for all eighteen primitives — its file layout, its
+`cn()` + `cva` composition, its `data-slot` attributes, its Radix composition — while declining the
+two components where the current shadcn registry reaches outside Radix. **Drawer is Radix Dialog
+anchored to an edge, not `vaul`. Toast is Radix Toast, not `sonner` + `next-themes`.** The
+`shadcn` CLI is not run and is not a dependency; the unified `radix-ui@1.6.7` package supplies every
+primitive.
+
+**Why:** `vaul` exists for drag-to-dismiss and iOS bottom-sheet physics, which no document requests
+and which cut against guide §06's "restrained motion"; Radix Dialog already provides every behaviour
+plan §9.1c demands of the mobile drawer, and the slide is six lines of CSS. `sonner` would add a
+second animation and stacking model, plus `next-themes` — a theme switcher, on a permanently dark
+site. Both choices remove a dependency rather than adding one, which plan §0.1.13 asks for directly.
+
+Running `shadcn init` was separately ruled out on **verified** grounds, not preference: it merges into
+`globals.css` and injects `@apply bg-background text-foreground` into `body`, and because its `:root`
+is the light palette with dark values under a `.dark` class this app does not have, **it flips the
+storefront from `#0A0A0A` to white.** It also writes the self-referencing `--font-sans: var(--font-sans)`
+that destroys the font stack. `--no-css-variables` does not prevent either. Reproduced four times in
+throwaway sandboxes; details in notes §1.8.5.
+
+*Affects Phase 3 onward, and Phase 9 in particular, which consumes Drawer for the cart and the mobile
+navigation.*
+
+---
+
+### DEV-24 — Motion is not installed in Phase 3
+
+**Feature matrix §33 says:** the Design System *"Uses: Storybook + Tailwind + Radix + Motion."*
+**The tech stack says:** Motion provides *"restrained page/component motion"*, required for the demo.
+
+**We do:** install no animation library in Phase 3. Overlay enter and exit animations are CSS
+keyframes driven by the `data-state` attribute Radix already writes, and Radix's `Presence` holds the
+element mounted until `animationend` so exits play in full. `motion@13.1.1` was installed early in the
+phase and **removed** once it was clear nothing in the design system needed it.
+
+**Why:** plan §2.1b — *"do not install the entire final dependency list on day one"* — and §0.1.13's
+"avoid unnecessary dependencies". Beyond phase discipline, CSS is the better tool for this specific
+job: no JavaScript runs to move a drawer, the animations cannot drift out of step with the duration
+tokens, and `prefers-reduced-motion` is honoured from the single media query that overrides those
+tokens. An animation library sitting alongside would create a second place where motion is defined.
+
+Motion remains an approved technology and is genuinely needed for the guide's "slow, subtle, cinematic"
+editorial reveals and crossfades. **It moves to Phase 10**, with the homepage editorial system that
+first has something to reveal. `docs/STACK_VERSIONS.md` is corrected accordingly.
+
+*Affects Phases 3 and 10.*
+
+---
+
+### DEV-25 — The footer's newsletter column is deferred
+
+**The structure document §20 says:** the footer has five columns — *"Shop. Help. About/editorial.
+Newsletter. Social/legal."*
+
+**We do:** ship Shop, Help, Brand and the legal/social row. `SiteFooter` takes a `newsletter` slot and
+Phase 3 leaves it empty.
+
+**Why:** a signup field rendered now would post nowhere. The subscriber collection is Phase 6.1n and
+the mail is Phase 19, so the input would be UI that looks functional and silently does nothing —
+which plan §0.1.17 forbids outright and `AGENTS.md` repeats. The column exists in the layout, and the
+grid widens from three to four columns the moment the slot is filled, so the phase that can make it
+work has somewhere to put it and no layout to renegotiate.
+
+*Affects Phases 3, 6 and 19. **To be confirmed in Phase 19.***
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -722,5 +1292,6 @@ moved intact to notes **§1.7.5**. The identifier is retained rather than reused
 | Phase 2 — debt clearance | 2026-08-23 | Notes §1.7.4: empty-string env fallbacks replaced with fail-fast (§4.1b), `sslmode` hardened to `verify-full` (closes the pg-v9 item), `/api` namespace sharing verified empirically and the collision rule recorded for Phase 6. |
 | Phase 2 — visual review | 2026-08-23 | Note §1.7.6: the baseline page reviewed in a real browser at 1440×900 and 390×844 against the visual guide — palette, visual tension, guardrails and responsive behaviour all measured rather than eyeballed. Closes step 8 of the phase completion gate, which the earlier Phase 2 commits had skipped. Records the port-identity hazard found while doing it. |
 | Phase 2 — append audit | 2026-08-23 | Structural corrections to this document. Phase 2 notes renumbered from `1.5a–1.5c`, which sat *before* §1.5 and implied they subdivided it, to **§1.7** with subsections. Append log put back in date order. Step 4 of the append rule carried out and recorded as **§1.7.3** — **DEV-04** and **DEV-14** confirmed; DEV-05 (Phase 8) and DEV-03 (Phase 18) still pending, not due. **DEV-18** and **DEV-19** moved to §1.7.5: both recorded compliance, not departure, and did not belong in Section 2. |
+| Phase 3 — design system and UI foundation | 2026-08-24 | Notes **§1.8**: the token layer and the numbers behind the guide's adjectives (**G-12**), accent/selection/border resolution and the contrast table (**G-14**), typeface selection with the Bodoni Moda optical-size trap and the `unicode-range` trap, **C-10 settled** in favour of an in-app specimen route, what the primitives are built on, the real-browser and axe-core pass, and the visual review. Deviations **DEV-20** (no Storybook), **DEV-21** (Oxide signal colour), **DEV-22** (control borders are Muted Stone), **DEV-23** (Radix Dialog drawer, Radix Toast), **DEV-24** (Motion deferred to Phase 10), **DEV-25** (newsletter column deferred). Step 4 carried out as **§1.8.9** — DEV-14 and DEV-16 re-confirmed, DEV-01 and DEV-07 encoded in `navigation.ts`. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

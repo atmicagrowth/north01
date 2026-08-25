@@ -67,12 +67,19 @@ When a material decision changes, update the affected documents and re-run the c
 
 ## Status
 
-**Phase 2 — Scaffold the Next.js + Payload application: complete, Gate 1 passed.** The application shell
-runs against Neon PostgreSQL 17: Next.js 16.3.2 with Payload 3.88.0 embedded in the same deployable,
-TypeScript strict, ESLint at zero warnings, Prettier, and Tailwind v4. Storefront, Payload admin and the
-Payload REST API all verified end to end. `pnpm build`, `pnpm typecheck` and `pnpm lint` pass.
+**Phase 3 — Design system and UI foundation: complete.** The application shell runs against Neon
+PostgreSQL 17 — Next.js 16.3.2 with Payload 3.88.0 embedded in the same deployable — and now carries
+the design system on top of it: a token layer that makes off-system values fail to compile, two
+self-hosted typefaces (Bodoni Moda and Instrument Sans, both SIL OFL 1.1), all eighteen core
+primitives on Radix, and the global shell components. `pnpm build`, `pnpm typecheck` and
+`pnpm lint --max-warnings 0` pass; axe-core reports **0 violations** at WCAG 2.2 AA on desktop and
+mobile.
 
-No storefront feature is built yet — that starts with the design system in Phase 3.
+**[`/design-system`](src/app/(frontend)/design-system) is the specimen sheet** — every primitive in
+every state, in the real application rather than a separate workbench.
+
+No storefront *feature* is built yet. The shell components exist and are proved, but they are mounted
+in Phase 9, alongside the search overlay and cart drawer that make their controls do something.
 
 Local setup: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
