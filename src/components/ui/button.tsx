@@ -33,9 +33,9 @@ const buttonVariants = cva(
     // specific than the plain `disabled:*` it overrides — so the win is by specificity
     // rather than by stylesheet order, which Tailwind controls and we do not.
     //
-    // Only colours are restored, not `pointer-events`. A `cursor-wait` would need
-    // pointer events back on, and keeping them off is the property that makes a busy
-    // button inert even in the `asChild` case where it is not a real `<button>`.
+    // Only colours are restored, not `pointer-events` — a `cursor-wait` would need
+    // pointer events back on, and keeping them off is what stops a busy button
+    // registering hover.
 
     // Icons inside a button are decoration for the label beside them.
     "[&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0",
@@ -88,30 +88,53 @@ const buttonVariants = cva(
   },
 )
 
-export type ButtonProps = ComponentProps<'button'> &
-  VariantProps<typeof buttonVariants> & {
-    /** Render as the single child element instead of a `<button>`. */
-    asChild?: boolean
-    /**
-     * Marks the action as in flight: sets `aria-busy`, blocks activation, and swaps the
-     * label for a spinner without changing the button's width — a commerce button that
-     * resizes mid-submit moves the layout under the customer's cursor.
-     *
-     * Busy is expressed with the real `disabled` attribute rather than `aria-disabled`
-     * plus a JavaScript click guard. The guard version was written first and reverted:
-     * attaching an `onClick` unconditionally makes this component impossible to render
-     * from a Server Component, and Button is used from server components throughout.
-     * `disabled` needs no JavaScript, cannot be raced, and keeps the primitive free of a
-     * client boundary.
-     *
-     * **The consequence to know about:** a `<button>` that becomes disabled while focused
-     * loses focus to the document body. In a real submit flow the surrounding form has to
-     * move focus somewhere deliberate and announce the result. **Phase 7 owns that**, when
-     * forms first exist; it is a form-level responsibility, not something a button
-     * primitive can solve for its caller.
-     */
-    loading?: boolean
-  }
+/**
+ * `asChild` and `loading` are mutually exclusive, and the type says so.
+ *
+ * `asChild` hands the consumer's element to Radix's Slot, which adopts a child only when
+ * there is exactly one of them. A spinner is necessarily a second child, so the two
+ * features cannot both be honoured — the earlier implementation rendered the label
+ * wrapper *and* a `{loading ? … : null}` slot unconditionally, and `React.Children.count`
+ * counts that `null`, so **every** `<Button asChild>` threw "Slot failed to slot onto its
+ * children" whether or not `loading` was set. Nothing caught it: TypeScript cannot model
+ * child arity, and no call site used it yet.
+ *
+ * Rather than reconcile them, the combination is now unrepresentable. It is also
+ * meaningless: `asChild` exists to turn this into a link, and a link navigates rather
+ * than submits, so it has nothing to be busy about.
+ */
+type ButtonOwnProps = VariantProps<typeof buttonVariants> &
+  (
+    | {
+        /** Render as the single child element instead of a `<button>`. */
+        asChild: true
+        loading?: never
+      }
+    | {
+        asChild?: false
+        /**
+         * Marks the action as in flight: sets `aria-busy`, blocks activation, and swaps the
+         * label for a spinner without changing the button's width — a commerce button that
+         * resizes mid-submit moves the layout under the customer's cursor.
+         *
+         * Busy is expressed with the real `disabled` attribute rather than `aria-disabled`
+         * plus a JavaScript click guard. The guard version was written first and reverted:
+         * attaching an `onClick` unconditionally makes this component impossible to render
+         * from a Server Component, and Button is used from server components throughout.
+         * `disabled` needs no JavaScript, cannot be raced, and keeps the primitive free of a
+         * client boundary.
+         *
+         * **The consequence to know about:** a `<button>` that becomes disabled while focused
+         * loses focus to the document body. In a real submit flow the surrounding form has to
+         * move focus somewhere deliberate and announce the result. **Phase 7 owns that**, when
+         * forms first exist; it is a form-level responsibility, not something a button
+         * primitive can solve for its caller.
+         */
+        loading?: boolean
+      }
+  )
+
+export type ButtonProps = ComponentProps<'button'> & ButtonOwnProps
 
 export function Button({
   className,
@@ -124,13 +147,22 @@ export function Button({
   children,
   ...props
 }: ButtonProps) {
-  const Comp = asChild ? Slot.Root : 'button'
+  const classes = cn(buttonVariants({ variant, size, block }), className)
+
+  // Exactly one child, which is what Slot requires to adopt it.
+  if (asChild) {
+    return (
+      <Slot.Root data-slot="button" className={classes} {...props}>
+        {children}
+      </Slot.Root>
+    )
+  }
 
   return (
-    <Comp
+    <button
       data-slot="button"
       data-loading={loading || undefined}
-      className={cn(buttonVariants({ variant, size, block }), className)}
+      className={classes}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       {...props}
@@ -150,7 +182,7 @@ export function Button({
           <LoaderCircle aria-hidden data-motion="essential" className="size-4 animate-spin" />
         </span>
       ) : null}
-    </Comp>
+    </button>
   )
 }
 

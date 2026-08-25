@@ -114,7 +114,11 @@
 
   /* Accent. Guide §02: "soft taupe is a rare accent, not a general-purpose
      highlight." It is only ever a 1px rule, ring or underline, or a ≤10px
-     uppercase label — never a fill, never body text, never an icon colour. */
+     uppercase label — never a fill, never body text, never an icon colour.
+
+     One stated exception: `::selection` below. A selection highlight is a browser
+     affordance the user summons and dismisses, not a design element placed on the
+     page, and it has to be a fill to be one at all. Nothing else may claim this. */
   --color-accent: var(--palette-soft-taupe);
 
   /* Signal. One colour, one job. */
@@ -147,7 +151,12 @@
 
   /* Weights. Guide §03: "avoid excessive font-weight variation." Three are
      defined and two are used — 400 for reading copy, 500 for everything else.
-     600 exists for the rare moment that genuinely needs it. */
+     600 exists for the rare moment that genuinely needs it.
+
+     `--font-weight-*` is its own namespace and survived `--font-*: initial`, so
+     `font-bold`, `font-black` and `font-thin` all still compiled — the guardrail that
+     the colour and type scales get was missing here. Cleared explicitly. */
+  --font-weight-*: initial;
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
@@ -265,9 +274,39 @@
    * margins". Breakpoints are Tailwind's defaults, read as:
    * mobile < 48rem · tablet 48–63.99rem (md) · desktop ≥ 64rem (lg).
    * ======================================================================== */
-  --container-page: 90rem; /* 1440px — full editorial width   */
-  --container-narrow: 64rem; /* 1024px — utility and account  */
-  --container-prose: 42rem; /* 672px  — reading measure       */
+  /*
+   * The width scale is cleared for the same reason the others are, and for one more.
+   *
+   * Tailwind resolves `max-w-*` against `--max-width`, then `--spacing`, then
+   * `--container` — in that order. Two silent collisions came out of that:
+   *
+   *   - `--max-width-prose: 65ch` still ships in Tailwind's deprecated block, so it beat
+   *     a `--container-prose` token: `max-w-prose` compiled to 65ch while this file
+   *     claimed 672px.
+   *   - `--spacing` is checked BEFORE `--container`, so the editorial steps `--spacing-xs`
+   *     and `--spacing-xl` hijacked `max-w-xs` and `max-w-xl`. `max-w-xs` resolved to
+   *     **6px**. Both were measured in the compiled stylesheet, not guessed.
+   *
+   * Clearing the namespace removes every inherited width name, so there is no phantom
+   * t-shirt scale to collide with any more and the only width names are the semantic ones
+   * below.
+   *
+   * What that does NOT change — and should not — is that `w-*` and `max-w-*` still read
+   * `--spacing-*`, exactly as `w-4` does. So `max-w-xs` is **6px** and `max-w-xl` is
+   * **80px**, from the editorial steps, while `max-w-sm`/`md`/`lg` no longer resolve at
+   * all. That is consistent rather than surprising once the inherited scale is gone, and
+   * a 6px-wide box is visible immediately; the earlier hazard was that the default scale
+   * existed alongside it, so the wrong value looked plausible.
+   */
+  --container-*: initial;
+  --max-width-*: initial;
+
+  --container-page: 90rem; /* 1440px — full editorial width          */
+  --container-narrow: 64rem; /* 1024px — utility and account         */
+  --container-measure: 42rem; /* 672px — reading measure             */
+  --container-dialog: 32rem; /* 512px — centred dialog               */
+  --container-drawer: 28rem; /* 448px — edge-anchored panel          */
+  --container-panel: 24rem; /* 384px — mobile nav, toast viewport    */
 
   /* ===========================================================================
    * Named animations
@@ -455,7 +494,12 @@
  * specimen sheet shows is therefore the real rule, not a lookalike.
  *
  * `hover` keeps its `@media (hover: hover)` guard — dropping it is how a design system
- * ends up with sticky hover states on touch devices.
+ * ends up with sticky hover states on touch devices. That guard is why `hover` is written
+ * as a multi-rule variant, and it has one known cost: **`not-hover:` and `group-not-hover:`
+ * no longer compile**, because Tailwind can only invert a variant expressed as a single
+ * selector. Nothing uses them; `not-active:` and `not-focus-visible:` are unaffected,
+ * being single-selector forms. Accepted deliberately — sticky hover on touch is the worse
+ * of the two.
  *
  * This is inert wherever the attribute is absent, which is everywhere but that page.
  * -------------------------------------------------------------------------- */

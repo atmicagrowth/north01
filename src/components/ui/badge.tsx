@@ -28,8 +28,15 @@ const badgeVariants = cva(
         default: 'border-border text-foreground-muted',
         /** Merchandising markers that must be found at a glance. */
         accent: 'border-accent text-accent',
-        /** Sold out, unavailable, discontinued. Recedes on purpose. */
-        muted: 'border-border text-foreground-muted',
+        /**
+         * Sold out, unavailable, discontinued. Recedes by losing its rule rather than by
+         * dimming its text: "Sold out" is information a customer reads, so it keeps
+         * Stone's 7.91:1 rather than dropping to the 4.15:1 tone reserved for disabled.
+         *
+         * (This variant was briefly identical to `default` — collateral from removing the
+         * tertiary grey, which left both resolving to the same two classes.)
+         */
+        muted: 'border-transparent text-foreground-muted',
         /** A genuine problem with the item — payment failed, address invalid. */
         error: 'border-error text-error',
       },

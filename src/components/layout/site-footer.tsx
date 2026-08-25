@@ -26,8 +26,6 @@ export function SiteFooter({
   /** Filled by the phase that can make a signup actually subscribe someone. */
   newsletter?: ReactNode
 }) {
-  const year = new Date().getFullYear()
-
   return (
     <footer data-slot="site-footer" className={cn('border-t border-border', className)}>
       <PageContainer className="py-xl">
@@ -38,10 +36,17 @@ export function SiteFooter({
             newsletter ? 'lg:grid-cols-4' : 'lg:grid-cols-3',
           )}
         >
-          {footerNav.map((column) => (
-            <nav key={column.heading} aria-labelledby={`footer-${column.heading}`}>
+          {/*
+            The id is derived from the index, not the heading text. `aria-labelledby` is a
+            space-separated list of idrefs and HTML forbids whitespace in an id, so
+            `footer-${heading}` would break the moment a column is called "Customer care" —
+            silently, producing two dangling references and an unnamed landmark. It only
+            worked because every current heading happens to be one word.
+          */}
+          {footerNav.map((column, index) => (
+            <nav key={column.heading} aria-labelledby={`footer-column-${index}`}>
               <h2
-                id={`footer-${column.heading}`}
+                id={`footer-column-${index}`}
                 className="font-sans text-meta uppercase text-foreground-muted"
               >
                 {column.heading}
@@ -70,9 +75,13 @@ export function SiteFooter({
           <p className="font-display text-heading-s uppercase tracking-[0.18em]">NORTH / 01</p>
 
           <div className="flex flex-col gap-s sm:flex-row sm:items-center sm:gap-m">
-            <p className="font-sans text-micro uppercase text-foreground-muted">
-              © {year} NORTH / 01
-            </p>
+            {/*
+              No year. This footer renders inside statically prerendered pages, so
+              `new Date().getFullYear()` is evaluated at BUILD time and then frozen — a
+              site built in December shows the wrong year every January until someone
+              redeploys it. A yearless notice is equally valid and cannot rot.
+            */}
+            <p className="font-sans text-micro uppercase text-foreground-muted">© NORTH / 01</p>
             <ul className="flex items-center gap-m">
               <li>
                 <Link href="/legal/privacy" variant="meta" className="text-micro">

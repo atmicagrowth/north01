@@ -796,6 +796,125 @@ Required by the append rule, step 4.
 
 No other deviation was due for confirmation in Phase 3.
 
+### 1.8.10 Post-implementation audit, and what it found
+
+Phase 3 was committed green — typecheck, lint, build, the browser suite and axe-core all
+passing — and then audited a second time specifically for latent defects and technical debt.
+That second pass is recorded here because **most of what it found could not have been caught
+by any of the gates the phase had already passed**, and knowing which failure modes those
+gates are blind to is worth more than the individual fixes.
+
+Method: four reviewers over the committed diff along separate axes (Radix/React correctness,
+the compiled CSS and token layer, accessibility beyond axe, and internal consistency), each
+finding then handed to an adversarial verifier instructed to refute it and to *reproduce* the
+stated failure rather than reason about it. 37 claims; 14 were refuted, 23 survived. Every
+survivor below was fixed, and every fix re-verified in the browser.
+
+**The one that mattered most: `<Button asChild>` threw on every use.**
+
+`asChild` hands the consumer's element to Radix's `Slot`, which adopts a child only when
+`React.Children.count(children) === 1`. The component always rendered two — the label
+wrapper and the `{loading ? … : null}` spinner slot, whose `null` **still counts**. So a
+documented public prop failed 100% of the time with "Slot failed to slot onto its children",
+and nothing caught it: TypeScript cannot express child arity, no call site used it yet, and
+the specimen sheet had no `asChild` cell. Proved by bundling the committed component with the
+project's own esbuild and rendering it through `react-dom/server`.
+
+Fixed by making the contradiction unrepresentable rather than reconciling it: `asChild` and
+`loading` are now mutually exclusive in the type, and the two cases render by separate paths.
+They are genuinely exclusive in meaning too — `asChild` exists to make this a link, and a
+link navigates rather than submits, so it has nothing to be busy about. A `Button asChild`
+specimen now exists so the path cannot rot again.
+
+**Three more that were silently wrong at runtime:**
+
+| Defect | What actually happened |
+|---|---|
+| `Number.MAX_SAFE_INTEGER` used for a "persistent" toast | `setTimeout` clamps above 2³¹−1 ms and fires **immediately** on overflow — measured at 0.1 ms. The toast asked to stay until dismissed dismissed itself instantly. Radix supports `duration={Infinity}` natively (`if (!duration \|\| duration === Infinity) return`), so the conversion broke the very feature it implemented. |
+| Toast exit animations were dead classes | Dismissal deleted the record inside `onOpenChange`, unmounting the element in the same commit. Radix wraps each toast in `<Presence>` precisely so the exit runs to `animationend` first. Now dismissal flips a per-toast `open` flag and the record is removed on exit. |
+| `crypto.randomUUID()` in a client component | Defined only in a **secure context**. Present on localhost and HTTPS, `undefined` over plain HTTP on a LAN address — which is exactly how the mobile behaviour this plan requires gets tested. Replaced with a per-provider counter. |
+
+**Four CSS-layer traps, all of which compiled cleanly and none of which axe can see:**
+
+- **`max-w-prose` was 65ch, not the 672px this document claimed.** Tailwind resolves
+  `max-w-*` against `--max-width` → `--spacing` → `--container`, and its deprecated
+  `--max-width-prose: 65ch` beat our `--container-prose`. Renamed to `--container-measure`
+  and both width namespaces cleared, as the colour and type scales already were.
+- **`--spacing-xs` hijacked `max-w-xs`, which resolved to 6px.** Spacing is checked before
+  container. Now documented explicitly rather than papered over: with the inherited scale
+  cleared, `w-*`/`max-w-*` reading `--spacing-*` is consistent Tailwind behaviour, and the
+  overlay widths have semantic names (`max-w-dialog`, `max-w-drawer`, `max-w-panel`).
+- **`--font-weight-*` survived `--font-*: initial`** — a separate namespace — so
+  `font-bold`, `font-black` and `font-thin` all still compiled, and the guardrail the
+  colour and type scales get was quietly missing here. Cleared explicitly.
+- **`cn()` could not resolve conflicts involving `transparent`, `current` or `inherit`.**
+  Overriding tailwind-merge's colour theme with a literal list dropped Tailwind's built-in
+  keyword colours, and a class it does not recognise cannot lose a conflict — so
+  `cn('bg-surface', 'bg-transparent')` kept both. The 17 `--animate-*` tokens were missing
+  from that config too, which is the exact failure `cn.ts`'s own opening comment warns about.
+
+**Three dead `peer-*`/`group-*` variants.** This class of bug deserves its own note because
+it is invisible by construction: `peer-*` requires a *preceding sibling* carrying `peer`,
+`group-*` an *ancestor* carrying `group`, and when the relationship is wrong the class simply
+never matches. Nothing errors. The Label's `peer-disabled:` worked for checkboxes (label
+after control) and was dead for every text field (label above control) — it looked like it
+worked because it worked *somewhere*. The radio dot's was dead outright, being a child rather
+than a sibling. The Select chevron's `transition-transform` had nothing that rotated it.
+
+**Accessibility findings that axe reported zero of.** All of these coexisted with a clean
+axe run, which is the point: automated checking verifies rules, not intent.
+
+- `/design-system` — the page whose job is to prove the heading structure — rendered **two
+  `<h1>`s** and skipped h1 → h3, because the `PageTitle` specimen defaulted to `h1`.
+- `outline-none` on `TabsContent` deleted the focus ring from an element Radix gives
+  `tabIndex={0}`, so the tab panel was a keyboard stop with no visible focus. Same on the
+  toast viewport, which is the F8 target.
+- The drawer's `<header>` mapped to `role="banner"`, adding a second banner landmark to the
+  page whenever a drawer opened. `role="dialog"` is not on HTML-AAM's exempting list.
+- `BreadcrumbPage` carried shadcn's `role="link"` + `aria-disabled="true"`, announcing the
+  current page as a *disabled link* — contradicting its own docstring three lines above.
+- Two navigation landmarks both named "Breadcrumb" on one page.
+- Footer landmark ids were built by concatenating heading text into
+  `aria-labelledby`/`id`. It worked only because all three headings happen to be one word;
+  HTML forbids whitespace in an `id`, so a column called "Customer care" would have produced
+  two dangling idrefs and an unnamed landmark.
+- **No skip link.** WCAG 2.4.1 Bypass Blocks is Level A, and no automated tool reports its
+  absence. Added to `SiteHeader`, which creates a contract: **every page must give its
+  `<main>` `id="main-content"`.**
+
+**Two of the phase's own stated rules were broken by the phase's own code** — worth recording
+because it is the failure mode a design system is most prone to. `::selection` is an accent
+*fill*, 399 lines below the comment saying the accent is "never a fill" (the rule now states
+the exception, since a selection highlight is a browser affordance and has to be a fill to
+exist at all); and a 14px accent `<code>` sat on the same page that teaches accent is limited
+to labels of 10px or less.
+
+**One regression introduced by an earlier fix in this same phase.** Removing the tertiary
+grey (§1.8.2) rewrote `Badge`'s `muted` variant to the same two classes as `default`, leaving
+a documented variant that rendered identically to another. It now recedes by losing its rule
+rather than by dimming its text, since "Sold out" is information a customer reads and must
+stay at AA.
+
+**Also fixed:** `overflow-hidden` cancelling the `max-h` it was paired with on
+`DropdownMenuContent` and `SelectContent`, so a menu taller than the viewport clipped with no
+way to scroll; the `stacked` entry in `editorialBlockVariants`, unreachable because the
+component returns early for that case; `Link`'s `external` attributes spread *before*
+`{...props}`, so a caller-supplied `rel` would silently drop `noreferrer noopener`; and
+`React.ReactNode` used in three files that never import React.
+
+**What was refuted, and why that matters.** 14 of 37 claims did not survive — among them
+"the shell has no skip link *and nothing in the system can express one*" (the second half was
+false), "nine exported components nothing imports" (true census, false consequences), and
+several `className`-placement complaints that were the documented convention. Adversarial
+verification earned its place here: roughly two in five plausible-sounding findings did not
+reproduce, and acting on them would have churned working code.
+
+**The lesson for later phases.** Every defect above compiled, typechecked, linted and passed
+axe. The gates that caught things were: rendering a component in isolation through
+`react-dom/server`, reading the *compiled* CSS rather than the source, computing the heading
+outline from the rendered DOM, and checking that each `peer-*`/`group-*` variant has the
+sibling or ancestor it needs. Those four checks belong in Phase 27's test suite.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -1294,4 +1413,5 @@ work has somewhere to put it and no layout to renegotiate.
 | Phase 2 — append audit | 2026-08-23 | Structural corrections to this document. Phase 2 notes renumbered from `1.5a–1.5c`, which sat *before* §1.5 and implied they subdivided it, to **§1.7** with subsections. Append log put back in date order. Step 4 of the append rule carried out and recorded as **§1.7.3** — **DEV-04** and **DEV-14** confirmed; DEV-05 (Phase 8) and DEV-03 (Phase 18) still pending, not due. **DEV-18** and **DEV-19** moved to §1.7.5: both recorded compliance, not departure, and did not belong in Section 2. |
 | Phase 3 — design system and UI foundation | 2026-08-24 | Notes **§1.8**: the token layer and the numbers behind the guide's adjectives (**G-12**), accent/selection/border resolution and the contrast table (**G-14**), typeface selection with the Bodoni Moda optical-size trap and the `unicode-range` trap, **C-10 settled** in favour of an in-app specimen route, what the primitives are built on, the real-browser and axe-core pass, and the visual review. Deviations **DEV-20** (no Storybook), **DEV-21** (Oxide signal colour), **DEV-22** (control borders are Muted Stone), **DEV-23** (Radix Dialog drawer, Radix Toast), **DEV-24** (Motion deferred to Phase 10), **DEV-25** (newsletter column deferred). Step 4 carried out as **§1.8.9** — DEV-14 and DEV-16 re-confirmed, DEV-01 and DEV-07 encoded in `navigation.ts`. |
 
+| Phase 3 — post-implementation audit | 2026-08-24 | Note **§1.8.10**: the committed phase re-reviewed for latent defects, 23 findings confirmed of 37 and all fixed. `<Button asChild>` threw on every use (Slot given two children); a "persistent" toast dismissed itself in 0.1ms (`setTimeout` overflow); toast exit animations were dead classes; `crypto.randomUUID` fails outside a secure context; `max-w-prose` was 65ch not 672px and `max-w-xs` was 6px (Tailwind width-namespace precedence); `--font-weight-*` survived `--font-*: initial`; `cn()` could not conflict `transparent`/`current`/`inherit`; three dead `peer-*`/`group-*` variants; and eight accessibility defects that coexisted with a clean axe run — two `<h1>`s on the specimen sheet, a suppressed focus ring on a focusable tab panel, a `banner` landmark inside the drawer, and **no skip link** (WCAG 2.4.1, Level A). Records which gates are blind to which failure modes, for Phase 27. |
 > **Append this table, and the sections above it, at the end of every phase.**

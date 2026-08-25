@@ -19,8 +19,21 @@ export function Label({ className, ...props }: ComponentProps<typeof LabelPrimit
       className={cn(
         'font-sans text-meta uppercase text-foreground-muted',
         'select-none',
-        // Radix marks a label whose control is disabled; the label should recede with it.
+        /*
+         * A disabled control should take its label down with it, and the label sits on
+         * either side of its control depending on the field: above it for text inputs,
+         * after it for a checkbox or radio.
+         *
+         * `peer-disabled:` only covers the second case — it needs the control to be a
+         * *preceding* sibling carrying `peer`. On its own it was dead code for every
+         * text field in the system, which is the failure mode this whole class of
+         * variant invites: it looks like it works because it works somewhere.
+         *
+         * The `:has(+ *:disabled)` rule covers the label-above-control case, so both
+         * orders now behave the same.
+         */
         'peer-disabled:text-foreground-disabled',
+        '[&:has(+*:disabled)]:text-foreground-disabled',
         className,
       )}
       {...props}

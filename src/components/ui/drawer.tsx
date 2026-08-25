@@ -3,7 +3,7 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { X } from 'lucide-react'
 import { Dialog as DialogPrimitive, VisuallyHidden } from 'radix-ui'
-import type { ComponentProps } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
 import { IconButton } from '@/components/ui/icon-button'
@@ -33,12 +33,12 @@ const drawerVariants = cva(
     variants: {
       side: {
         right: [
-          'inset-y-0 right-0 h-dvh w-full max-w-md border-l',
+          'inset-y-0 right-0 h-dvh w-full max-w-drawer border-l',
           'data-[state=open]:animate-drawer-in-right',
           'data-[state=closed]:animate-drawer-out-right',
         ],
         left: [
-          'inset-y-0 left-0 h-dvh w-full max-w-md border-r',
+          'inset-y-0 left-0 h-dvh w-full max-w-drawer border-r',
           'data-[state=open]:animate-drawer-in-left',
           'data-[state=closed]:animate-drawer-out-left',
         ],
@@ -67,7 +67,7 @@ export type DrawerContentProps = ComponentProps<typeof DialogPrimitive.Content> 
      * A separate prop rather than a child, because a footer placed among the children
      * would scroll away with them, which is exactly what a pinned action must not do.
      */
-    footer?: React.ReactNode
+    footer?: ReactNode
   }
 
 export function DrawerContent({
@@ -104,7 +104,12 @@ export function DrawerContent({
         className={cn(drawerVariants({ side }), className)}
         {...props}
       >
-        <header
+        {/*
+          A <div>, not a <header>. Per HTML-AAM, `header` maps to `role="banner"` unless
+          it descends from article/aside/main/nav/section — `role="dialog"` is not on
+          that list, so an open drawer announced a second banner landmark for the page.
+        */}
+        <div
           className={cn(
             'flex shrink-0 items-start justify-between gap-m',
             'border-b border-border px-m py-m',
@@ -128,7 +133,7 @@ export function DrawerContent({
               </IconButton>
             </DialogPrimitive.Close>
           )}
-        </header>
+        </div>
 
         {/* Only the body scrolls, so the header and any footer stay put — plan §9.1c
             asks for scroll containment in the mobile drawer specifically. */}

@@ -248,16 +248,16 @@ export function TabsSpecimen() {
         </TabsTrigger>
       </TabsList>
       <TabsContent value="description">
-        <p className="max-w-prose font-sans text-body-sm text-foreground-muted">
+        <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
           Arrow keys move between tabs; the tab list is a single tab stop. The active tab is marked
           by contrast and a 1px rule — no fill, no pill.
         </p>
       </TabsContent>
       <TabsContent value="fit">
-        <p className="max-w-prose font-sans text-body-sm text-foreground-muted">Second panel.</p>
+        <p className="max-w-measure font-sans text-body-sm text-foreground-muted">Second panel.</p>
       </TabsContent>
       <TabsContent value="shipping">
-        <p className="max-w-prose font-sans text-body-sm text-foreground-muted">Third panel.</p>
+        <p className="max-w-measure font-sans text-body-sm text-foreground-muted">Third panel.</p>
       </TabsContent>
     </Tabs>
   )
@@ -265,26 +265,26 @@ export function TabsSpecimen() {
 
 export function AccordionSpecimen() {
   return (
-    <Accordion type="single" collapsible defaultValue="description" className="max-w-prose">
+    <Accordion type="single" collapsible defaultValue="description" className="max-w-measure">
       <AccordionItem value="description">
-        <AccordionTrigger>Description</AccordionTrigger>
+        <AccordionTrigger headingLevel={4}>Description</AccordionTrigger>
         <AccordionContent>
           The indicator is a thin plus that rotates 45° rather than a chevron that flips, so the
           icon geometry stays constant across states.
         </AccordionContent>
       </AccordionItem>
       <AccordionItem value="details">
-        <AccordionTrigger>Details</AccordionTrigger>
+        <AccordionTrigger headingLevel={4}>Details</AccordionTrigger>
         <AccordionContent>
           Height is animated against the custom property Radix publishes after measuring the panel.
         </AccordionContent>
       </AccordionItem>
       <AccordionItem value="shipping">
-        <AccordionTrigger>Shipping &amp; returns</AccordionTrigger>
+        <AccordionTrigger headingLevel={4}>Shipping &amp; returns</AccordionTrigger>
         <AccordionContent>Rows are separated by hairlines and nothing else.</AccordionContent>
       </AccordionItem>
       <AccordionItem value="disabled" disabled>
-        <AccordionTrigger>Disabled row</AccordionTrigger>
+        <AccordionTrigger headingLevel={4}>Disabled row</AccordionTrigger>
         <AccordionContent>Unreachable.</AccordionContent>
       </AccordionItem>
     </Accordion>
@@ -344,7 +344,7 @@ export function ToastSpecimen() {
  */
 export function SearchFieldSpecimen() {
   return (
-    <div className="relative w-full max-w-sm">
+    <div className="relative w-full max-w-panel">
       <Search
         aria-hidden
         className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-foreground-muted"

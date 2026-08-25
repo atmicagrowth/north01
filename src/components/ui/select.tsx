@@ -32,7 +32,7 @@ export function SelectTrigger({
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        'flex h-11 w-full items-center justify-between gap-2',
+        'group flex h-11 w-full items-center justify-between gap-2',
         'rounded-sm border border-border-control bg-surface',
         'px-4 py-2.5',
         'font-sans text-body text-foreground',
@@ -53,7 +53,10 @@ export function SelectTrigger({
           aria-hidden
           className={cn(
             'size-4 shrink-0 text-foreground-muted',
+            // The trigger carries `group`, so the open state can reach the icon. Without
+            // it this transition had nothing to transition — a rotation that never fired.
             'transition-transform duration-(--duration-fast) ease-entrance',
+            'group-data-[state=open]:rotate-180',
           )}
         />
       </SelectPrimitive.Icon>
@@ -74,7 +77,7 @@ export function SelectContent({
         position={position}
         className={cn(
           'relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem]',
-          'overflow-hidden rounded-md border border-border bg-surface',
+          'overflow-x-hidden overflow-y-auto rounded-md border border-border bg-surface',
           'shadow-overlay',
           'data-[state=open]:animate-menu-in data-[state=closed]:animate-menu-out',
           position === 'popper' && 'w-full min-w-(--radix-select-trigger-width)',

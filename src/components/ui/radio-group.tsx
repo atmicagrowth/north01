@@ -36,7 +36,9 @@ export function RadioGroupItem({
     <RadioGroupPrimitive.Item
       data-slot="radio-group-item"
       className={cn(
-        'peer size-5 shrink-0',
+        // `peer` so a Label placed after this control can dim with it; `group` so the
+        // indicator dot inside it can.
+        'peer group size-5 shrink-0',
         'flex items-center justify-center',
         'rounded-full border border-border-control bg-transparent',
         'transition-colors duration-(--duration-fast) ease-entrance',
@@ -48,11 +50,17 @@ export function RadioGroupItem({
       )}
       {...props}
     >
+      {/*
+        `group-disabled:`, not `peer-disabled:`. The dot is a *child* of the item, not a
+        sibling of it, so the peer variant this originally carried could never match —
+        dead code that read as working. A disabled radio that is also checked now dims
+        its dot instead of showing it at full strength.
+      */}
       <RadioGroupPrimitive.Indicator
         data-slot="radio-group-indicator"
         className={cn(
           'block size-2.5 rounded-full bg-foreground',
-          'peer-disabled:bg-foreground-disabled',
+          'group-disabled:bg-foreground-disabled',
         )}
       />
     </RadioGroupPrimitive.Item>

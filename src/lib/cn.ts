@@ -21,8 +21,19 @@ import { extendTailwindMerge } from 'tailwind-merge'
 const twMerge = extendTailwindMerge({
   override: {
     theme: {
-      // Mirrors `--color-*` in globals.css.
+      /*
+       * Mirrors `--color-*` in globals.css — plus the three CSS-wide keyword colours.
+       *
+       * `transparent`, `current` and `inherit` are NOT theme tokens; Tailwind builds
+       * those utilities in. tailwind-merge's default colour rule accepts any value, so
+       * replacing it with a literal list quietly removed them from the colour group —
+       * and a class it does not recognise cannot lose a conflict. `cn('bg-surface',
+       * 'bg-transparent')` kept both, and the primitive's own class won.
+       */
       color: [
+        'transparent',
+        'current',
+        'inherit',
         'canvas',
         'surface',
         'surface-raised',
@@ -60,7 +71,29 @@ const twMerge = extendTailwindMerge({
       // both remain in use: named steps for editorial rhythm, numbers for internals.
       spacing: ['xs', 's', 'm', 'l', 'xl', 'xxl'],
       ease: ['entrance', 'exit', 'editorial'],
-      container: ['page', 'narrow', 'prose'],
+      container: ['page', 'narrow', 'measure', 'dialog', 'drawer', 'panel'],
+      // Every `--animate-*` token in globals.css. Omitting them was the exact failure
+      // this file's opening comment warns about: unknown classes never conflict, so two
+      // animations could both survive a merge and the later-declared one would win.
+      animate: [
+        'fade-in',
+        'fade-out',
+        'scrim-in',
+        'scrim-out',
+        'dialog-in',
+        'dialog-out',
+        'drawer-in-right',
+        'drawer-out-right',
+        'drawer-in-left',
+        'drawer-out-left',
+        'drawer-in-bottom',
+        'drawer-out-bottom',
+        'menu-in',
+        'menu-out',
+        'accordion-open',
+        'accordion-close',
+        'skeleton',
+      ],
     },
   },
 })

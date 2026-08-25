@@ -136,6 +136,16 @@ Four rules that are easy to break by accident:
    borders to `currentColor`, so a bare `border` inherits the text colour. Use `border-border` for
    rules and dividers, `border-border-control` for anything interactive — the second is the one that
    meets WCAG 1.4.11, see **DEV-22**.
+5. **Every page that renders `SiteHeader` must give its `<main>` `id="main-content"`.** The header
+   carries the skip link (WCAG 2.4.1, Level A); without the target it points at nothing, and no
+   automated check will tell you.
+6. **Check the sibling or ancestor before using a `peer-*` or `group-*` variant.** `peer-*` needs a
+   *preceding sibling* carrying `peer`; `group-*` needs an *ancestor* carrying `group`. Get it wrong
+   and the class silently never matches — three shipped that way in Phase 3 and none of the gates
+   noticed. See notes §1.8.10.
+7. **Width names are not Tailwind's.** The container and max-width scales are cleared, so
+   `max-w-sm`/`md`/`lg` do not exist; use `max-w-page`/`narrow`/`measure`/`dialog`/`drawer`/`panel`.
+   Note that `w-*`/`max-w-*` still read `--spacing-*`, so `max-w-xs` is 6px.
 
 `Button`, `Link`, `Badge`, `Skeleton` and the layout wrappers are server components. Anything wrapping
 Radix carries `'use client'`; importing it from a server component is fine and creates the boundary

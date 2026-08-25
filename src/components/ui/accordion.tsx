@@ -2,7 +2,7 @@
 
 import { Plus } from 'lucide-react'
 import { Accordion as AccordionPrimitive } from 'radix-ui'
-import type { ComponentProps } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
 
@@ -80,7 +80,7 @@ export function AccordionTrigger({
   )
 }
 
-function createHeading(level: 2 | 3 | 4, child: React.ReactNode) {
+function createHeading(level: 2 | 3 | 4, child: ReactNode) {
   const Tag = `h${level}` as const
   return <Tag className="m-0 font-sans">{child}</Tag>
 }

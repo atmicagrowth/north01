@@ -72,15 +72,13 @@ export default function DesignSystemPage() {
       */}
       <SiteHeader />
 
-      <main>
+      <main id="main-content">
         <PageContainer>
           <Section spacing="tight">
             <Breadcrumb className="mb-m">
               <BreadcrumbList>
                 <BreadcrumbItem>
-                  <BreadcrumbLink asChild>
-                    <Link href="/">Home</Link>
-                  </BreadcrumbLink>
+                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
@@ -224,13 +222,13 @@ export default function DesignSystemPage() {
                 <p className="font-sans text-meta uppercase text-foreground">
                   Two rules worth stating
                 </p>
-                <p className="max-w-prose font-sans text-body-sm text-foreground-muted">
+                <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
                   <strong className="text-foreground">Border vs border-control.</strong> Graphite is
                   1.53:1 — fine for a divider, which WCAG treats as decorative, and far below the
                   3:1 a control boundary needs. Structural rules stay Graphite; anything a customer
                   has to find and operate uses Muted Stone.
                 </p>
-                <p className="max-w-prose font-sans text-body-sm text-foreground-muted">
+                <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
                   <strong className="text-foreground">There is no third grey for text.</strong>{' '}
                   Muted Stone is 4.15:1, below AA for normal text, so it answers only to{' '}
                   <em>disabled</em> — where WCAG 1.4.3 exempts it. Everything below primary is Stone
@@ -317,7 +315,7 @@ export default function DesignSystemPage() {
                 ))}
               </div>
 
-              <p className="mt-m max-w-prose font-sans text-body-sm text-foreground-muted">
+              <p className="mt-m max-w-measure font-sans text-body-sm text-foreground-muted">
                 Bodoni Moda carries an optical-size axis, so the display levels above are drawn with
                 finer hairlines than the smaller ones — the browser applies it automatically. That
                 is the difference between a fashion Didone and a general-purpose serif, and it only
@@ -407,11 +405,16 @@ export default function DesignSystemPage() {
                 </Cell>
               </Matrix>
 
-              <p className="mt-m max-w-prose font-sans text-body-sm text-foreground-muted">
+              <p className="mt-m max-w-measure font-sans text-body-sm text-foreground-muted">
                 Every one of those durations collapses to 1ms under{' '}
-                <code className="font-mono text-body-sm text-accent">prefers-reduced-motion</code>,
-                from a single media query. The one exception is the button&rsquo;s loading spinner,
-                which slows instead of stopping — a frozen spinner reads as a hung interface.
+                {/* Not accent: the rule two sections up limits Soft Taupe to rules, rings
+                    and labels of 10px or less, and this is 14px running text. */}
+                <code className="font-mono text-body-sm text-foreground">
+                  prefers-reduced-motion
+                </code>
+                , from a single media query. The one exception is the button&rsquo;s loading
+                spinner, which slows instead of stopping — a frozen spinner reads as a hung
+                interface.
               </p>
             </Specimen>
           </SpecimenGroup>
@@ -464,6 +467,24 @@ export default function DesignSystemPage() {
                     Add to bag
                   </Button>
                 </Cell>
+
+                {/*
+                  `asChild` renders the button's styling onto a link. Present here because
+                  the path used to throw on every use and nothing exercised it — a
+                  specimen sheet that skips a prop is how that survives review.
+                */}
+                <Cell label="asChild — rendered as a link" wide>
+                  <Button asChild variant="primary">
+                    <Link href="/shop" variant="unstyled">
+                      Shop the collection
+                    </Link>
+                  </Button>
+                  <Button asChild>
+                    <Link href="/lookbook" variant="unstyled">
+                      View the lookbook
+                    </Link>
+                  </Button>
+                </Cell>
               </Matrix>
             </Specimen>
 
@@ -510,7 +531,7 @@ export default function DesignSystemPage() {
             <Specimen id="link" name="Link" note="Text-first, with the rule doing the work.">
               <Matrix>
                 <Cell label="Inline — in body copy" wide>
-                  <p className="max-w-prose font-sans text-body text-foreground-muted">
+                  <p className="max-w-measure font-sans text-body text-foreground-muted">
                     Every item is made in limited quantities. Read our{' '}
                     <Link href="/about">materials and process</Link>, or see the{' '}
                     <Link href="/help/shipping" data-preview="hover">
@@ -520,7 +541,9 @@ export default function DesignSystemPage() {
                   </p>
                 </Cell>
                 <Cell label="Quiet">
-                  <Link href="/journal">Default</Link>
+                  <Link href="/journal" variant="quiet">
+                    Default
+                  </Link>
                   <Link href="/journal" variant="quiet" data-preview="hover">
                     Hover
                   </Link>
@@ -743,7 +766,7 @@ export default function DesignSystemPage() {
             >
               <Matrix>
                 <Cell label="Product card placeholder" wide>
-                  <div className="flex w-full max-w-xs flex-col gap-3">
+                  <div className="flex w-full max-w-panel flex-col gap-3">
                     <Skeleton className="aspect-[3/4] w-full" />
                     <Skeleton className="h-3 w-2/3" />
                     <Skeleton className="h-3 w-1/4" />
@@ -781,7 +804,7 @@ export default function DesignSystemPage() {
                       </span>
                       <Badge variant="accent">Sale</Badge>
                     </div>
-                    <p className="max-w-prose font-sans text-body-sm text-foreground-muted">
+                    <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
                       The live price stays Bone; the struck-through price is Stone at 7.91:1, not
                       the dimmer tertiary tone, because it is still information a customer reads. No
                       red, no fill — the strike and the label carry it.
@@ -807,18 +830,16 @@ export default function DesignSystemPage() {
                 </Cell>
 
                 <Cell label="Breadcrumb" wide>
-                  <Breadcrumb>
+                  {/* The page already has a real trail in <main>; two navigation landmarks
+                      sharing the name "Breadcrumb" is worse than one unnamed one. */}
+                  <Breadcrumb aria-label="Breadcrumb example">
                     <BreadcrumbList>
                       <BreadcrumbItem>
-                        <BreadcrumbLink asChild>
-                          <Link href="/">Home</Link>
-                        </BreadcrumbLink>
+                        <BreadcrumbLink href="/">Home</BreadcrumbLink>
                       </BreadcrumbItem>
                       <BreadcrumbSeparator />
                       <BreadcrumbItem>
-                        <BreadcrumbLink asChild>
-                          <Link href="/shop">Shop</Link>
-                        </BreadcrumbLink>
+                        <BreadcrumbLink href="/shop">Shop</BreadcrumbLink>
                       </BreadcrumbItem>
                       <BreadcrumbSeparator />
                       <BreadcrumbItem>
@@ -846,7 +867,12 @@ export default function DesignSystemPage() {
               note="Guide §01's visual tension made concrete: 12px tracked metadata above 72px serif."
             >
               <div className="rounded-sm border border-border p-m">
+                {/* `as="h4"` because this is a specimen inside an <h3> section, not the
+                    page's own title. PageTitle defaults to h1; left alone it put a second
+                    h1 in the middle of the document — on the page whose job is to prove
+                    the heading structure is right. */}
                 <PageTitle
+                  as="h4"
                   eyebrow="Spring / Summer '26"
                   size="display-xl"
                   lede="Discover the collection."
@@ -867,6 +893,7 @@ export default function DesignSystemPage() {
               <div className="rounded-sm border border-border">
                 <Section spacing="tight" className="px-m">
                   <SectionHeading
+                    as="h4"
                     action={
                       <Link href="/shop" variant="meta">
                         View all
@@ -900,9 +927,9 @@ export default function DesignSystemPage() {
                       <p className="font-sans text-meta uppercase text-foreground-muted">
                         {layout}
                       </p>
-                      <h3 className="font-display text-heading-m">
+                      <h4 className="font-display text-heading-m">
                         Shaped by purpose. Driven by detail.
-                      </h3>
+                      </h4>
                       <p className="font-sans text-body-sm text-foreground-muted">
                         Our story, our materials, our promise.
                       </p>
@@ -922,7 +949,7 @@ export default function DesignSystemPage() {
                     reaches the screen edge and never floats untethered on a wide display."
             >
               <div className="flex flex-col gap-s">
-                {(['page', 'narrow', 'prose'] as const).map((width) => (
+                {(['page', 'narrow', 'measure'] as const).map((width) => (
                   <div key={width} className="rounded-sm border border-border py-3">
                     <PageContainer width={width}>
                       <div className="flex items-center justify-between gap-m bg-surface px-3 py-2">
@@ -944,7 +971,7 @@ export default function DesignSystemPage() {
                     drawer, account and wishlist move inside it, and the wordmark centres between the
                     menu button and the two remaining utilities."
             >
-              <p className="max-w-prose font-sans text-body-sm text-foreground-muted">
+              <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
                 Every specimen on this page is laid out on a grid that collapses to a single column
                 below 640px, so this whole sheet doubles as the mobile-width check that plan §3.1d
                 asks for. The drawer specimens above are the ones to open on a phone — they are what

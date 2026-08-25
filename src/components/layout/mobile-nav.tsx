@@ -49,7 +49,7 @@ export function MobileNav({ items, className }: { items: NavItem[]; className?: 
         </IconButton>
       </DrawerTrigger>
 
-      <DrawerContent side="left" title="Menu" className="max-w-sm">
+      <DrawerContent side="left" title="Menu" className="max-w-panel">
         <Accordion type="single" collapsible className="px-m">
           {items.map((item) =>
             item.children ? (

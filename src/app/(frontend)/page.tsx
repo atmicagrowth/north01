@@ -23,14 +23,14 @@ export const metadata: Metadata = {
  */
 export default function FoundationPage() {
   return (
-    <main>
+    <main id="main-content">
       <PageContainer width="narrow">
         <Section spacing="loose">
           <PageTitle eyebrow="Foundation" size="display-xl">
             NORTH / 01
           </PageTitle>
 
-          <p className="mt-m max-w-prose font-sans text-body text-foreground-muted">
+          <p className="mt-m max-w-measure font-sans text-body text-foreground-muted">
             The application shell is running. Next.js renders this route as a server component,
             Payload is mounted in the same deployable, and the Phase 3 design system — tokens,
             typography, primitives and the global shell — is in place. No storefront feature has

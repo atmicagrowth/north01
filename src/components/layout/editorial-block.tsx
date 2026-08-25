@@ -1,4 +1,4 @@
-import { cva, type VariantProps } from 'class-variance-authority'
+import { cva } from 'class-variance-authority'
 import type { ComponentProps, ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
@@ -22,15 +22,19 @@ import { cn } from '@/lib/cn'
  *     comes first regardless of desktop side, because §10's priority list protects
  *     imagery and hierarchy before decorative arrangement.
  */
-const editorialBlockVariants = cva(['grid items-center gap-l', 'lg:gap-xl'], {
+/**
+ * Only the two side-by-side layouts live here. The stacked case is a different box —
+ * a flex column, not a twelve-column grid — and the component returns early for it, so a
+ * `stacked` entry in this cva was unreachable: it and the shared grid base were dead
+ * config that looked like the source of the stacked styling.
+ */
+const editorialBlockVariants = cva(['grid items-center gap-l', 'lg:grid-cols-12 lg:gap-xl'], {
   variants: {
     layout: {
       /** Media on the left, text on the right. */
-      'media-start': 'lg:grid-cols-12',
+      'media-start': '',
       /** Text on the left, media on the right. */
-      'media-end': 'lg:grid-cols-12',
-      /** One column: a statement with no media. §09 "typography-led sections". */
-      stacked: 'grid-cols-1',
+      'media-end': '',
     },
   },
   defaultVariants: {
@@ -38,11 +42,15 @@ const editorialBlockVariants = cva(['grid items-center gap-l', 'lg:gap-xl'], {
   },
 })
 
-export type EditorialBlockProps = ComponentProps<'div'> &
-  VariantProps<typeof editorialBlockVariants> & {
-    /** Imagery, video, or a colour field. Omit for a typography-led block. */
-    media?: ReactNode
-  }
+export type EditorialBlockProps = ComponentProps<'div'> & {
+  /** Imagery, video, or a colour field. Omit for a typography-led block. */
+  media?: ReactNode
+  /**
+   * `stacked` is a single typography-led column; the other two are asymmetric splits.
+   * Passing no `media` produces the stacked shape whatever this says.
+   */
+  layout?: 'media-start' | 'media-end' | 'stacked'
+}
 
 export function EditorialBlock({
   className,
@@ -51,6 +59,7 @@ export function EditorialBlock({
   children,
   ...props
 }: EditorialBlockProps) {
+  // One column. Not expressed through the cva above — see the note on it.
   if (layout === 'stacked' || !media) {
     return (
       <div

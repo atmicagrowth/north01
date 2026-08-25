@@ -44,7 +44,10 @@ export function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         className={cn(
-          'z-50 min-w-[10rem] overflow-hidden p-1',
+          // `overflow-y-auto`, not `overflow-hidden`. The max-height exists to cap the
+          // panel when the viewport is shorter than the menu; pairing it with hidden
+          // overflow clipped the overflowing items with no way to reach them.
+          'z-50 min-w-[10rem] overflow-x-hidden overflow-y-auto p-1',
           'rounded-md border border-border bg-surface shadow-overlay',
           'max-h-(--radix-dropdown-menu-content-available-height)',
           'data-[state=open]:animate-menu-in data-[state=closed]:animate-menu-out',
@@ -163,8 +166,9 @@ export function DropdownMenuSubContent({
       <DropdownMenuPrimitive.SubContent
         data-slot="dropdown-menu-sub-content"
         className={cn(
-          'z-50 min-w-[10rem] overflow-hidden p-1',
+          'z-50 min-w-[10rem] overflow-x-hidden overflow-y-auto p-1',
           'rounded-md border border-border bg-surface shadow-overlay',
+          'max-h-(--radix-dropdown-menu-content-available-height)',
           'data-[state=open]:animate-menu-in data-[state=closed]:animate-menu-out',
           className,
         )}

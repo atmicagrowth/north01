@@ -23,7 +23,7 @@ const pageContainerVariants = cva(['mx-auto w-full', 'px-[clamp(1.25rem,4vw,4rem
       /** 1024px. Account, checkout, support — guide §09 "simpler and calmer". */
       narrow: 'max-w-narrow',
       /** 672px. Reading measure for long-form copy; guide §04 "narrow text columns". */
-      prose: 'max-w-prose',
+      measure: 'max-w-measure',
       /** No maximum, but keep the gutters. Full-bleed imagery with aligned captions. */
       full: 'max-w-none',
     },

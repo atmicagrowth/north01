@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
-import type { ComponentProps } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 
 import { cn } from '@/lib/cn'
 
@@ -74,7 +74,7 @@ export function SectionHeading({
   action,
   as: Tag = 'h2',
   ...props
-}: ComponentProps<'h2'> & { action?: React.ReactNode; as?: 'h2' | 'h3' }) {
+}: ComponentProps<'h2'> & { action?: ReactNode; as?: 'h2' | 'h3' | 'h4' }) {
   return (
     <div className={cn('flex items-baseline justify-between gap-m', className)}>
       <Tag data-slot="section-heading" className="font-sans text-meta uppercase" {...props}>

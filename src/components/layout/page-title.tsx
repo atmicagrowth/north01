@@ -28,7 +28,9 @@ export function PageTitle({
   lede?: ReactNode
   /** `display-xl` for campaign moments; `display-l` for everything else. */
   size?: 'display-xl' | 'display-l'
-  as?: 'h1' | 'h2'
+  /** The heading rank. Widened past h1/h2 so a specimen or a nested composition can sit
+   *  at the right depth instead of injecting a second h1 into the document. */
+  as?: 'h1' | 'h2' | 'h3' | 'h4'
 }) {
   return (
     <header data-slot="page-title" className={cn('flex flex-col gap-m', className)}>
@@ -47,7 +49,7 @@ export function PageTitle({
       </Tag>
 
       {lede ? (
-        <p className="max-w-prose font-sans text-body text-foreground-muted">{lede}</p>
+        <p className="max-w-measure font-sans text-body text-foreground-muted">{lede}</p>
       ) : null}
     </header>
   )

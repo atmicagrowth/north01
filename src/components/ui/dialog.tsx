@@ -86,7 +86,7 @@ export function DialogContent({
         data-slot="dialog-content"
         className={cn(
           'fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2',
-          'flex w-[calc(100%-2rem)] max-w-lg flex-col gap-m',
+          'flex w-[calc(100%-2rem)] max-w-dialog flex-col gap-m',
           'max-h-[calc(100dvh-4rem)] overflow-y-auto',
           'rounded-md border border-border bg-surface-raised',
           'p-l shadow-overlay',

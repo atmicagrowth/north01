@@ -1,6 +1,7 @@
 import { Slot } from 'radix-ui'
 import type { ComponentProps } from 'react'
 
+import { Link } from '@/components/ui/link'
 import { cn } from '@/lib/cn'
 
 /**
@@ -17,6 +18,8 @@ import { cn } from '@/lib/cn'
  * already are is a dead control.
  */
 export function Breadcrumb({ className, ...props }: ComponentProps<'nav'>) {
+  // `aria-label` is spread after the default, so a page carrying more than one trail can
+  // name them apart — two identically-named landmarks are worse than one unnamed one.
   return <nav data-slot="breadcrumb" aria-label="Breadcrumb" className={cn(className)} {...props} />
 }
 
@@ -44,25 +47,45 @@ export function BreadcrumbItem({ className, ...props }: ComponentProps<'li'>) {
   )
 }
 
+/**
+ * A crumb that navigates.
+ *
+ * Pass `href` and it renders the project's `Link` for you, already `unstyled` so the
+ * breadcrumb's own type is what shows. That is deliberate: the obvious composition —
+ * `<BreadcrumbLink asChild><Link href="…" /></BreadcrumbLink>` — puts a styled parent
+ * around a styled child, and Radix's `Slot` concatenates class strings without running
+ * `tailwind-merge`, so the underline and colour would be settled by Tailwind's stylesheet
+ * order rather than by either component. Taking `href` here removes the chance to write it.
+ *
+ * `asChild` remains for the cases this shape does not cover; supply an unstyled child.
+ */
 export function BreadcrumbLink({
   className,
   asChild = false,
+  href,
   ...props
 }: ComponentProps<'a'> & { asChild?: boolean }) {
-  const Comp = asChild ? Slot.Root : 'a'
-
-  return (
-    <Comp
-      data-slot="breadcrumb-link"
-      className={cn(
-        'rounded-sm text-foreground-muted transition-colors',
-        'duration-(--duration-fast) ease-entrance',
-        'hover:text-foreground',
-        className,
-      )}
-      {...props}
-    />
+  const classes = cn(
+    'rounded-sm text-foreground-muted transition-colors',
+    'duration-(--duration-fast) ease-entrance',
+    'hover:text-foreground',
+    className,
   )
+
+  if (!asChild && href) {
+    return (
+      <Link
+        data-slot="breadcrumb-link"
+        href={href}
+        variant="unstyled"
+        className={classes}
+        {...props}
+      />
+    )
+  }
+
+  const Comp = asChild ? Slot.Root : 'a'
+  return <Comp data-slot="breadcrumb-link" href={href} className={classes} {...props} />
 }
 
 /** The current page. Not a link, and announced as the current location. */
@@ -70,8 +93,12 @@ export function BreadcrumbPage({ className, ...props }: ComponentProps<'span'>) 
   return (
     <span
       data-slot="breadcrumb-page"
-      role="link"
-      aria-disabled="true"
+      /*
+       * `aria-current="page"` alone. The shadcn default adds `role="link"` +
+       * `aria-disabled="true"`, which announces the current crumb as a *disabled link* —
+       * contradicting this component's own rule three lines up, that a link to where you
+       * already are is a dead control. Plain current-page text is the APG shape.
+       */
       aria-current="page"
       className={cn('text-foreground', className)}
       {...props}

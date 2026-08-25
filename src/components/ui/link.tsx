@@ -37,6 +37,17 @@ const linkVariants = cva(
           'font-sans text-meta uppercase text-foreground-muted no-underline',
           'hover:text-foreground',
         ],
+        /**
+         * No colour, no underline — for a link whose appearance belongs to the component
+         * wrapping it, such as an `IconButton asChild`.
+         *
+         * This variant exists because Radix's `Slot` **concatenates** class strings; it
+         * does not run `tailwind-merge`. So when a styled parent wraps a styled child,
+         * both sets of classes land on one element and the winner is decided by
+         * Tailwind's stylesheet order rather than by either author. Passing `unstyled`
+         * removes the conflict at the source instead of hoping the order stays favourable.
+         */
+        unstyled: '',
       },
     },
     defaultVariants: {
@@ -55,12 +66,26 @@ export type LinkProps = ComponentProps<typeof NextLink> &
     external?: boolean
   }
 
-export function Link({ className, variant, external = false, ...props }: LinkProps) {
+export function Link({ className, variant, external = false, rel, ...props }: LinkProps) {
+  /*
+   * `rel` is merged rather than overwritten. Spreading the external defaults before
+   * `{...props}` let a caller who passed any `rel` of their own — `nofollow`, say —
+   * silently drop `noreferrer noopener` from an external link. Modern browsers imply
+   * `noopener` for `target="_blank"`, so nothing was exploitable today; it was a trap
+   * waiting for the one caller who needed a custom `rel`.
+   */
+  const externalRel = external
+    ? [...new Set(['noreferrer', 'noopener', ...(rel?.split(/\s+/) ?? [])].filter(Boolean))].join(
+        ' ',
+      )
+    : rel
+
   return (
     <NextLink
       data-slot="link"
       className={cn(linkVariants({ variant }), className)}
-      {...(external ? { target: '_blank', rel: 'noreferrer noopener' } : {})}
+      {...(external ? { target: '_blank' } : {})}
+      rel={externalRel}
       {...props}
     />
   )

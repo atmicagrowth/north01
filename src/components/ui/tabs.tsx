@@ -64,7 +64,13 @@ export function TabsContent({ className, ...props }: ComponentProps<typeof TabsP
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn('pt-m outline-none', 'data-[state=active]:animate-fade-in', className)}
+      /*
+       * No `outline-none` here. Radix gives the panel `tabIndex={0}` unconditionally, so
+       * it is a real keyboard stop — Tab out of the tab list lands on it — and
+       * suppressing the outline removed the only indication of that. The system's single
+       * `:focus-visible` ring applies instead, which is why it is declared once globally.
+       */
+      className={cn('pt-m', 'data-[state=active]:animate-fade-in', className)}
       {...props}
     />
   )

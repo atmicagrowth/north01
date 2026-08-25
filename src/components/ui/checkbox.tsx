@@ -40,15 +40,26 @@ export function Checkbox({ className, ...props }: ComponentProps<typeof Checkbox
       )}
       {...props}
     >
+      {/*
+        Which mark shows is decided by the `data-state` Radix writes on the indicator, not
+        by reading `props.checked`. Reading the prop only works while the checkbox is
+        controlled: an uncontrolled one set to `defaultChecked="indeterminate"`, or flipped
+        to indeterminate from inside Radix, would have gone on rendering a tick.
+      */}
       <CheckboxPrimitive.Indicator
         data-slot="checkbox-indicator"
-        className="flex items-center justify-center text-current"
+        className="group/indicator flex items-center justify-center text-current"
       >
-        {props.checked === 'indeterminate' ? (
-          <Minus aria-hidden className="size-3.5" strokeWidth={2} />
-        ) : (
-          <Check aria-hidden className="size-3.5" strokeWidth={2} />
-        )}
+        <Check
+          aria-hidden
+          strokeWidth={2}
+          className="size-3.5 group-data-[state=indeterminate]/indicator:hidden"
+        />
+        <Minus
+          aria-hidden
+          strokeWidth={2}
+          className="hidden size-3.5 group-data-[state=indeterminate]/indicator:block"
+        />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   )

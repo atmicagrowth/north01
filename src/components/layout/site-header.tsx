@@ -34,81 +34,105 @@ export function SiteHeader({
   sticky?: boolean
 }) {
   return (
-    <header
-      data-slot="site-header"
-      className={cn(
-        'z-40 w-full border-b border-border bg-canvas',
-        sticky && 'sticky top-0',
-        className,
-      )}
-    >
-      <div
+    <>
+      {/*
+        WCAG 2.4.1 Bypass Blocks, Level A. The primary navigation repeats on every page,
+        so a keyboard user needs a way past it; automated checking cannot detect its
+        absence, which is why it is easy to reach Phase 9 without one.
+
+        Hidden until focused, then a real control at the top of the page. The contract it
+        creates: **every page must give its <main> `id="main-content"`.**
+      */}
+      <a
+        href="#main-content"
         className={cn(
-          'relative mx-auto flex h-18 w-full max-w-page items-center gap-m',
-          'px-[clamp(1.25rem,4vw,4rem)]',
+          'sr-only',
+          'focus-visible:not-sr-only focus-visible:absolute focus-visible:left-4 focus-visible:top-4',
+          'focus-visible:z-50 focus-visible:rounded-sm focus-visible:border focus-visible:border-border-strong',
+          'focus-visible:bg-surface-raised focus-visible:px-4 focus-visible:py-3',
+          'focus-visible:font-sans focus-visible:text-meta focus-visible:uppercase',
+          'focus-visible:text-foreground',
         )}
       >
-        <div className="flex items-center gap-m lg:hidden">
-          <MobileNav items={primaryNav} />
-        </div>
+        Skip to content
+      </a>
 
-        {/*
+      <header
+        data-slot="site-header"
+        className={cn(
+          'z-40 w-full border-b border-border bg-canvas',
+          sticky && 'sticky top-0',
+          className,
+        )}
+      >
+        <div
+          className={cn(
+            'relative mx-auto flex h-18 w-full max-w-page items-center gap-m',
+            'px-[clamp(1.25rem,4vw,4rem)]',
+          )}
+        >
+          <div className="flex items-center gap-m lg:hidden">
+            <MobileNav items={primaryNav} />
+          </div>
+
+          {/*
           The wordmark. Set in the display serif with wide tracking, and rendered as
           type rather than an image so it inherits the type system and stays crisp at
           every density. Guide §03 lists "NORTH / 01" itself as a display use.
         */}
-        <Link
-          href="/"
-          variant="quiet"
-          aria-label="NORTH / 01 — home"
-          className={cn(
-            'font-display text-heading-s uppercase tracking-[0.18em] text-foreground',
-            'hover:no-underline',
-            // Centred on mobile between the menu button and the two utilities.
-            'absolute left-1/2 -translate-x-1/2 lg:static lg:left-auto lg:translate-x-0',
-          )}
-        >
-          NORTH / 01
-        </Link>
-
-        <DesktopNav items={primaryNav} className="ml-l hidden lg:block" />
-
-        <div className="ml-auto flex items-center gap-1">
-          <IconButton label={utilityNav.search.label} size="sm" asChild>
-            <Link href={utilityNav.search.href}>
-              <Search aria-hidden />
-            </Link>
-          </IconButton>
-
-          <IconButton
-            label={utilityNav.wishlist.label}
-            size="sm"
-            asChild
-            className="hidden lg:inline-flex"
+          <Link
+            href="/"
+            variant="quiet"
+            aria-label="NORTH / 01 — home"
+            className={cn(
+              'font-display text-heading-s uppercase tracking-[0.18em] text-foreground',
+              'hover:no-underline',
+              // Centred on mobile between the menu button and the two utilities.
+              'absolute left-1/2 -translate-x-1/2 lg:static lg:left-auto lg:translate-x-0',
+            )}
           >
-            <Link href={utilityNav.wishlist.href}>
-              <Heart aria-hidden />
-            </Link>
-          </IconButton>
+            NORTH / 01
+          </Link>
 
-          <IconButton
-            label={utilityNav.account.label}
-            size="sm"
-            asChild
-            className="hidden lg:inline-flex"
-          >
-            <Link href={utilityNav.account.href}>
-              <User aria-hidden />
-            </Link>
-          </IconButton>
+          <DesktopNav items={primaryNav} className="ml-l hidden lg:block" />
 
-          <IconButton label={utilityNav.bag.label} size="sm" asChild>
-            <Link href={utilityNav.bag.href}>
-              <ShoppingBag aria-hidden />
-            </Link>
-          </IconButton>
+          <div className="ml-auto flex items-center gap-1">
+            <IconButton label={utilityNav.search.label} size="sm" asChild>
+              <Link href={utilityNav.search.href} variant="unstyled">
+                <Search aria-hidden />
+              </Link>
+            </IconButton>
+
+            <IconButton
+              label={utilityNav.wishlist.label}
+              size="sm"
+              asChild
+              className="hidden lg:inline-flex"
+            >
+              <Link href={utilityNav.wishlist.href} variant="unstyled">
+                <Heart aria-hidden />
+              </Link>
+            </IconButton>
+
+            <IconButton
+              label={utilityNav.account.label}
+              size="sm"
+              asChild
+              className="hidden lg:inline-flex"
+            >
+              <Link href={utilityNav.account.href} variant="unstyled">
+                <User aria-hidden />
+              </Link>
+            </IconButton>
+
+            <IconButton label={utilityNav.bag.label} size="sm" asChild>
+              <Link href={utilityNav.bag.href} variant="unstyled">
+                <ShoppingBag aria-hidden />
+              </Link>
+            </IconButton>
+          </div>
         </div>
-      </div>
-    </header>
+      </header>
+    </>
   )
 }

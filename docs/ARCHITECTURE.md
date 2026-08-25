@@ -416,6 +416,15 @@ The reviewing pass found two real defects — a loading button with no accessibl
 grey that failed AA wherever it was used — and both were fixed by changing the system rather than the
 instances. Details: notes §1.8.7.
 
+**A second, adversarial audit ran after the phase was committed green**, and found 23 more (of 37
+claims; 14 were refuted on reproduction). All are fixed. The headline: `<Button asChild>` threw on
+every use, because Slot was handed two children and `React.Children.count` counts the `null` from a
+conditional. Also a "persistent" toast that dismissed itself in 0.1 ms via `setTimeout` overflow,
+`max-w-prose` silently resolving to 65ch, three `peer-*`/`group-*` variants that could never match,
+and eight accessibility defects that coexisted with a zero-violation axe run — including two `<h1>`s
+on the page whose job is to prove the heading structure, and no skip link at all (WCAG 2.4.1,
+Level A). Full account and the lesson for Phase 27's test suite: notes **§1.8.10**.
+
 **Next: Phase 4 — environment configuration and secret management.** It owes the typed Zod module
 (§4.1a) and the guard that **D-10** has been waiting for.
 

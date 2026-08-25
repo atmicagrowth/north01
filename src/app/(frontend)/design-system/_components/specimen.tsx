@@ -28,7 +28,7 @@ export function Specimen({
       <div className="flex flex-col gap-2">
         <h3 className="font-sans text-meta uppercase text-foreground">{name}</h3>
         {note ? (
-          <p className="max-w-prose font-sans text-body-sm text-foreground-muted">{note}</p>
+          <p className="max-w-measure font-sans text-body-sm text-foreground-muted">{note}</p>
         ) : null}
       </div>
       <div className="mt-m">{children}</div>
@@ -93,7 +93,7 @@ export function SpecimenGroup({
       <header className="flex flex-col gap-m border-b border-border pb-m">
         <h2 className="font-display text-heading-m">{title}</h2>
         {description ? (
-          <p className="max-w-prose font-sans text-body text-foreground-muted">{description}</p>
+          <p className="max-w-measure font-sans text-body text-foreground-muted">{description}</p>
         ) : null}
       </header>
       {children}
