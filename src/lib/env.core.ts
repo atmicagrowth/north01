@@ -270,8 +270,11 @@ function databaseIdentity(connectionString: string): Identity {
     }
   }
 
-  const host = (url.searchParams.get('host') ?? url.hostname).trim().toLowerCase()
-  const port = (url.searchParams.get('port') ?? url.port).trim() || '5432'
+  // `||`, not `??`. pg-connection-string falls back on *truthiness* (`if (!config.port)`), so an
+  // empty `?port=` there means "use the URL's port". With `??` the guard would keep the empty string,
+  // resolve it to 5432, and authorise push for a different server than pg actually connects to.
+  const host = (url.searchParams.get('host') || url.hostname).trim().toLowerCase()
+  const port = (url.searchParams.get('port') || url.port).trim() || '5432'
 
   let database: string
   try {
@@ -314,13 +317,22 @@ function normalisePushTarget(value: string): Identity {
     return { ok: false, reason: 'DATABASE_PUSH_TARGET must be host[:port]/database' }
   }
 
-  const [host, port] = raw.slice(0, separator).toLowerCase().split(':')
+  // Bracket-aware, because a bare `.split(':')` mangles an IPv6 literal: `'[::1]:5432'.split(':')`
+  // is `['[', '', '1]', '5432']`, so the host became `[` and no spelling of the variable could ever
+  // arm push for an IPv6 database. Brackets are kept, because that is what `url.hostname` produces
+  // and therefore what the other side of the comparison holds.
+  //
+  // Anchoring also rejects two forms the old split silently accepted: `host:5432:extra` (the extra
+  // was dropped and push armed anyway) and `host:abc` (a non-numeric port).
+  const hostAndPort = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(raw.slice(0, separator).toLowerCase())
   const database = raw.slice(separator + 1).replace(/\/+$/, '')
 
-  if (!host) return { ok: false, reason: 'DATABASE_PUSH_TARGET names no host' }
+  if (!hostAndPort) {
+    return { ok: false, reason: 'DATABASE_PUSH_TARGET must be host[:port]/database' }
+  }
   if (!database) return { ok: false, reason: 'DATABASE_PUSH_TARGET names no database' }
 
-  return { ok: true, id: `${host}:${port || '5432'}/${database}` }
+  return { ok: true, id: `${hostAndPort[1]}:${hostAndPort[2] || '5432'}/${database}` }
 }
 
 export type SchemaPushDecision = {
@@ -453,8 +465,8 @@ function missingKeys(name: IntegrationName): string[] {
  * the store. `docs/ARCHITECTURE.md` §2: analytics, monitoring, search and email may all be
  * unavailable and a customer must still be able to buy.
  *
- * **Server-side only.** Four of these groups have browser-safe members, but the function reads the
- * server tier; a client component cannot call it. Decide availability on the server and pass the
+ * **Server-side only.** All but one of these groups have browser-safe members, but the function reads
+ * the server tier and lives behind the `server-only` guard; a client component cannot call it. Decide availability on the server and pass the
  * answer down as a prop.
  */
 export function integrationStatus(

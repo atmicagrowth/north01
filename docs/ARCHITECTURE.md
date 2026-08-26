@@ -402,10 +402,22 @@ The guard is `import 'server-only'`, which makes that a **build error** naming t
 needs no dependency: Next aliases the specifier to a vendored copy. But that alias exists only inside
 Next's bundler, and the `payload` CLI loads `payload.config.ts` through tsx, outside Next, where it
 does not resolve at all. Hence three modules rather than two: `env.core.ts` holds the schemas and stays
-tsx-resolvable, `env.server.ts` is that plus the guard, and an ESLint `no-restricted-imports` rule
-stops anything but `payload.config.ts` and `instrumentation.ts` reaching past it. The `typeof window`
-check stays as a backstop for those two. The same tsx constraint is why the module imports nothing
-from `next/*`.
+tsx-resolvable, `env.server.ts` is that plus the guard. The `typeof window` check stays as a backstop.
+The same tsx constraint is why the module imports nothing from `next/*`.
+
+**The core is fenced by lint, and the two gates are not equivalent.** Two ESLint rules keep anything
+but `env.server.ts`, `payload.config.ts` and `instrumentation.ts` from reaching `env.core.ts`:
+`no-restricted-imports` for the static form, and `no-restricted-syntax` for `import()`. The second is
+needed because the first is blind to dynamic imports — its implementation registers no
+`ImportExpression` visitor — and the second Phase 4 audit proved that gap live: a client component
+doing `use(import('@/lib/env.core'))` passed typecheck, lint and build and put `PAYLOAD_SECRET` into
+the prerendered HTML of a static route.
+
+So be precise about which gate catches what. A **static** import of `env.server.ts` from a client
+component fails `pnpm build`. Reaching the **core**, statically or dynamically, fails `pnpm lint` —
+not the build. Both are in the phase gate, so both are enforced, but a lint rule is a weaker
+instrument than a compiler error: a computed specifier would evade it. That residual is recorded in
+notes §1.9.9 and belongs to Phase 27.
 
 The public module reads each variable as a literal `process.env.NEXT_PUBLIC_…` member expression. That
 is not stylistic: Next substitutes those expressions textually at build time, and `process.env` is an
@@ -499,7 +511,7 @@ lines under `importers`.
 | Phase 4 acceptance | Status |
 |---|---|
 | Typed environment module validated with Zod (§4.1a) | **pass** — `src/lib/env.server.ts`, `src/lib/env.public.ts` |
-| Browser-safe separated from server-only (§4.1a) | **pass** — two modules, with a runtime tripwire on the server one (**D-14**) |
+| Browser-safe separated from server-only (§4.1a) | **pass** — three modules; the server tier carries `import 'server-only'`, so a client import is a build error (**D-14**). The `typeof window` check is a backstop, not the guard |
 | Missing required secret fails at startup/build (§4.1b) | **pass** — build exits 1; startup 500s every route. Both verified by running them |
 | No silent substitution of a fake value (§4.1b) | **pass** — and empty string is treated as missing, which is what a blank `.env` line and a blank Vercel field both produce |
 | Missing variable name absent from public responses (§4.1b) | **pass** — measured: the body is a bare `Internal Server Error` |

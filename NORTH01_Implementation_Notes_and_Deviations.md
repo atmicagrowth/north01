@@ -1035,10 +1035,11 @@ and so the environment module — through tsx, outside Next, where the specifier
 all: `pnpm generate:types` fails with `ERR_MODULE_NOT_FOUND`. Measured, not assumed.
 
 Hence **three modules, not two**. `env.core.ts` carries the schemas and stays tsx-resolvable;
-`env.server.ts` is that plus the guard and is what application code imports; and an ESLint
-`no-restricted-imports` rule stops anything but `payload.config.ts` and `instrumentation.ts` reaching
-past the guard, so the bypass is a lint failure rather than a convention. The same tsx constraint is
-why the module imports nothing from `next/*`.
+`env.server.ts` is that plus the guard and is what application code imports; and two ESLint rules
+stop anything but `env.server.ts`, `payload.config.ts` and `instrumentation.ts` reaching past the
+guard, so the bypass is a lint failure rather than a convention. Two rules and not one because the
+obvious one is blind to `import()` — see §1.9.9, which is where that was found and closed. The same
+tsx constraint is why the module imports nothing from `next/*`.
 
 **The public module reads one literal per line.** Next substitutes `process.env.NEXT_PUBLIC_X`
 textually at build time and `process.env` is an empty shim in the browser, so a dynamic read, a
@@ -1159,16 +1160,82 @@ the build would stop it. Phase 27 should own all three as tests: a table-driven 
 `resolveSchemaPush` inputs, an assertion about what does and does not appear in `.next/static`, and a
 fixture build that must fail.
 
-### 1.9.8 What is now owed, and by whom
+### 1.9.9 Second audit — the fix that had a hole in it
+
+The round-one fixes were themselves audited, on the committed code, by the same six lenses. Forty
+claims, thirty-two refuted on reproduction, eight confirmed — a refutation rate that is what a
+second pass over already-corrected code should look like. Two of the eight were the same defect, and
+it was the important one.
+
+**The `server-only` guard was sound; the fence around its back door was not.** §1.9.3 records that
+`env.core.ts` exists because `server-only` cannot resolve under tsx, and that an ESLint
+`no-restricted-imports` rule keeps everything but the two entry points away from it. That rule does
+not see `import()`. Its implementation registers `ImportDeclaration`, `ExportNamedDeclaration`,
+`ExportAllDeclaration` and `TSImportEqualsDeclaration` visitors and no `ImportExpression`, so a
+dynamic import matched nothing at all.
+
+Proven end to end, twice, in isolated checkouts: a client component containing
+`use(import('@/lib/env.core'))` and rendering `serverEnv.PAYLOAD_SECRET` passed `tsc --noEmit`,
+passed `eslint --max-warnings 0`, passed `next build`, and put the literal 64-character secret from
+`.env` into `.next/server/app/<route>.html` — a statically prerendered page, served to every
+visitor. The identical leak §1.9.3 describes, reached by changing `import x from` to `import(`.
+
+Closed with a companion `no-restricted-syntax` rule on `ImportExpression`, and both patterns widened
+to cover `.js` and `.ts` spellings. Seven bypass forms — static, relative, suffixed, dynamic,
+awaited — were then probed one at a time and all seven are caught.
+
+**The distinction this forces into the documentation.** A static import of `env.server.ts` from a
+client component fails the *build*. Reaching `env.core.ts` fails *lint*. Both are in the phase gate,
+so both are enforced, but they are not the same strength of guarantee and D-14 now says so rather
+than implying one uniform guard. A computed or template-literal specifier would still evade the lint
+rule; that residual is real, it is not worth a custom ESLint plugin today, and it belongs to Phase 27
+alongside the fixture-build test §1.9.7 already assigns there.
+
+The other six, all fixed:
+
+- **An empty `?port=` armed push against the wrong server.** The guard used `??`, which does not fall
+  back on an empty string; `pg-connection-string` uses `if (!config.port)`, which does. So
+  `postgres://…@localhost:5433/db?port=` resolved to `localhost:5432/db` in the guard and to port
+  5433 in `pg` — push authorised for one server and performed against another. One character:
+  `??` became `||`, for host and port alike, matching pg's truthiness exactly.
+- **No IPv6 address could ever arm push.** `'[::1]:5432'.split(':')` is `['[', '', '1]', '5432']`, so
+  the host became `[` and the mismatch warning — the thing the docs present as the actionable
+  diagnostic — printed a nonsense identity and told the developer their two variables named
+  different databases when they had named the same one. Now parsed bracket-aware, which also rejects
+  `host:5432:extra` (previously armed push while silently discarding the extra field) and a
+  non-numeric port.
+- **The Phase 4 acceptance table credited the mechanism D-14 records as insufficient**, calling the
+  §4.1a pass "two modules, with a runtime tripwire" — the exact arrangement that leaked a secret.
+  An acceptance table is what a later reader audits the phase from; it cannot describe a superseded
+  design.
+- **`payload.config.ts` pointed at `lib/env.server.ts` for `resolveSchemaPush`**, which lives in
+  `env.core.ts`. A reader following the comment to verify what `push:` is gated on finds a 30-line
+  re-export.
+- **`VERCEL` was undocumented.** It is a declared schema member and the sole input to the
+  `resolveAppEnv` branch §1.9.7 describes as the one that took a fix, but it appeared in no variable
+  table, in a document billed as covering every variable.
+- **A docblock undercounted its own evidence**, saying four integration groups have browser-safe
+  members where seven of eight do — weakening the warning the paragraph exists to give.
+
+**What this says about auditing.** Round one's audit found the leak; round one's *fix* introduced a
+narrower version of the same leak, and only a second adversarial pass over the corrected code found
+it. A fix is not self-verifying, and the gates that pass a fix are the same gates that passed the
+defect. The habit worth keeping is the one that caught it both times: build the wrong thing on
+purpose and check whether the toolchain actually stops it.
+
+### 1.9.10 What is now owed, and by whom
 
 `docs/ARCHITECTURE.md` §5's owed table is down to two rows. Phase 4 adds no new debt, and one item is
 worth naming for a later phase rather than leaving implicit:
 
 - **Nothing mechanically prevents a future file from reading `process.env` directly** and bypassing
-  the module. Phase 4 added a `no-restricted-imports` rule for the one case that leaks secrets —
-  reaching past `env.server.ts` to the unguarded core — but a blanket `no-restricted-properties` on
+  the module. Phase 4 fenced the one case that leaks secrets — reaching past `env.server.ts` to the
+  unguarded core, in both its static and dynamic forms — but a blanket `no-restricted-properties` on
   `process.env` is a wider tooling decision with a scope question attached, and is left for
-  **Phase 27** alongside the checks §1.8.10 and §1.9.7 assign there.
+  **Phase 27** alongside the checks §1.8.10, §1.9.7 and §1.9.9 assign there.
+- **The `env.core.ts` fence is lint-strength, not compiler-strength**, and a computed specifier would
+  evade it. See §1.9.9. A custom ESLint rule that flags any import of the core from a file carrying
+  `'use client'` would close it properly; it is not worth a plugin today.
 
 # 2. Deviations
 
@@ -1709,6 +1776,6 @@ it.***
 | Phase 2 — append audit | 2026-08-23 | Structural corrections to this document. Phase 2 notes renumbered from `1.5a–1.5c`, which sat *before* §1.5 and implied they subdivided it, to **§1.7** with subsections. Append log put back in date order. Step 4 of the append rule carried out and recorded as **§1.7.3** — **DEV-04** and **DEV-14** confirmed; DEV-05 (Phase 8) and DEV-03 (Phase 18) still pending, not due. **DEV-18** and **DEV-19** moved to §1.7.5: both recorded compliance, not departure, and did not belong in Section 2. |
 | Phase 3 — design system and UI foundation | 2026-08-24 | Notes **§1.8**: the token layer and the numbers behind the guide's adjectives (**G-12**), accent/selection/border resolution and the contrast table (**G-14**), typeface selection with the Bodoni Moda optical-size trap and the `unicode-range` trap, **C-10 settled** in favour of an in-app specimen route, what the primitives are built on, the real-browser and axe-core pass, and the visual review. Deviations **DEV-20** (no Storybook), **DEV-21** (Oxide signal colour), **DEV-22** (control borders are Muted Stone), **DEV-23** (Radix Dialog drawer, Radix Toast), **DEV-24** (Motion deferred to Phase 10), **DEV-25** (newsletter column deferred). Step 4 carried out as **§1.8.9** — DEV-14 and DEV-16 re-confirmed, DEV-01 and DEV-07 encoded in `navigation.ts`. |
 | Phase 3 — post-implementation audit | 2026-08-24 | Note **§1.8.10**: the committed phase re-reviewed for latent defects, 23 findings confirmed of 37 and all fixed. `<Button asChild>` threw on every use (Slot given two children); a "persistent" toast dismissed itself in 0.1ms (`setTimeout` overflow); toast exit animations were dead classes; `crypto.randomUUID` fails outside a secure context; `max-w-prose` was 65ch not 672px and `max-w-xs` was 6px (Tailwind width-namespace precedence); `--font-weight-*` survived `--font-*: initial`; `cn()` could not conflict `transparent`/`current`/`inherit`; three dead `peer-*`/`group-*` variants; and eight accessibility defects that coexisted with a clean axe run — two `<h1>`s on the specimen sheet, a suppressed focus ring on a focusable tab panel, a `banner` landmark inside the drawer, and **no skip link** (WCAG 2.4.1, Level A). Records which gates are blind to which failure modes, for Phase 27. |
-| Phase 4 — environment configuration and secret management | 2026-08-26 | Notes **§1.9**: the four contexts that evaluate the environment module and what each can gate (`instrumentation.ts` is **not** a build hook; `payload.config.ts` is **not** a startup hook), the push hazard measured down to two real paths, **D-10 closed** with `DATABASE_PUSH_TARGET` and proved by running it, the three-module split that `server-only` forced, and the would-be bugs — empty-string-is-not-absent, `NODE_ENV` undefined under the Payload CLI, `z.httpUrl()` rejecting localhost, `.env.local` loading in production builds, module scope not being once-per-server. **§1.9.7 records a post-implementation audit** that found a client component could import the environment and ship a secret in prerendered HTML, a `NODE_ENV`-unset fail-open in the guard, a total bypass via `?host=`, asymmetric case folding, a port-blind comparison, and a preview deployment able to carry live Stripe keys — all fixed. Deviation **DEV-26** (variable names this project had to choose). New decisions **D-14** and **D-15** in `docs/ARCHITECTURE.md`; new `docs/ENVIRONMENT.md`. Step 4 carried out as **§1.9.6**. |
-
+| Phase 4 — environment configuration and secret management | 2026-08-26 | Notes **§1.9**: the four contexts that evaluate the environment module and what each can gate (`instrumentation.ts` is **not** a build hook; `payload.config.ts` is **not** a startup hook), the push hazard measured down to two real paths, **D-10 closed** with `DATABASE_PUSH_TARGET` and proved by running it, the three-module split that `server-only` forced, and the would-be bugs — empty-string-is-not-absent, `NODE_ENV` undefined under the Payload CLI, `z.httpUrl()` rejecting localhost, `.env.local` loading in production builds, module scope not being once-per-server. **§1.9.7 and §1.9.9 record two post-implementation audits** that found a client component could import the environment and ship a secret in prerendered HTML, a `NODE_ENV`-unset fail-open in the guard, a total bypass via `?host=`, asymmetric case folding, a port-blind comparison, and a preview deployment able to carry live Stripe keys — all fixed. Deviation **DEV-26** (variable names this project had to choose). New decisions **D-14** and **D-15** in `docs/ARCHITECTURE.md`; new `docs/ENVIRONMENT.md`. Step 4 carried out as **§1.9.6**. |
+| Phase 4 — second audit | 2026-08-26 | Note **§1.9.9**: the round-one fixes re-audited on the committed code. 40 claims, 32 refuted, 8 confirmed. The headline: the ESLint rule fencing the unguarded `env.core.ts` **does not see `import()`** — core `no-restricted-imports` registers no `ImportExpression` visitor — so a client component doing `use(import('@/lib/env.core'))` passed typecheck, lint and build and put `PAYLOAD_SECRET` into prerendered HTML: §1.9.3's leak, reached through different syntax. Closed with a companion `no-restricted-syntax` rule; seven bypass spellings probed and all caught. Also fixed: an empty `?port=` arming push against a different server (`??` where pg uses truthiness), IPv6 targets that could never arm, an acceptance-table row crediting the superseded runtime tripwire, a wrong file reference in `payload.config.ts`, an undocumented `VERCEL`, and an undercounted docblock. **D-14 now distinguishes** what fails the build from what only fails lint. |
 > **Append this table, and the sections above it, at the end of every phase.**

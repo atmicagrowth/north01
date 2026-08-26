@@ -5,6 +5,21 @@ import nextTypeScript from 'eslint-config-next/typescript'
  * eslint-config-next 16 exports native flat-config arrays, so no FlatCompat shim
  * and no @eslint/eslintrc dependency are required.
  */
+
+/**
+ * `src/lib/env.core.ts` is the environment module without its `server-only` guard. That guard is
+ * what makes a client component importing the environment a *build* error, so reaching past it
+ * re-opens the hole it exists to close: a client component that imports the core builds cleanly
+ * and ships a secret in prerendered HTML.
+ *
+ * Only `payload.config.ts` has a real reason to reach it - the `payload` CLI loads it through tsx,
+ * outside Next, where `server-only` cannot resolve. Everything else imports `@/lib/env.server`.
+ * See docs/ARCHITECTURE.md - D-14.
+ */
+const ENV_CORE_MESSAGE =
+  'Import @/lib/env.server instead. env.core has no server-only guard, so importing it from a ' +
+  'client component would build cleanly and leak secrets - see D-14.'
+
 const config = [
   {
     ignores: [
@@ -30,25 +45,32 @@ const config = [
       '@typescript-eslint/no-explicit-any': 'error',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
 
-      // `src/lib/env.core.ts` is the environment module without its `server-only` guard. That
-      // guard is what makes a client component importing the environment a *build* error, so
-      // reaching past it re-opens the hole it exists to close - a client component importing
-      // the core builds cleanly and ships a secret in prerendered HTML.
-      //
-      // Only `payload.config.ts` has a real reason to: the `payload` CLI loads it through tsx,
-      // outside Next, where `server-only` cannot resolve. That file is exempted below.
-      // Everything else imports `@/lib/env.server`. See docs/ARCHITECTURE.md - D-14.
       'no-restricted-imports': [
         'error',
         {
           patterns: [
             {
-              group: ['**/env.core', 'env.core'],
-              message:
-                'Import @/lib/env.server instead. env.core has no server-only guard, so importing ' +
-                'it from a client component would build cleanly and leak secrets - see D-14.',
+              group: ['**/env.core', 'env.core', '**/env.core.js', '**/env.core.ts'],
+              message: ENV_CORE_MESSAGE,
             },
           ],
+        },
+      ],
+
+      // `no-restricted-imports` is blind to `import()`. Its rule implementation registers only
+      // ImportDeclaration, ExportNamedDeclaration, ExportAllDeclaration and TSImportEqualsDeclaration
+      // visitors - there is no ImportExpression among them - so the pattern above cannot see a
+      // dynamic import at all.
+      //
+      // That is not academic. A client component doing `use(import('@/lib/env.core'))` passed
+      // typecheck, lint AND build, and put the literal PAYLOAD_SECRET into the prerendered HTML of a
+      // static route: the identical leak the static ban was added to close, reached by changing
+      // `import x from` to `import(`. Found by the second Phase 4 audit; see notes §1.9.9.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportExpression > Literal[value=/(^|[\\\\/])env\\.core(\\.[jt]s)?$/]',
+          message: ENV_CORE_MESSAGE,
         },
       ],
     },
@@ -60,6 +82,7 @@ const config = [
     files: ['src/lib/env.server.ts', 'src/payload.config.ts', 'src/instrumentation.ts'],
     rules: {
       'no-restricted-imports': 'off',
+      'no-restricted-syntax': 'off',
     },
   },
 ]

@@ -30,9 +30,18 @@ Error: You're importing a module that depends on "server-only".
 **Why a third module exists.** `server-only` is not an installed package — Next aliases the bare
 specifier to a vendored copy, and that alias exists only inside Next's bundler. The `payload` CLI
 loads `payload.config.ts` through tsx, outside Next, where the import fails to resolve at all. So
-the config imports the unguarded core, and **ESLint forbids anyone else from doing the same**
-(`no-restricted-imports`, with `payload.config.ts` and `instrumentation.ts` exempted). Both halves
-are needed: the lint rule stops the bypass, `server-only` stops the leak.
+the config imports the unguarded core, and **ESLint forbids anyone else from doing the same** —
+`no-restricted-imports` for the static form and `no-restricted-syntax` for `import()`, with
+`env.server.ts`, `payload.config.ts` and `instrumentation.ts` exempted.
+
+Both rules are needed. `no-restricted-imports` registers no `ImportExpression` visitor, so it cannot
+see a dynamic import at all — and a client component doing `use(import('@/lib/env.core'))` passed
+typecheck, lint and build and leaked `PAYLOAD_SECRET` into prerendered HTML. Found by the second
+Phase 4 audit.
+
+**Which gate catches what.** A static import of `env.server.ts` from a client component fails
+`pnpm build`. Reaching `env.core.ts` fails `pnpm lint`, not the build. Both are in the phase gate,
+but a lint rule is the weaker instrument — a computed specifier would evade it.
 
 The `typeof window` check in `env.core.ts` is only a runtime backstop. It cannot fire during a
 build, because prerendering runs on the server where `window` is undefined — which is exactly how,
@@ -257,6 +266,7 @@ document; Phase 4 chose them, recorded as **DEV-26**.
 |---|---|---|
 | `NODE_ENV` | ambient | Set by the Next CLI. Undefined under the `payload` CLI, so the schema defaults it to `development` |
 | `VERCEL_ENV` | server | Supplied by Vercel when the project exposes system environment variables. Absent locally by design |
+| `VERCEL` | server | Set by Vercel alongside `VERCEL_ENV`. Used only to detect the awkward case: plainly on Vercel, but `VERCEL_ENV` missing — which resolves to `preview`, not `production` |
 
 ### Project-owned
 

@@ -56,7 +56,7 @@ export default buildConfig({
     // The condition is `schemaPush.allowed` rather than a NODE_ENV test because being in
     // development is not on its own a safe reason to rewrite a schema - the database the
     // connection string happens to point at also has to be the one push is authorised for.
-    // That is decision D-10, and `resolveSchemaPush` in lib/env.server.ts is where it lives.
+    // That is decision D-10, and `resolveSchemaPush` in lib/env.core.ts is where it lives.
     //
     // Keep this an explicit boolean. The adapter's own gate is `this.push !== false`, so an
     // `undefined` here would fail open and push anyway.
