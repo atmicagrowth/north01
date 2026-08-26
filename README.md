@@ -48,6 +48,7 @@ payment success. All of it is recalculated server-side.
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Architecture, boundaries, decisions, cross-document consistency audit |
 | [`docs/STACK_VERSIONS.md`](docs/STACK_VERSIONS.md) | Every version pin and the evidence for it |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Local setup and day-to-day workflow |
+| [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) | Every environment variable, its tier, its source, and the guards around them |
 
 ## Canonical specification
 
@@ -77,6 +78,19 @@ mobile.
 
 **[`/design-system`](src/app/(frontend)/design-system) is the specimen sheet** — every primitive in
 every state, in the real application rather than a separate workbench.
+
+**Phase 4 — Environment configuration and secret management: complete.** A typed, Zod-validated
+environment split across a file boundary: [`src/lib/env.public.ts`](src/lib/env.public.ts) for the
+browser-safe values, [`src/lib/env.server.ts`](src/lib/env.server.ts) for everything else — the second
+guarded by `server-only`, so importing it from a client component fails the build rather than shipping
+a secret in prerendered HTML. A missing
+required secret fails the build and fails server startup, with the variable named in the log and never
+in a response. Optional integrations warn and degrade rather than taking the store down, and a
+half-configured provider is reported instead of failing later at the point of use.
+
+It also closes **D-10**: Drizzle's development schema push is now aimed at one named database rather
+than at whatever `DATABASE_URL` happens to point at, so repointing the connection string disarms push
+instead of redirecting it. Details: [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
 
 No storefront *feature* is built yet. The shell components exist and are proved, but they are mounted
 in Phase 9, alongside the search overlay and cart drawer that make their controls do something.

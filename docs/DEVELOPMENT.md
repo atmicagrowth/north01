@@ -24,27 +24,43 @@ pnpm install
 cp .env.example .env
 ```
 
-Then fill in `.env`. Two variables, and the app needs both:
+Then fill in `.env`. Two variables are required, and a third is needed for local schema work:
 
 ```bash
 # 32 random bytes, hex. Server-only.
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-- `PAYLOAD_SECRET` — the value from that command.
+- `PAYLOAD_SECRET` — the value from that command. Minimum 32 characters.
 - `DATABASE_URL` — a **Neon development branch** connection string. Never production, never a branch
-  anyone else is using. The storefront builds and runs without it, but `/admin` and `/api/*` return
-  HTTP 500 until it is set — Payload connects during `payload.init()`.
+  anyone else is using.
+- `DATABASE_PUSH_TARGET` — the `host[:port]/database` of that same branch, e.g.
+  `ep-cool-name-123456.us-east-2.aws.neon.tech/neondb`. Host and database only, never the whole
+  connection string. Without it Payload will not create or alter tables, so a fresh database stays
+  empty. See **the schema-push guard** below.
 
 > **Use PostgreSQL 17 when creating the Neon project, not the default 18**, use the **direct**
 > (non-pooled) endpoint locally, and end the string with **`sslmode=verify-full`** rather than
 > `sslmode=require` — `pg` v9 redefines `require` as *skip certificate verification*. A Neon project's
 > major version cannot be changed afterwards. Reasoning: notes §1.7.2 and §1.7.4.
 >
-> Missing either variable now fails immediately with a named error rather than starting in a broken state.
->
-> **In development, Payload pushes schema changes straight into whatever `DATABASE_URL` points at.**
-> Point it at a development branch and nothing else. See `docs/ARCHITECTURE.md` → **D-10**.
+> A missing or malformed required variable fails immediately with a named error — at build time, and
+> at server startup. Every variable, where its value comes from, and which environments require it:
+> **[`docs/ENVIRONMENT.md`](ENVIRONMENT.md)**.
+
+### The schema-push guard
+
+In development Payload pushes schema changes straight into whatever `DATABASE_URL` points at. That is
+plan §5.1d's intended workflow and it stays — but it is aimed, not trusted.
+
+`DATABASE_PUSH_TARGET` names the one database push may modify. Push runs only when `NODE_ENV` is
+exactly `development` (unset does not count), the environment resolves to `local`, and the database
+`DATABASE_URL` actually addresses matches that variable. Repointing `DATABASE_URL` therefore *disarms*
+push rather than aiming it at the new database; re-arming is a deliberate second edit. It is
+fail-closed — unset, ambiguous or unparseable all mean no push.
+
+`pnpm dev` prints why push is off whenever it is. Full reasoning: [`docs/ENVIRONMENT.md`](ENVIRONMENT.md)
+and `docs/ARCHITECTURE.md` → **D-10**.
 
 ```bash
 pnpm dev
@@ -92,10 +108,24 @@ src/
 ├─ components/
 │  ├─ ui/                primitives (button, input, dialog, drawer, …)
 │  └─ layout/            global shell (header, nav, footer, containers)
-├─ lib/cn.ts             class composition, configured for this project's scales
+├─ instrumentation.ts    startup environment validation (Phase 4)
+├─ lib/
+│  ├─ cn.ts              class composition, configured for this project's scales
+│  ├─ env.public.ts      browser-safe environment — importable anywhere
+│  ├─ env.server.ts      server-only environment — what application code imports
+│  └─ env.core.ts        the same without the `server-only` guard; config and instrumentation only
 ├─ payload.config.ts     aliased as @payload-config
 └─ payload/              collections, access rules, hooks, migrations
 ```
+
+**`env.server.ts` must never be imported from a client component** — and it cannot be: it imports
+`server-only`, so doing that is a build error. Client code imports `env.public.ts`, which holds only
+`NEXT_PUBLIC_*` values, and every one of those is compiled into the bundle every visitor downloads.
+The prefix is a decision to publish.
+
+`env.core.ts` is the same module without that guard, and exists only because the `payload` CLI runs
+outside Next, where `server-only` cannot resolve. ESLint blocks importing it from anywhere but
+`payload.config.ts` and `instrumentation.ts`. See [`docs/ENVIRONMENT.md`](ENVIRONMENT.md).
 
 Two things must stay true, or the Payload admin panel starts inheriting Tailwind's Preflight reset:
 
@@ -187,7 +217,10 @@ content lives **below** the `END:nextjs-agent-rules` marker, which Next does not
 |---|---|
 | `⨯ turbopackServerFastRefresh` under *Experiments (use with caution)* | **Payload sets this**, not us. `withPayload` forces `experimental.turbopackServerFastRefresh: false` with the comment *"Server fast refresh breaks HMR"*. `⨯` is Next's marker for "this boolean is false", not an error. |
 | `WARN: No email adapter provided. Email will be written to console.` | Expected until **Phase 19** adds Resend. Payload prints emails to the terminal meanwhile. |
-| `[✓] Pulling schema from database...` | Drizzle's development push. Expected in dev, off everywhere else — see **D-10**. |
+| `[✓] Pulling schema from database...` | Drizzle's development push. Expected in dev **when the push guard is armed**, off everywhere else — see **D-10**. |
+| `[env] Schema push is disabled: …` | The Phase 4 guard declined to arm. `DATABASE_PUSH_TARGET` is unset or malformed, or `DATABASE_URL` is ambiguous (an `options` parameter, a bad percent-escape). Payload will not create or alter tables. |
+| `[env] Schema push is DISABLED: …` | The pointed version of the same guard: both values are valid but name **different databases**. Usually `DATABASE_URL` was repointed and the target was not. |
+| `[env] The <name> integration is partly configured — …` | Some of a provider's variables are filled in and others are not. The integration is treated as unavailable. Fill in the rest or clear them. |
 
 ### The `/admin` hydration warning is a browser extension
 

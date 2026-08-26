@@ -69,7 +69,7 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
 | `shadcn` (CLI) | 4.19.0 | **not installed — see §7** |
 | `motion` | 13.1.1 | ~~Phase 3~~ **Phase 10** — see **DEV-24** |
 | `storybook` | 10.5.10 | **not installed — see DEV-20**; revisit at Phase 27 |
-| `zod` | 4.4.3 | Phase 4 |
+| `zod` | 4.4.3 | **Phase 4 — installed** |
 | `react-hook-form` + `@hookform/resolvers` | 7.86.0 / 5.9.1 | Phase 7 |
 | `nuqs` | 2.10.0 | Phase 11 |
 | `algoliasearch` | 5.57.0 | Phase 12 |
@@ -209,3 +209,58 @@ carries `wght 400–900` **and** `opsz 6–96`. If these files are ever re-fetch
 Playwright 1.62.1 and axe-core 4.13.0 are **Phase 27** dependencies. Phase 3's browser and
 accessibility pass ran them from the scratchpad directory against the dev server, so `package.json` is
 unchanged by it.
+
+---
+
+## 8. Phase 4 — what the environment system installs
+
+**One direct dependency, and zero new packages.** `pnpm add zod@4.4.3 --save-exact --strict-peer-dependencies`,
+exit 0, no unmet peers. Twenty-two direct dependencies now, up from twenty-one.
+
+| Package | Pin | Why |
+|---|---|---|
+| `zod` | 4.4.3 | The stack's mandated validation library. A runtime dependency, not a dev one: the running server validates its own environment, so zod has to be present at run time as well as at build time. |
+
+**The resolved graph did not change.** `zod@4.4.3` was already in the lockfile and in the store as a
+transitive dependency of `eslint-plugin-react-hooks` via `eslint-config-next`, so nothing was
+downloaded and no package was added — the `packages:` block holds 778 entries before and after, and
+the entire lockfile diff is three lines under `importers`:
+
+```yaml
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+```
+
+The explicit direct dependency was still required. Under pnpm's isolated layout a transitive copy is
+not importable from `src/`: `import { z } from 'zod'` failed to resolve until it was added.
+
+### Three Zod 4 traps, each verified against the installed 4.4.3 rather than assumed
+
+- **`z.httpUrl()` rejects `http://localhost:3000`.** Its built-in hostname pattern demands a dotted
+  TLD, so it fails in development. The correct form for an http(s) URL here is
+  `z.url({ protocol: /^https?$/ })`, which accepts localhost and still rejects a scheme-less string.
+- **`z.string().url()`, `.format()` and `.flatten()` are deprecated** in favour of top-level `z.url()`
+  and the free functions `z.treeifyError` / `z.prettifyError`. Nothing in the lint or typecheck chain
+  flags a deprecated Zod call — `eslint-config-next` is not type-aware and `@typescript-eslint/no-deprecated`
+  is not enabled — so this is a convention the code has to hold on its own.
+- **The message parameter is `error`, not `message`.** The old one still works, but passing both
+  throws *"Cannot specify both `message` and `error` params"*.
+
+`z.prettifyError()` is what renders the failure block a developer actually reads; it reports every
+invalid variable at once rather than one per restart.
+
+### `server-only` is used, but it forced a module split
+
+`import 'server-only'` is what makes a client component importing the environment a **build error**,
+and it needs no dependency: Next aliases the bare specifier to a vendored copy at
+`node_modules/next/dist/compiled/server-only`, whose `exports` map resolves to an empty module under
+the `react-server` condition and to a module that throws everywhere else.
+
+That alias exists only inside Next's bundler. The `payload` CLI loads `payload.config.ts` — and
+therefore the environment module — through **tsx**, outside Next, where the specifier does not
+resolve at all: `pnpm generate:types` fails with `ERR_MODULE_NOT_FOUND`. Measured, not assumed.
+
+Hence the split. `env.core.ts` carries the schemas and stays tsx-resolvable for the Payload config;
+`env.server.ts` is that module plus the `server-only` import, and is what application code imports.
+An ESLint `no-restricted-imports` rule stops anything else reaching past the guard. See **D-14**.

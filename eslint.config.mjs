@@ -29,6 +29,37 @@ const config = [
       ],
       '@typescript-eslint/no-explicit-any': 'error',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
+
+      // `src/lib/env.core.ts` is the environment module without its `server-only` guard. That
+      // guard is what makes a client component importing the environment a *build* error, so
+      // reaching past it re-opens the hole it exists to close - a client component importing
+      // the core builds cleanly and ships a secret in prerendered HTML.
+      //
+      // Only `payload.config.ts` has a real reason to: the `payload` CLI loads it through tsx,
+      // outside Next, where `server-only` cannot resolve. That file is exempted below.
+      // Everything else imports `@/lib/env.server`. See docs/ARCHITECTURE.md - D-14.
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/env.core', 'env.core'],
+              message:
+                'Import @/lib/env.server instead. env.core has no server-only guard, so importing ' +
+                'it from a client component would build cleanly and leak secrets - see D-14.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The three files that legitimately reach the unguarded core: `env.server.ts`, which is the
+    // guard and re-exports it; the Payload config, which must stay resolvable under tsx; and the
+    // instrumentation hook, which runs before any React graph exists.
+    files: ['src/lib/env.server.ts', 'src/payload.config.ts', 'src/instrumentation.ts'],
+    rules: {
+      'no-restricted-imports': 'off',
     },
   },
 ]

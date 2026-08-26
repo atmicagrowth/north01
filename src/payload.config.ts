@@ -4,30 +4,24 @@ import { fileURLToPath } from 'url'
 import { postgresAdapter } from '@payloadcms/db-postgres'
 import { buildConfig } from 'payload'
 
+import { schemaPush, serverEnv } from './lib/env.core'
 import { Users } from './payload/collections/Users'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
 
 /**
- * Plan §4.1b: a missing server secret must fail clearly rather than be silently replaced
- * with a fake value. `process.env.X || ''` is exactly the substitution it forbids - an empty
- * PAYLOAD_SECRET would sign session tokens with nothing at all.
+ * Importing the environment module here is what makes plan §4.1b's "fail at build time" true.
  *
- * This is the Phase 2 minimum, not the environment system. The typed, Zod-validated module
- * that separates browser-safe from server-only variables is Phase 4 (§4.1a), and it replaces
- * this. The variable name is safe to include here because this throws at config load, server
- * side - it never reaches an API response.
+ * This config is reached through four static imports of `@payload-config` in `(payload)/`, so
+ * `next build` evaluates it while collecting page data - a throw inside it fails the build with
+ * a non-zero exit code, before anything is deployed. Nothing else in the app has that property:
+ * `instrumentation.ts` is skipped during builds, and route modules are not evaluated then either.
+ *
+ * The relative import is deliberate, matching `./payload/collections/Users` below. This file is
+ * loaded by three different loaders - Turbopack, the Next server, and tsx for the `payload` CLI -
+ * and a relative specifier needs none of them to resolve a tsconfig path alias.
  */
-function requireServerEnv(name: 'DATABASE_URL' | 'PAYLOAD_SECRET'): string {
-  const value = process.env[name]
-  if (!value) {
-    throw new Error(
-      `${name} is not set. Copy .env.example to .env and fill it in; see docs/DEVELOPMENT.md.`,
-    )
-  }
-  return value
-}
 
 /**
  * Payload runs embedded inside this Next.js application - one deployable, not a separate
@@ -54,20 +48,32 @@ export default buildConfig({
 
   db: postgresAdapter({
     pool: {
-      connectionString: requireServerEnv('DATABASE_URL'),
+      connectionString: serverEnv.DATABASE_URL,
     },
     // Plan §5.1d: Drizzle's push workflow for the development sandbox, committed
-    // migrations for every other environment. Stated explicitly rather than left to the
-    // adapter default so the condition is visible.
+    // migrations for every other environment.
     //
-    // HAZARD: push rewrites whatever schema DATABASE_URL points at. `pnpm dev` against a
-    // non-development database would alter it. Phase 4 owns the environment guard.
-    push: process.env.NODE_ENV === 'development',
+    // The condition is `schemaPush.allowed` rather than a NODE_ENV test because being in
+    // development is not on its own a safe reason to rewrite a schema - the database the
+    // connection string happens to point at also has to be the one push is authorised for.
+    // That is decision D-10, and `resolveSchemaPush` in lib/env.server.ts is where it lives.
+    //
+    // Keep this an explicit boolean. The adapter's own gate is `this.push !== false`, so an
+    // `undefined` here would fail open and push anyway.
+    push: schemaPush.allowed,
+
+    // The guard above governs push. This closes the other accidental DDL path the adapter has:
+    // when a connection fails because the database does not exist, it issues a real CREATE
+    // DATABASE and carries on. For an online-only storefront whose databases are provisioned in
+    // the Neon console, that turns a typo in DATABASE_URL into a silently-created empty database
+    // rather than an error. Defaults to false, so it has to be said.
+    disableCreateDatabase: true,
+
     migrationDir: path.resolve(dirname, 'payload/migrations'),
   }),
 
   // Payload signs and encrypts with this. Server-only; must never be exposed.
-  secret: requireServerEnv('PAYLOAD_SECRET'),
+  secret: serverEnv.PAYLOAD_SECRET,
 
   typescript: {
     outputFile: path.resolve(dirname, 'payload-types.ts'),

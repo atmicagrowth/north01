@@ -926,6 +926,250 @@ axe. The gates that caught things were: rendering a component in isolation throu
 outline from the rendered DOM, and checking that each `peer-*`/`group-*` variant has the
 sibling or ancestor it needs. Those four checks belong in Phase 27's test suite.
 
+---
+
+## 1.9 Phase 4 — environment configuration and secret management
+
+Phase 4 had two jobs: the typed Zod module plan §4.1a describes, and the schema-push guard **D-10**
+has been owed since Phase 2. Both are done. What follows is mostly measurement, because almost every
+design choice here turned on how Next 16 and Payload 3 actually behave rather than on how they are
+usually described.
+
+### 1.9.1 Where validation can and cannot fire — the four evaluation contexts
+
+The environment module is evaluated in four different contexts — three loaders, one of them at two
+different moments — and none of them covers everything. This was established by running each of
+them, not by reading about them.
+
+| Context | When | Covers |
+|---|---|---|
+| Turbopack, page-data collection | `next build` | **the build** — `payload.config.ts` is statically imported by all four `(payload)` route files, so a throw fails the build, exit 1 |
+| Next server, `instrumentation.ts` | `next dev`, `next start` | **startup** |
+| Next server, lazy route module | first request touching `(payload)` | too late to be a gate |
+| tsx | `pnpm payload`, `generate:types`, `generate:importmap` | the CLI paths |
+
+Three findings that changed the design:
+
+- **`instrumentation.ts` is skipped during `next build`.** Next returns early from
+  `registerInstrumentation` when `NEXT_PHASE === 'phase-production-build'`, prerender workers
+  included. The widespread assumption that `register()` is a build hook is wrong. Had the validation
+  gone only there, `pnpm build` would pass with a broken environment.
+- **`payload.config.ts` is not evaluated at server boot.** `DATABASE_URL= pnpm start` boots clean,
+  logs nothing, and returns **200** on `/`. Only `/admin` and `/api/*` fail, per request. A deployment
+  in that state passes a health check on the storefront while its CMS and API are dead. That is the
+  gap `src/instrumentation.ts` exists to close, and the only reason it exists.
+- **A throw in `register()` behaves differently in the two commands**, and both were measured.
+  `next dev` **exits with code 1** and serves nothing. `next start` **stays up**: Next logs
+  `Failed to prepare server` and an `unhandledRejection`, and *every* route then returns 500 —
+  storefront included. The body is a bare `Internal Server Error` with no variable name in it, which
+  is what §4.1b requires of a public response. The `next start` case is a request-level failure, not
+  a crash, and these notes should not claim otherwise.
+
+So: **the build gate is `payload.config.ts` and the startup gate is `instrumentation.ts`.** Neither is
+redundant. Moving either one is a regression that no test currently catches.
+
+### 1.9.2 The push guard — what the hazard actually was, once measured
+
+D-10 asked for a guard making a push to a non-development database "structurally impossible rather
+than merely unlikely". Before designing one, the exposure was measured, and it is much narrower than
+the decision text implies.
+
+- **A production build cannot push at all**, and the emitted chunk says so. The guard reads
+  `process.env.NODE_ENV` as a literal member expression, which Turbopack substitutes at build time,
+  so the whole decision constant-folds: the production server chunk contains
+  `{allowed:!1, reason:'NODE_ENV is "production", not "development"', mismatch:!1}` and there is no
+  surviving `==="development"` comparison anywhere in `.next/server`.
+
+  **This was got wrong once.** The claim originally recorded here — that the chunk contains `push:!1` —
+  was measured against the *Phase 2* config, whose `push:` expression was a literal NODE_ENV test.
+  Replacing it with `push: schemaPush.allowed` made it a runtime property read, and the audit found
+  the chunk actually contained `push:d.schemaPush.allowed`. Reading the raw `process.env.NODE_ENV`
+  inside the guard is what restored the build-time answer, in a form that is now verified rather
+  than inherited. The lesson generalises: a measurement stops being evidence the moment the code it
+  measured is edited.
+- **`PAYLOAD_MIGRATING=true`** is set by `payload migrate` and disables push independently.
+- **The adapter's own gate fails open.** `@payloadcms/db-postgres`'s connect path tests
+  `this.push !== false`, so an *omitted* or `undefined` option pushes. The explicit boolean in
+  `payload.config.ts` is load-bearing, not decoration.
+- **Two paths remain:** `next dev`, and the unbundled `payload` CLI, which reads `NODE_ENV` at true
+  runtime through tsx. Both take `DATABASE_URL` from the same `.env`.
+
+So the realistic accident is specific and human: point `.env` at another database to look at
+something, run `pnpm dev`, and Drizzle rewrites that database's schema. Push also re-runs on **every
+HMR reload**, and that reload path deliberately skips `onInit` — which is what disqualified `onInit`
+as the place to host the guard, along with the fact that it fires *after* `db.connect()` and after
+push has already run.
+
+**The guard.** `DATABASE_PUSH_TARGET` names the one database push may modify, as `host/database`.
+Push requires `NODE_ENV=development`, `appEnv === 'local'`, the variable set, and the host and database
+of `DATABASE_URL` matching it. Two independent facts have to agree and the second names the database,
+so repointing `DATABASE_URL` **disarms** push instead of aiming it somewhere new. Re-arming it is a
+deliberate second edit. Fail-closed: unset means no push.
+
+Neon gives each branch its own endpoint hostname, so branches of one project are distinguishable; the
+database name in the path separates two databases sharing a host.
+
+**Proved, not asserted.** `pnpm dev` with a deliberately mismatched `DATABASE_PUSH_TARGET`: the
+database still connects (`/api/users` -> 403, Payload's correct unauthenticated response), the warning
+prints, and `Pulling schema from database` appears **zero** times. With the target correct it appears
+and the schema is pushed as before.
+
+### 1.9.3 Why the tiers are three files, and what a runtime tripwire could not do
+
+Plan §4.1a asks for browser-safe and server-only to be separated. They are separated into two modules
+rather than two exports of one, so the mistake is visible in the import line of the file making it.
+
+**A `typeof window` tripwire was not enough, and the first version of this shipped broken.** It cannot
+fire during a build: prerendering runs on the server, where `window` is undefined. Proven with a
+throwaway `'use client'` component importing `serverEnv` — `pnpm build` exited **0**, `env.server.ts`
+was bundled into `.next/static/chunks/`, and the rendered secret landed in `.next/server/app/index.html`,
+the prerendered HTML of `/`. A runtime check is a smoke alarm, not a lock.
+
+**`import 'server-only'` is the lock**, and it needs no dependency: Next aliases the bare specifier to
+a vendored copy whose `exports` map resolves to an empty module under the `react-server` condition and
+to a throwing module everywhere else. With it, the same probe fails the build, naming the import
+chain.
+
+**But that alias exists only inside Next's bundler.** The `payload` CLI loads `payload.config.ts` —
+and so the environment module — through tsx, outside Next, where the specifier does not resolve at
+all: `pnpm generate:types` fails with `ERR_MODULE_NOT_FOUND`. Measured, not assumed.
+
+Hence **three modules, not two**. `env.core.ts` carries the schemas and stays tsx-resolvable;
+`env.server.ts` is that plus the guard and is what application code imports; and an ESLint
+`no-restricted-imports` rule stops anything but `payload.config.ts` and `instrumentation.ts` reaching
+past the guard, so the bypass is a lint failure rather than a convention. The same tsx constraint is
+why the module imports nothing from `next/*`.
+
+**The public module reads one literal per line.** Next substitutes `process.env.NEXT_PUBLIC_X`
+textually at build time and `process.env` is an empty shim in the browser, so a dynamic read, a
+spread, or handing the whole object to Zod all yield nothing client-side. The verbose literal table in
+`env.public.ts` is the only form that survives the bundler.
+
+### 1.9.4 Things that would have been bugs
+
+- **Empty string is not absent, unless you make it so.** `@next/env` skips its file fallback for any
+  key already present in `process.env`, and an empty string is present. A blank `.env` line or a blank
+  Vercel field therefore yields `''`, which satisfies `.optional()` and fails a required string with
+  "too small" rather than "missing". The module strips empty values before parsing, which preserves
+  the `if (!value)` semantic Phase 2 chose in §1.7.4.
+- **`NODE_ENV` is undefined under the `payload` CLI.** Payload's bin loads `.env` through `@next/env`
+  but never assigns `NODE_ENV`. A required `z.enum` for it would have broken `pnpm generate:types` and
+  `pnpm generate:importmap` — both documented scripts. It is defaulted to `development`.
+- **`z.httpUrl()` rejects `http://localhost:3000`.** Its hostname pattern demands a dotted TLD. Any
+  http(s) URL variable here uses `z.url({ protocol: /^https?$/ })`, which still rejects a scheme-less
+  string. `z.url()` alone would have accepted `localhost:3000` as a URL with protocol `localhost:`.
+- **`.env.local` loads for `next build` and `next start`, not just `next dev`.** It is skipped only
+  when `NODE_ENV=test`. A stray `.env.local` will override `.env` in a production build on a
+  developer's machine.
+- **Module scope is not "once per server".** Warning at module scope printed every message **twice**
+  on a plain `pnpm dev`: Turbopack compiles the instrumentation hook and the Payload config into
+  separate chunks, and `next dev` evaluates them in two different processes. Deduplicating through
+  `globalThis` was tried and does not work, for exactly that reason — different processes do not share
+  one. Reporting moved into `reportEnvironment()`, called once from `instrumentation.ts`, leaving
+  module evaluation pure apart from throwing. The trade-off is recorded in the code: the `payload` CLI
+  does not run instrumentation, so it validates silently.
+
+### 1.9.5 Choices that follow the plan rather than depart from it
+
+- **The full variable inventory is declared now, all of it optional except the two that are consumed.**
+  Plan §4.1a enumerates Cloudinary, Algolia, Stripe, Resend, Sentry, PostHog and Turnstile as the
+  content of its two buckets, and its Claude prompt requires `.env.example` to name them. Declaring
+  them in the schema is what keeps `.env.example` and the typed accessor from drifting apart. This is
+  not building a later phase early: naming a variable is not installing an SDK, and no integration
+  code exists. Each entry carries the phase that activates it, and that phase tightens its own group.
+- **§4.1c's Stripe rule is enforced, not advised.** "Never use production Stripe credentials in local
+  or preview" is checked against the `sk_live_`/`pk_live_` prefixes and throws. A warning would be the
+  wrong response to a preview branch that can charge a real card.
+- **Optional integrations are grouped and all-or-nothing.** A Cloudinary cloud name with no API secret
+  is not a working Cloudinary. A fully absent group stays silent — its phase has not arrived — while a
+  *partly* configured one warns at every startup in every environment, because that is a real defect
+  that otherwise surfaces much later and much further from its cause.
+
+### 1.9.6 Confirmation sweep of earlier deviations
+
+Step 4 of the append rule.
+
+- **DEV-17** (withdrawn) — re-read and still correct. Phase 4 did not re-disable push; it aimed it.
+  The withdrawn entry stays as a tombstone, and **D-10** now records the closure.
+- **DEV-15** — confirmed again. Postgres is still a Phase 2 prerequisite; nothing in Phase 4 changes
+  when Payload connects, and the adapter still opens no socket at config load.
+- **DEV-04** — confirmed. No GraphQL surface was added or exposed.
+- **DEV-24**, **DEV-25** — untouched, still pending their phases (10 and 19).
+- Every open specification gap is unaffected: Phase 4 added no UI and no schema.
+
+### 1.9.7 Post-implementation audit, and what it found
+
+The phase was re-reviewed after it reached a green gate, the same way Phase 3 was in §1.8.10, by six
+independent lenses: module logic, secret leakage, an adversarial attack on the guard, specification
+compliance, documentation accuracy, and cross-loader integration. It found real defects in code that
+had already passed typecheck, lint, build and eight hand-written behavioural checks. The ones that
+mattered:
+
+- **A client component could import the environment and ship a secret.** §1.9.3 above. The headline
+  finding, and the one that changed the architecture.
+- **The push guard failed open when `NODE_ENV` was unset.** The schema defaults it to `development`
+  for the Payload CLI's sake, and the guard read the *defaulted* value — so a server started with no
+  `NODE_ENV`, pointed at a production database with a matching target, returned `allowed: true`. The
+  least safe value was the fallback for the check whose whole job is safety.
+- **`?host=` defeated the guard completely.** `pg-connection-string` applies query parameters *before*
+  falling back to the URL's own hostname, so `postgres://…@dev-host/db?host=prod-host` connects to
+  production while a guard reading `url.hostname` inspects `dev-host`. The identity is now resolved
+  the way `pg` resolves it. `?options=`, which Neon documents for SNI-less clients and which reroutes
+  to a different compute entirely, is refused rather than interpreted.
+- **Case folding was asymmetric.** The permitted value was lower-cased whole; the actual value had
+  only its hostname lower-cased. A database name containing a capital letter could therefore never
+  match itself, and the warning blamed the developer for a change they had not made. Four of the six
+  lenses found this independently.
+- **The port was not part of the identity**, so two Postgres servers on one host were one target; and
+  a trailing slash on either side made the guard unsatisfiable by any value at all.
+- **`decodeURIComponent` could throw a bare `URIError`** naming no variable, for a `DATABASE_URL` that
+  Zod had accepted — `new URL()` tolerates a stray `%`.
+- **A preview deployment could carry live Stripe keys.** With "Automatically expose System Environment
+  Variables" off, `VERCEL_ENV` is absent and both preview and production build with
+  `NODE_ENV=production`, so inferring production from `NODE_ENV` granted a preview branch the one
+  privilege `production` carries. It now answers `preview`, and the error tells the operator how to
+  prove otherwise.
+- **`rk_live_` was invisible to the §4.1c check, and `rk_test_` was rejected outright.** Stripe issues
+  restricted keys for server use and recommends them in production; the regex knew only `sk_`. Phase
+  17 would have hit it.
+- **Three declared variables belonged to no integration group**, so the "all-or-nothing" warning the
+  docs promised could never fire for PostHog, GA4 or Sentry.
+- **A missing `DATABASE_URL` reported a format complaint**, because a single `error` string on
+  `z.url()` overrides every issue the schema raises, including the one for an absent value.
+- **The mismatch warning echoed `DATABASE_PUSH_TARGET` verbatim**, so pasting a connection string into
+  it — the obvious slip, since it is derived from `DATABASE_URL` — printed credentials at every
+  `pnpm dev`. The value's shape is now validated and a pasted string is refused.
+
+Plus a cluster of documentation defects: the `push:!1` claim above, an instrumentation claim that was
+true of `next start` and false of `next dev`, a code comment calling `NODE_ENV` a build-time constant
+forty-five lines from one saying the opposite, a citation to a §4.1a that does not exist in
+`docs/ARCHITECTURE.md`, a `docs/STACK_VERSIONS.md` line asserting the environment is *not* validated
+at build time, and an append-log row that did not render as a table row because a blank line left by
+the Phase 3 append had already terminated the table.
+
+**One destructive path the guard never covered** was also found and closed: the adapter's
+`disableCreateDatabase` defaults to `false`, so a typo in the database segment of `DATABASE_URL`
+caused a real `CREATE DATABASE` rather than an error. It is now `true`. `PAYLOAD_DROP_DATABASE` and
+`migrate:fresh` remain as they are: those are explicit commands, not accidents.
+
+**What this says about the gates.** Every defect above passed `pnpm typecheck`, `pnpm lint` and
+`pnpm build`. What caught them was executing the module under tsx with hostile inputs, reading the
+*emitted* chunk rather than the source, and building a deliberately wrong component to see whether
+the build would stop it. Phase 27 should own all three as tests: a table-driven suite over
+`resolveSchemaPush` inputs, an assertion about what does and does not appear in `.next/static`, and a
+fixture build that must fail.
+
+### 1.9.8 What is now owed, and by whom
+
+`docs/ARCHITECTURE.md` §5's owed table is down to two rows. Phase 4 adds no new debt, and one item is
+worth naming for a later phase rather than leaving implicit:
+
+- **Nothing mechanically prevents a future file from reading `process.env` directly** and bypassing
+  the module. Phase 4 added a `no-restricted-imports` rule for the one case that leaks secrets —
+  reaching past `env.server.ts` to the unguarded core — but a blanket `no-restricted-properties` on
+  `process.env` is a wider tooling decision with a scope question attached, and is left for
+  **Phase 27** alongside the checks §1.8.10 and §1.9.7 assign there.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -1412,6 +1656,47 @@ work has somewhere to put it and no layout to renegotiate.
 
 *Affects Phases 3, 6 and 19. **To be confirmed in Phase 19.***
 
+### DEV-26 — Environment variable names this project had to choose
+
+**The documents say:** plan §4.1a lists the server-only and browser-safe buckets by *service* -
+"Analytics public IDs", "Algolia search-only key", "Stripe secret key", "Resend API key" and so on. It
+names no variables. Nothing in the six canonical documents names an environment variable at all except
+`DATABASE_URL` and `PAYLOAD_SECRET`.
+
+**We do:** fix the names in Phase 4, in `src/lib/env.public.ts` and `src/lib/env.server.ts`, so the
+schema, `.env.example` and `docs/ENVIRONMENT.md` agree from the start instead of each integrating phase
+inventing its own.
+
+Most follow an unambiguous provider convention. These did not, and are this project's choice:
+
+| Variable | Why it needed deciding |
+|---|---|
+| `NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY` | Algolia's own templates use `_SEARCH_API_KEY`, `_SEARCH_KEY` and `_API_KEY` interchangeably |
+| `ALGOLIA_ADMIN_API_KEY` | `ALGOLIA_ADMIN_KEY` and `ALGOLIA_WRITE_API_KEY` are both in circulation |
+| `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST` / `POSTHOG_API_KEY` | PostHog documents several spellings |
+| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | GA4 has no canonical environment-variable name |
+| `DATABASE_PUSH_TARGET` | Entirely this project's — it exists for **D-10** and has no upstream analogue |
+| `SITE_URL` | No document requires a canonical-origin variable; Phases 17, 19 and 24 will all need one |
+
+**Why:** the alternative is a naming decision taken independently in Phases 8, 12, 17, 19, 25 and 26,
+each defensible, none consistent — and `.env.example` has to list them in Phase 4 regardless, so the
+names get chosen here whether or not they are written down as chosen here.
+
+**Also decided here:** the Cloudinary cloud name is `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`, browser-safe,
+because it appears in every delivery URL and is not a secret. The single-variable `CLOUDINARY_URL` form
+the Node SDK also accepts is deliberately *not* used: it packs the API secret and the public cloud name
+into one string, which cannot be split across §4.1a's trust boundary.
+
+**Authoritative:** this document. The plan says "Examples:" and assigns no names.
+
+**A later phase may correct any of these** with evidence from the provider's own current
+documentation — that is a correction to this entry, not a silent rename. What it may not do is
+introduce a second name for a variable that already exists here.
+
+*Affects Phases 8, 12, 17, 19, 24, 25 and 26. **Each name to be confirmed by the phase that first uses
+it.***
+
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -1423,6 +1708,7 @@ work has somewhere to put it and no layout to renegotiate.
 | Phase 2 — visual review | 2026-08-23 | Note §1.7.6: the baseline page reviewed in a real browser at 1440×900 and 390×844 against the visual guide — palette, visual tension, guardrails and responsive behaviour all measured rather than eyeballed. Closes step 8 of the phase completion gate, which the earlier Phase 2 commits had skipped. Records the port-identity hazard found while doing it. |
 | Phase 2 — append audit | 2026-08-23 | Structural corrections to this document. Phase 2 notes renumbered from `1.5a–1.5c`, which sat *before* §1.5 and implied they subdivided it, to **§1.7** with subsections. Append log put back in date order. Step 4 of the append rule carried out and recorded as **§1.7.3** — **DEV-04** and **DEV-14** confirmed; DEV-05 (Phase 8) and DEV-03 (Phase 18) still pending, not due. **DEV-18** and **DEV-19** moved to §1.7.5: both recorded compliance, not departure, and did not belong in Section 2. |
 | Phase 3 — design system and UI foundation | 2026-08-24 | Notes **§1.8**: the token layer and the numbers behind the guide's adjectives (**G-12**), accent/selection/border resolution and the contrast table (**G-14**), typeface selection with the Bodoni Moda optical-size trap and the `unicode-range` trap, **C-10 settled** in favour of an in-app specimen route, what the primitives are built on, the real-browser and axe-core pass, and the visual review. Deviations **DEV-20** (no Storybook), **DEV-21** (Oxide signal colour), **DEV-22** (control borders are Muted Stone), **DEV-23** (Radix Dialog drawer, Radix Toast), **DEV-24** (Motion deferred to Phase 10), **DEV-25** (newsletter column deferred). Step 4 carried out as **§1.8.9** — DEV-14 and DEV-16 re-confirmed, DEV-01 and DEV-07 encoded in `navigation.ts`. |
-
 | Phase 3 — post-implementation audit | 2026-08-24 | Note **§1.8.10**: the committed phase re-reviewed for latent defects, 23 findings confirmed of 37 and all fixed. `<Button asChild>` threw on every use (Slot given two children); a "persistent" toast dismissed itself in 0.1ms (`setTimeout` overflow); toast exit animations were dead classes; `crypto.randomUUID` fails outside a secure context; `max-w-prose` was 65ch not 672px and `max-w-xs` was 6px (Tailwind width-namespace precedence); `--font-weight-*` survived `--font-*: initial`; `cn()` could not conflict `transparent`/`current`/`inherit`; three dead `peer-*`/`group-*` variants; and eight accessibility defects that coexisted with a clean axe run — two `<h1>`s on the specimen sheet, a suppressed focus ring on a focusable tab panel, a `banner` landmark inside the drawer, and **no skip link** (WCAG 2.4.1, Level A). Records which gates are blind to which failure modes, for Phase 27. |
+| Phase 4 — environment configuration and secret management | 2026-08-26 | Notes **§1.9**: the four contexts that evaluate the environment module and what each can gate (`instrumentation.ts` is **not** a build hook; `payload.config.ts` is **not** a startup hook), the push hazard measured down to two real paths, **D-10 closed** with `DATABASE_PUSH_TARGET` and proved by running it, the three-module split that `server-only` forced, and the would-be bugs — empty-string-is-not-absent, `NODE_ENV` undefined under the Payload CLI, `z.httpUrl()` rejecting localhost, `.env.local` loading in production builds, module scope not being once-per-server. **§1.9.7 records a post-implementation audit** that found a client component could import the environment and ship a secret in prerendered HTML, a `NODE_ENV`-unset fail-open in the guard, a total bypass via `?host=`, asymmetric case folding, a port-blind comparison, and a preview deployment able to carry live Stripe keys — all fixed. Deviation **DEV-26** (variable names this project had to choose). New decisions **D-14** and **D-15** in `docs/ARCHITECTURE.md`; new `docs/ENVIRONMENT.md`. Step 4 carried out as **§1.9.6**. |
+
 > **Append this table, and the sections above it, at the end of every phase.**
