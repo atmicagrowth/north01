@@ -1348,6 +1348,20 @@ the event to land. `onInit` is the earliest point that has a pool to attach to: 
 `uncaughtException`, and one line — `Postgres pool client error. The connection was discarded; the
 next query opens a new one.`
 
+**And then re-measured under `next start`**, because the whole argument is about the environment
+that has no development safety net, and proving a production fix in development proves nothing. A
+production build was started, a request forced a real query — `POST /api/users/login` with bad
+credentials, since `/admin`'s login page and a 403 from access control both answer without touching
+Postgres — the backend behind that connection was terminated, and the next three requests returned
+401 as they should. Handler fired once, no `uncaughtException`, process still listening.
+
+**`connectionTimeoutMillis` was measured too**, against a black-holed address: the CLI failed with
+`cannot connect to Postgres. Details: Connection terminated due to connection timeout` rather than
+hanging. `pg`'s default for that option is `0` — wait forever — so this is the one pool setting that
+is a behaviour change rather than a restatement. `max` restates `pg`'s default of 10;
+`idleTimeoutMillis` is three times its 10s default, which the first draft of `docs/DATABASE.md`
+wrongly described as a restatement and now states correctly.
+
 ### 1.10.5 Push and migrations produce the same schema — measured, not assumed
 
 *Migration drift* is on the plan's edge-case list for this phase, and it is usually discussed rather

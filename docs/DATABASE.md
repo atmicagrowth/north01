@@ -66,11 +66,18 @@ postgresql://USER:PASSWORD@HOST.neon.tech/DATABASE?sslmode=verify-full
 
 ### Pool settings, and why they are not defaults
 
-In `src/payload.config.ts`. `max: 10` and `idleTimeoutMillis: 30_000` are conservative statements of
-`pg`'s own defaults; **`connectionTimeoutMillis: 15_000` is a real change.** `pg` defaults it to `0`,
-meaning wait forever, which against a suspended or unreachable compute turns a dead database into a
-hung request — no error, no log line, nothing to alert on. Fifteen seconds clears a Neon cold start
-and stays inside a serverless function's own limit, so what surfaces is a named connection error.
+In `src/payload.config.ts`, and only one of the three is a restatement.
+
+| Option | `pg` default | Here | Why |
+|---|---|---|---|
+| `max` | 10 | **10** | Restated, because the number only means something alongside the endpoint choice above: it is per *process*, and production fans out across many |
+| `idleTimeoutMillis` | 10 000 | **30 000** | Three times the default. A connection survives the gaps in a browsing session instead of being reopened between requests, and is still released long before an idle Neon compute goes away underneath it |
+| `connectionTimeoutMillis` | **0 — wait forever** | **15 000** | The one that matters. Against an unreachable or suspended compute the default turns a dead database into a hung request: no error, no log line, nothing to alert on, until something far away times out |
+
+Fifteen seconds clears a Neon cold start and stays inside a serverless function's own limit.
+Measured against a black-holed address: the request fails with
+`Error: cannot connect to Postgres. Details: Connection terminated due to connection timeout`,
+which is a named failure with a subject.
 
 ### What a connection failure looks like
 
@@ -236,7 +243,7 @@ Plan §5.1d asks for each of these to be deliberate. They are worked examples in
 | **Soft delete** | `trash: true` where a delete must be recoverable — orders, customers. Sets `deleted_at`; reads exclude trashed rows unless they ask for them |
 | **Archive** | A `status` field. An *editorial* state, and deliberately not the same column as `deleted_at` |
 
-### Four traps, all of them load-bearing
+### Five traps, all of them load-bearing
 
 **A compound unique index over a nullable column is weaker than it reads.** `(owner, label)` unique
 does not stop two rows with the same label and no owner: in Postgres, NULLs are distinct from one
@@ -253,6 +260,16 @@ collections: keep compound-index field combinations distinct, or the second one 
 **`ON DELETE SET NULL` means every relationship can resolve to nothing.** Deleting a user does not
 delete or orphan the rows pointing at it — their reference becomes null. Every consumer of a
 relationship must treat "resolves to nothing" as an ordinary state. Proved in Phase 5.
+
+**`indexes` cannot express a *partial* unique index, and Phase 6 needs one.** Plan §6.1c's critical
+rule — *"do not allow two active variants of the same product to share the same SKU"* — is a unique
+constraint over `(product, sku)` **`WHERE active`**. Payload's compound-index API is
+`{ fields, unique }` and has no `where`, so the only two spellings are a *stricter* constraint
+(unique regardless of `active`, which also blocks reusing a SKU after a variant is retired) or the
+adapter's `afterSchemaInit` hook, which is where Payload documents composite and otherwise
+unsupported indexes. Adding the index in a hand-written migration is the third option and the worst
+one: the Drizzle snapshot would not know it exists, so no later migration would ever maintain it.
+Decide this in Phase 6 deliberately rather than discovering it at the first duplicate SKU.
 
 **`payload.delete({ trash: true })` is not a soft delete.** It means *permanently delete, trashed
 documents included* — the opposite of what it reads like. A soft delete is an **update** that sets
@@ -309,8 +326,9 @@ pnpm migrate            # forward again
 # 4. Optional but worth it: diff this schema against the pushed development one. Compare columns,
 #    indexes and constraints from information_schema, pg_indexes and pg_constraint. They must match.
 
-# 5. Drop it. It is a fixture, not an environment.
-psql "$DEV_DATABASE_URL" -c 'DROP DATABASE north01_migration_check WITH (FORCE)'
+# 5. Drop it. It is a fixture, not an environment. Note this one runs against the DEVELOPMENT
+#    string, not the retargeted one - a database cannot drop itself.
+psql "<the development connection string>" -c 'DROP DATABASE north01_migration_check WITH (FORCE)'
 ```
 
 A variable set in the shell wins over `.env`: Next's loader does not overwrite what is already in

@@ -65,20 +65,21 @@ export default buildConfig({
       max: 10,
 
       /**
-       * Return an idle connection after 30s. Neon scales an idle compute to zero after a few
-       * minutes, and holding a connection open across that boundary is how you get a socket that
-       * looks alive and is not. Releasing first means the next request opens a new one and pays a
+       * Three times `pg`'s own 10s default: long enough that a connection survives the gaps in a
+       * browsing session rather than being reopened between requests, and still far short of the
+       * window in which Neon scales an idle compute to zero. Holding a socket across *that*
+       * boundary is how you get one that looks alive and is not; reopening afterwards costs a
        * cold start, which is the failure mode that recovers by itself.
        */
       idleTimeoutMillis: 30_000,
 
       /**
-       * **The one that is not a default.** `pg`'s default is `0` — wait forever. Against a
-       * suspended or unreachable Neon compute that turns a dead database into a hung request:
-       * no error, no log line, nothing to alert on, until the platform's own timeout ends it far
-       * from the cause. Fifteen seconds is well clear of a Neon cold start (sub-second, and
-       * seconds in the worst case) and well inside Vercel's function limit, so what surfaces is
-       * a named connection error rather than a timeout with no subject.
+       * **The one that matters.** `pg`'s default is `0` — wait forever. Against a suspended or
+       * unreachable Neon compute that turns a dead database into a hung request: no error, no log
+       * line, nothing to alert on, until the platform's own timeout ends it far from the cause.
+       * Fifteen seconds is well clear of a Neon cold start and well inside Vercel's function
+       * limit. Measured against a black-holed address, the failure is
+       * `cannot connect to Postgres. Details: Connection terminated due to connection timeout`.
        */
       connectionTimeoutMillis: 15_000,
     },
