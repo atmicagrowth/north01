@@ -1,5 +1,6 @@
 import type { CollectionConfig } from 'payload'
 
+import { isAdmin, isStaff, nobody, ownedByCustomer } from '../access'
 import { minorUnits } from '../fields/money'
 
 /**
@@ -44,6 +45,17 @@ export const OrderItems: CollectionConfig = {
    * takes its trashed lines with it rather than leaving them behind.
    */
   trash: true,
+
+  /**
+   * Ownership through the order, and creation closed for the same reason as `Orders`: a line on an
+   * order is a historical fact written by the checkout, not a document anybody authors.
+   */
+  access: {
+    read: ownedByCustomer('order.customer'),
+    create: nobody,
+    update: isStaff,
+    delete: isAdmin,
+  },
 
   fields: [
     {

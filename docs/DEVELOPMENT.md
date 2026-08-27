@@ -97,6 +97,7 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm generate:importmap` | Regenerate the admin import map. **Required after adding a rich-text feature or any custom admin component** — the Lexical editor's field, cell and feature components are all resolved through it |
 | `pnpm seed` | Representative demo content — catalogue, editorial, globals. Idempotent, local only, and deliberately creates no customers, orders or media. See `scripts/seed.ts` |
 | `pnpm payload run scripts/baseline-migrations.ts <name…>` | Put a push-built development database onto the migration chain without destroying it. [`DATABASE.md`](DATABASE.md) §10 |
+| `pnpm verify:access` | The Phase 7 access-control matrix, run against the live rules — cross-customer reads, role escalation, ownership forcing, the disabled account, the password policy. Creates and removes its own fixtures; local database only. Phase 27 lifts these assertions into Vitest |
 | `pnpm test` | Vitest unit/component tests *(pending — Phase 27)* |
 | `pnpm test:e2e` | Playwright *(pending — Phase 27)* |
 
@@ -120,7 +121,9 @@ conventions Phase 6 has to follow: **[`docs/DATABASE.md`](DATABASE.md)**.
 
 One thing that catches everyone once: a generated migration destructures `{ db, payload, req }` and
 uses only `db`. This project compiles with `noUnusedParameters`, so trim both signatures to `{ db }`
-or `pnpm typecheck` fails. It is the only hand-edit a migration ever gets.
+or `pnpm typecheck` fails. That, `IF EXISTS` on a `DROP CONSTRAINT`, and — rarely, with the reason
+written at the statement — a data statement that stops a new `NOT NULL` column silently changing what
+existing rows mean, are the only hand-edits a migration ever gets. [`DATABASE.md`](DATABASE.md) §4.
 
 ## Project layout
 
@@ -130,27 +133,36 @@ src/
 │  ├─ (frontend)/        storefront — its own root layout, imports Tailwind
 │  │  ├─ globals.css     the design-token layer (Phase 3)
 │  │  ├─ fonts/          self-hosted .woff2 + their OFL licence texts
-│  │  └─ design-system/  the specimen sheet — see below
+│  │  ├─ design-system/  the specimen sheet — see below
+│  │  ├─ (auth)/         login, register, forgot-password, reset-password (Phase 7)
+│  │  └─ account/        the protected segment (Phase 7; filled out in Phase 20)
 │  └─ (payload)/         admin panel + Payload REST API — its own root layout
 ├─ components/
 │  ├─ ui/                primitives (button, input, dialog, drawer, …)
-│  └─ layout/            global shell (header, nav, footer, containers)
+│  ├─ layout/            global shell (header, nav, footer, containers)
+│  └─ auth/              the auth forms and their shared field/status pieces (Phase 7)
 ├─ instrumentation.ts    startup environment validation (Phase 4)
+├─ proxy.ts              Next 16's renamed `middleware` — the /account redirect (Phase 7)
 ├─ lib/
 │  ├─ cn.ts              class composition, configured for this project's scales
+│  ├─ payload.ts         the Local API handle (Phase 7)
+│  ├─ password-policy.ts the password rule, shared by the forms and the collection (Phase 7)
+│  ├─ auth/              session DAL, server actions, Zod schemas, form state (Phase 7)
 │  ├─ env.public.ts      browser-safe environment — importable anywhere
 │  ├─ env.server.ts      server-only environment — what application code imports
 │  └─ env.core.ts        the same without the `server-only` guard; config and instrumentation only
 ├─ payload.config.ts     aliased as @payload-config
 └─ payload/
+   ├─ access/            the access-control vocabulary — one rule, one name (Phase 7)
    ├─ blocks/            reusable editorial block definitions (Phase 6)
    ├─ collections/       one file per collection
+   ├─ email/             the log-only transport and the reset message (Phase 7)
    ├─ fields/            reusable field builders — money, slug, seo, address, link, hotspot
    ├─ globals/           site settings and navigation
-   ├─ hooks/             collection hooks — derived-price sync, delete cascades
+   ├─ hooks/             collection hooks — derived-price sync, cascades, ownership
    └─ migrations/        generated, committed, applied in order (Phase 5)
 
-scripts/                 one-off local administration — seed, migration baseline
+scripts/                 one-off local administration — seed, migration baseline, access checks
 ```
 
 **`scripts/` is the one place outside `src/` that may import `lib/env.core`.** It runs under the
@@ -220,6 +232,48 @@ Four rules that are easy to break by accident:
 `Button`, `Link`, `Badge`, `Skeleton` and the layout wrappers are server components. Anything wrapping
 Radix carries `'use client'`; importing it from a server component is fine and creates the boundary
 for you.
+
+## Accounts and sign-in
+
+The storefront's authentication lives at four routes — `/login`, `/register`, `/forgot-password`,
+`/reset-password` — with `/account` behind them. They are Phase 7; the account *screens* (orders,
+wishlist, addresses, settings) are Phase 20.
+
+Staff sign in somewhere else entirely: `/admin`, against the `users` collection. A customer cannot
+sign in there and a staff account cannot sign in to the storefront, because they are two separate
+auth collections — decision **D-21**.
+
+**Both share one cookie.** Payload issues `payload-token` per *config*, not per collection, so signing
+in as a customer on the storefront replaces an admin session in the same browser, and vice versa. That
+is a surprise worth knowing about in development; use a private window for the second identity.
+
+### Where the password-reset link goes
+
+There is no email transport until **Phase 19**. Until then `src/payload/email/logEmailAdapter.ts`
+writes the whole message to the server log, so the reset flow is genuinely completable:
+
+```
+pnpm dev
+# submit /forgot-password, then look for this in the terminal:
+#   Email (not sent — no transport before Phase 19): Reset your NORTH / 01 password
+#   body: … http://localhost:3000/reset-password?token=<40 hex characters> …
+```
+
+The link's origin comes from `SITE_URL` — never from the request's `Host` header, which would be a
+reset token deliverable to whoever forged it. If you run the dev server on a port other than 3000, set
+`SITE_URL` or the link will point at the wrong one.
+
+Outside local development the same adapter logs at `error` level on every send, because a deployed
+storefront whose password resets land in a log file is a broken storefront and should say so.
+
+### Roles
+
+`users.role` is `editor` or `admin`. The first account created on an empty database is forced to
+`admin`; every one after it defaults to `editor` and only an admin can change it. An editor gets the
+catalogue and the editorial collections, and does not get staff accounts, deletions, promotions, or
+the Commerce tab of Site Settings.
+
+To check the whole matrix at once: `pnpm verify:access`.
 
 ## Browser and accessibility checks
 

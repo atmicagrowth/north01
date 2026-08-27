@@ -1,5 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
+import { isAdmin, isStaff, publishedOnly } from '../access'
+
 /**
  * Plan §6.1o — *"FAQ / content blocks. Use structured content rather than hard-coded text when
  * client editing is a requirement."*
@@ -37,6 +39,22 @@ export const Faqs: CollectionConfig = {
   },
 
   defaultSort: 'sortOrder',
+
+  /**
+   * Published documents are public; everything else is staff. See `access/index.ts` — `publishedOnly`
+   * returns a `Where` rather than `false` for an anonymous reader, so a draft is *absent* rather than
+   * forbidden, which is the right answer for a storefront route that has to decide between rendering
+   * and a 404.
+   *
+   * Deletion is admin-only across every collection in this project: §7.1c withholds it from editors,
+   * and an editor who no longer wants a document sets it back to draft.
+   */
+  access: {
+    read: publishedOnly,
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
+  },
 
   fields: [
     {

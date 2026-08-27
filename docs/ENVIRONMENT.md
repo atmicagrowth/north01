@@ -267,13 +267,31 @@ document; Phase 4 chose them, recorded as **DEV-26**.
 | `NODE_ENV` | ambient | Set by the Next CLI. Undefined under the `payload` CLI, so the schema defaults it to `development` |
 | `VERCEL_ENV` | server | Supplied by Vercel when the project exposes system environment variables. Absent locally by design |
 | `VERCEL` | server | Set by Vercel alongside `VERCEL_ENV`. Used only to detect the awkward case: plainly on Vercel, but `VERCEL_ENV` missing — which resolves to `preview`, not `production` |
+| `VERCEL_PROJECT_PRODUCTION_URL` | server | Set by Vercel. The production deployment's hostname, no scheme. Read **only** as the fallback for `SITE_URL` |
 
 ### Project-owned
 
 | Variable | Tier | First needed | Source |
 |---|---|---|---|
 | `DATABASE_PUSH_TARGET` | server | **Phase 4** — local development only | Derived from your own `DATABASE_URL`: `host[:port]/database`, credentials stripped |
-| `SITE_URL` | server | Phase 17 | The deployment's canonical origin, no trailing slash |
+| `SITE_URL` | server | **Phase 7** | The deployment's canonical origin, no trailing slash |
+
+`SITE_URL` earned a paragraph of its own in Phase 7, because it stopped being a value nothing reads.
+
+It resolves to `SITE_URL`, then `https://$VERCEL_PROJECT_PRODUCTION_URL`, then `http://localhost:3000`,
+and the result is set on the Payload config as `serverURL`. Everything that has to name this
+application in a link somebody else follows reads it: the password-reset email (Phase 7), Stripe's
+success and cancel URLs (Phase 17), canonical tags and the sitemap (Phase 24).
+
+**What it is deliberately not derived from is the request.** Building an absolute URL from the
+incoming `Host` header is the standard shape of host-header injection, and password reset is its
+textbook victim: an attacker triggers a reset for somebody else's address with a forged `Host`, and
+the email that lands in the victim's inbox carries a real, valid token pointing at the attacker's
+server. A value that comes from configuration cannot be steered by a request, and that is the whole
+property being bought.
+
+The practical consequence locally: if you run `next dev` on a port other than 3000, set `SITE_URL` to
+match or the reset link in the server log will point at the wrong one.
 
 ### Per provider — optional until the phase lands
 

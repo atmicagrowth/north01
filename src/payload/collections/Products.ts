@@ -1,5 +1,6 @@
 import type { CollectionConfig } from 'payload'
 
+import { isAdmin, isStaff, publishedOnly } from '../access'
 import { minorUnits } from '../fields/money'
 import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
@@ -109,6 +110,23 @@ export const Products: CollectionConfig = {
         { marksProductDeleted: true },
       ),
     ],
+  },
+
+  /**
+   * A draft product is not a hidden product; through the API it does not exist. `publishedOnly`
+   * hands an anonymous or customer request a `Where` instead of a refusal, so the product page 404s
+   * rather than 403s — and, more importantly, so a draft cannot be listed, searched or added to a
+   * bag by anyone who guesses an id. Plan §13.1d and §17.1a both re-check this server-side before a
+   * line is priced or paid for; this is the layer that means they rarely have to.
+   *
+   * `trash: true` is on this collection, so the admin panel's delete is an update. The admin-only
+   * `delete` below therefore governs *permanent* deletion — the one that cascades into variants.
+   */
+  access: {
+    read: publishedOnly,
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
   },
 
   fields: [

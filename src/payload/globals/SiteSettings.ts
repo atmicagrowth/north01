@@ -1,5 +1,6 @@
 import type { GlobalConfig } from 'payload'
 
+import { anyone, isAdminField, isStaff } from '../access'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 
 /**
@@ -44,6 +45,27 @@ export const SiteSettings: GlobalConfig = {
     group: 'Settings',
     description:
       'Brand identity, commerce defaults and SEO fallbacks. Rendered from Phase 9 onward — see each field.',
+  },
+
+  /**
+   * **Public read, staff update — and the Commerce tab is admin-only at the field level.**
+   *
+   * §7.1c withholds "financial administration" and "full system configuration" from editors, and
+   * this global straddles that line: the announcement bar, the policies and the SEO defaults are
+   * plainly editorial, while the currency, the free-shipping threshold, the low-stock threshold and
+   * the per-line quantity cap are commerce configuration that changes what customers are charged and
+   * what they can buy.
+   *
+   * Splitting the global in two would express that in the schema, at the cost of a second migration
+   * and a settings screen an editor has to know is elsewhere. Field access expresses the same
+   * boundary in the same place: a `PATCH` that names those fields has them dropped rather than
+   * applied. The admin panel needs no separate instruction — Payload sends field permissions to the
+   * client with the document and renders a field the user cannot update as read-only, so an editor
+   * is never offered an edit that would be silently discarded.
+   */
+  access: {
+    read: anyone,
+    update: isStaff,
   },
 
   fields: [
@@ -96,6 +118,7 @@ export const SiteSettings: GlobalConfig = {
           fields: [
             {
               name: 'defaultCurrency',
+              access: { update: isAdminField },
               type: 'select',
               required: true,
               defaultValue: DEFAULT_CURRENCY,
@@ -107,6 +130,7 @@ export const SiteSettings: GlobalConfig = {
             },
             {
               name: 'defaultLocale',
+              access: { update: isAdminField },
               type: 'text',
               required: true,
               defaultValue: 'en-US',
@@ -117,6 +141,7 @@ export const SiteSettings: GlobalConfig = {
             },
             minorUnits({
               name: 'freeShippingThresholdMinor',
+              access: { update: isAdminField },
               label: 'Free shipping threshold',
               admin: {
                 description:
@@ -135,6 +160,7 @@ export const SiteSettings: GlobalConfig = {
                * `derived.inventoryTotal` is the fact; this is the threshold applied to it at render.
                */
               name: 'lowStockThreshold',
+              access: { update: isAdminField },
               type: 'number',
               required: true,
               defaultValue: 5,
@@ -159,6 +185,7 @@ export const SiteSettings: GlobalConfig = {
                * without a migration.
                */
               name: 'maxQuantityPerLine',
+              access: { update: isAdminField },
               type: 'number',
               required: true,
               defaultValue: 10,

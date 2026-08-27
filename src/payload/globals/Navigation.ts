@@ -1,5 +1,6 @@
 import type { GlobalConfig } from 'payload'
 
+import { anyone, isStaff } from '../access'
 import { linkFields } from '../fields/link'
 
 /**
@@ -42,6 +43,15 @@ export const Navigation: GlobalConfig = {
     group: 'Settings',
     description:
       'Header, mega menu, footer and social links. Rendered by Phase 9 — the shell exists but is not yet mounted.',
+  },
+
+  /**
+   * Public read: every page renders the header and footer from this, including for a signed-out
+   * visitor. Editors may change it — navigation is merchandising, which §7.1c gives them outright.
+   */
+  access: {
+    read: anyone,
+    update: isStaff,
   },
 
   fields: [

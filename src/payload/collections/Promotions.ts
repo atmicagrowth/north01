@@ -1,5 +1,6 @@
 import type { CollectionConfig, NumberFieldSingleValidation } from 'payload'
 
+import { isAdmin, isStaff } from '../access'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { normaliseCode } from '../fields/slug'
 
@@ -68,6 +69,23 @@ export const Promotions: CollectionConfig = {
     group: 'Commerce',
     description:
       'Discount codes. Every rule here is evaluated on the server, never in the browser.',
+  },
+
+  /**
+   * **Staff only, including read.** A discount code is not content: an open `GET /api/promotions`
+   * hands every unreleased code, every threshold and every exclusion to anyone who asks, which is
+   * both a margin leak and a live rehearsal of the checkout the codes are meant to gate.
+   *
+   * The storefront never reads this collection directly. Plan §15.1c requires a code to be validated
+   * on the server against the real cart at the moment it is applied, which **Phase 15** does through
+   * the Local API — past access control, and past the browser entirely. That is the same rule as
+   * price and inventory: the browser is never authoritative.
+   */
+  access: {
+    read: isStaff,
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
   },
 
   fields: [

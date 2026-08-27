@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto'
 
 import type { CollectionConfig } from 'payload'
 
+import { isAdmin, isStaff, ownedByCustomer } from '../access'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
 
@@ -44,6 +45,27 @@ export const Carts: CollectionConfig = {
     group: 'Commerce',
     description:
       'Server-side bags. Totals are never stored here — they are recalculated from the live catalogue on every request.',
+  },
+
+  /**
+   * **A customer may read their bag through the API; they may not write it.**
+   *
+   * §7.1b grants a customer write access to two things — their wishlist and their addresses — and a
+   * cart is neither. That is not an oversight in the plan: every mutation of a bag has server-side
+   * consequences the browser must not be trusted with. Quantity is bounded by live inventory and by
+   * `maxQuantityPerLine` (§14.1b), a line's variant has to still exist and still be purchasable, and
+   * the promotion attached to the cart has to be revalidated. **Phase 14** performs all of that in
+   * server code through the Local API, which runs past these rules; opening `PATCH /api/carts` would
+   * put a second, unvalidated door onto the same table.
+   *
+   * A guest's bag has no `customer`, so `ownedByCustomer` refuses it — a guest cart is addressed by
+   * its unguessable `token` from server code, and Phase 14 owns that path.
+   */
+  access: {
+    read: ownedByCustomer('customer'),
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
   },
 
   fields: [

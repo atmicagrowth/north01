@@ -128,10 +128,34 @@ customers or media, because those are records of things that happened rather tha
 conventions, migration workflow and the traps found along the way:
 [`docs/DATABASE.md`](docs/DATABASE.md).
 
-No storefront *feature* is built yet, and nothing is publicly readable: every collection is
-authenticated-only until Phase 7 opens the ones that should be. The shell components exist and are
-proved, but they are mounted in Phase 9, alongside the search overlay and cart drawer that make their
-controls do something.
+**Phase 7 — Access control and authentication: complete.** Every collection and both globals now
+state a rule instead of inheriting Payload's "is there a session?", three roles exist, and a shopper
+can create an account, sign in, sign out and recover a forgotten password.
+
+- **Three roles, two homes.** Editor and Admin are `users.role`; Customer is its own auth collection,
+  which is what makes "a customer cannot reach the admin panel" structural rather than enforced.
+  Editors get the catalogue and the editorial collections; deletions, staff accounts, promotions and
+  the commerce settings are the admin's.
+- **A customer can only ever see their own.** Ownership rules narrow the query rather than refusing
+  it, so another customer's order is not *forbidden* — it does not exist. The same rule governs
+  reading, updating and deleting, and a row created while naming somebody else's account is forced
+  back to its creator.
+- **Published means public.** Draft products, collections and articles are invisible to everyone
+  without a CMS session — including the variants beneath a draft product, which is where the SKUs,
+  prices and stock counts live.
+- **Routes are protected three times**: a cheap redirect before rendering, a real check in the page,
+  and the access rules underneath every query. Only the last two are checks.
+- **Password reset works today**, eleven phases before email exists — real tokens, one-hour expiry,
+  single use — with the message written to the server log until Resend arrives in Phase 19. It says
+  so loudly rather than pretending.
+
+`pnpm verify:access` runs the whole matrix — cross-customer reads, role escalation, ownership,
+disabled accounts, the password policy — against the live rules.
+
+The account area is a protected shell showing a profile and a sign-out; order history, wishlist and
+the address book arrive with the account screens in Phase 20. No storefront *feature* is built yet:
+the shell components exist and are proved, but they are mounted in Phase 9, alongside the search
+overlay and cart drawer that make their controls do something.
 
 Local setup: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 

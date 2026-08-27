@@ -1480,6 +1480,10 @@ export interface Customer {
    */
   phone?: string | null;
   /**
+   * Disabling signs the customer out immediately and refuses further sign-ins. Orders are unaffected.
+   */
+  accountStatus: 'active' | 'disabled';
+  /**
    * Set by Stripe at first checkout (Phase 17). Never edited by hand.
    */
   stripeCustomerId?: string | null;
@@ -2001,6 +2005,10 @@ export interface Faq {
  */
 export interface User {
   id: number;
+  /**
+   * Editors manage catalogue and content. Admins additionally manage staff, orders, promotions and deletions.
+   */
+  role: 'editor' | 'admin';
   updatedAt: string;
   createdAt: string;
   email: string;
@@ -2755,6 +2763,7 @@ export interface CustomersSelect<T extends boolean = true> {
   firstName?: T;
   lastName?: T;
   phone?: T;
+  accountStatus?: T;
   stripeCustomerId?: T;
   addresses?: T;
   orders?: T;
@@ -2880,6 +2889,7 @@ export interface MediaSelect<T extends boolean = true> {
  * via the `definition` "users_select".
  */
 export interface UsersSelect<T extends boolean = true> {
+  role?: T;
   updatedAt?: T;
   createdAt?: T;
   email?: T;

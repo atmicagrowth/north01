@@ -1,5 +1,6 @@
 import type { CollectionConfig } from 'payload'
 
+import { isAdmin, isStaff, publishedOnly } from '../access'
 import { editorialBlocks } from '../blocks/editorial'
 import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
@@ -42,6 +43,22 @@ export const Edits: CollectionConfig = {
   },
 
   defaultSort: '-publishedAt',
+
+  /**
+   * Published documents are public; everything else is staff. See `access/index.ts` — `publishedOnly`
+   * returns a `Where` rather than `false` for an anonymous reader, so a draft is *absent* rather than
+   * forbidden, which is the right answer for a storefront route that has to decide between rendering
+   * and a 404.
+   *
+   * Deletion is admin-only across every collection in this project: §7.1c withholds it from editors,
+   * and an editor who no longer wants a document sets it back to draft.
+   */
+  access: {
+    read: publishedOnly,
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
+  },
 
   fields: [
     {

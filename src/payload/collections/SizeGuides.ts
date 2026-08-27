@@ -1,5 +1,6 @@
 import type { CollectionConfig } from 'payload'
 
+import { anyone, isAdmin, isStaff } from '../access'
 import { slugField } from '../fields/slug'
 
 /**
@@ -30,6 +31,17 @@ export const SizeGuides: CollectionConfig = {
     defaultColumns: ['title', 'unit', 'updatedAt'],
     group: 'Catalogue',
     description: 'Measurement tables opened from the product page beside the size selector.',
+  },
+
+  /**
+   * Public, unconditionally: a size guide has no draft state (it is reference data, not a page) and
+   * nothing on it is private. Plan §13.1c renders it in a drawer on every product detail page.
+   */
+  access: {
+    read: anyone,
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
   },
 
   fields: [

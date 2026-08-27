@@ -1,5 +1,8 @@
 import type { CollectionConfig } from 'payload'
 
+import { isActiveCustomer, ownedByCustomer } from '../access'
+import { enforceCustomerOwnership } from '../hooks/enforceCustomerOwnership'
+
 /**
  * A saved product. Plan §6.1m gives four fields — customer, product, optional variant preference,
  * created date — and one rule:
@@ -53,6 +56,20 @@ export const WishlistItems: CollectionConfig = {
    */
   indexes: [{ fields: ['customer', 'product'], unique: true }],
 
+  /**
+   * §7.1b, verbatim: *"read/write their own wishlist"*. Same shape as `Addresses`, and the same
+   * pairing — `isActiveCustomer` says who may create, `enforceCustomerOwnership` says whose the row
+   * is. The guest wishlist and the merge on login are **Phase 20** (§20.1b); nothing here presumes
+   * their shape, because a merge runs in server code and writes rows that already belong to the
+   * account it is merging into.
+   */
+  access: {
+    read: ownedByCustomer('customer'),
+    create: isActiveCustomer,
+    update: ownedByCustomer('customer'),
+    delete: ownedByCustomer('customer'),
+  },
+
   fields: [
     {
       name: 'customer',
@@ -78,4 +95,13 @@ export const WishlistItems: CollectionConfig = {
       },
     },
   ],
+
+  hooks: {
+    /**
+     * The other half of `create: isActiveCustomer` above: access control says *who* may write here,
+     * this says *whose* the row is. Without it, a request that passes the access rule can still name
+     * somebody else's customer id and write into their account. See `hooks/enforceCustomerOwnership.ts`.
+     */
+    beforeValidate: [enforceCustomerOwnership('customer')],
+  },
 }

@@ -1,5 +1,6 @@
 import type { CollectionConfig, NumberFieldSingleValidation } from 'payload'
 
+import { isAdmin, isStaff, publishedOn } from '../access'
 import { minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
 import {
@@ -130,6 +131,24 @@ export const ProductVariants: CollectionConfig = {
      */
     beforeDelete: [cascadeDelete([{ collection: 'cart-items', on: 'variant' }])],
     afterDelete: [syncProductDerivedAfterDelete],
+  },
+
+  /**
+   * **A variant is public exactly when its product is**, and it says so by reading the product's
+   * column rather than carrying one of its own. Payload's Postgres adapter resolves the dotted path
+   * to a join, so the rule costs a join on an indexed column and cannot drift the way a duplicated
+   * `status` here would.
+   *
+   * It matters. A variant row carries the SKU, the price and the live stock count, so leaving this
+   * collection open while `products` was filtered would publish next season's line sheet to anyone
+   * who asked `/api/product-variants` — the interesting half of an unreleased product, without the
+   * product.
+   */
+  access: {
+    read: publishedOn('product.status'),
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
   },
 
   fields: [

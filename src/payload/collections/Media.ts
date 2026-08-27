@@ -3,6 +3,8 @@ import { fileURLToPath } from 'url'
 
 import type { CollectionConfig } from 'payload'
 
+import { anyone, isAdmin, isStaff } from '../access'
+
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
@@ -61,6 +63,23 @@ export const Media: CollectionConfig = {
      * `/api/media/file/:filename` route, never as Next static assets.
      */
     staticDir: path.resolve(dirname, '../../../media'),
+  },
+
+  /**
+   * Public read, because a media record is the metadata for an asset the storefront renders — alt
+   * text, dimensions, credit — and an image referenced by a published page is public by construction.
+   *
+   * This governs the *record*, not the file. From **Phase 8** the bytes are served by Cloudinary from
+   * its own URL, which Payload's access control never sees; anything that must not be public must not
+   * be uploaded here. Nothing in the corpus asks for private media, and the two collections that
+   * could plausibly want it — order documents, review photos awaiting moderation — are covered by
+   * their own rules or do not exist.
+   */
+  access: {
+    read: anyone,
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
   },
 
   fields: [

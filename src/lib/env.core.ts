@@ -82,13 +82,20 @@ const ServerEnvSchema = PublicEnvSchema.extend({
   DATABASE_PUSH_TARGET: z.string().min(1).optional(),
 
   /**
-   * Canonical origin of the deployment, no trailing slash. Used from Phase 17 onward for Stripe
-   * redirect URLs, transactional email links, canonical tags and the sitemap.
+   * Canonical origin of the deployment, no trailing slash. Used for Stripe redirect URLs,
+   * transactional email links, canonical tags and the sitemap.
    *
-   * Optional here because nothing reads it yet, and because Vercel supplies a usable fallback
-   * through `VERCEL_PROJECT_PRODUCTION_URL`. The phase that needs an absolute URL makes it required.
+   * Still optional, and now read — **Phase 7** is the phase that needed an absolute URL first, for
+   * the password-reset link. See `siteUrl` below for how it is resolved when this is absent, and why
+   * the request's own `Host` header is not one of the answers.
    */
   SITE_URL: z.url({ protocol: /^https?$/ }).optional(),
+
+  /**
+   * Supplied by Vercel alongside `VERCEL_ENV`, as the production deployment's own hostname with no
+   * scheme. Used only as the fallback for `SITE_URL`; never written into a `.env`.
+   */
+  VERCEL_PROJECT_PRODUCTION_URL: z.string().min(1).optional(),
 
   /**
    * Set by the Next CLI, never written into a `.env`. Defaulted rather than required because the
@@ -201,6 +208,37 @@ function resolveAppEnv(env: ServerEnv): AppEnv {
 }
 
 export const appEnv: AppEnv = resolveAppEnv(serverEnv)
+
+/**
+ * **The one origin this application will call its own**, no trailing slash.
+ *
+ * Everything that has to name itself in a link somebody else follows reads this: the password-reset
+ * mail (**Phase 7**), Stripe's success and cancel URLs (**Phase 17**), canonical tags and the
+ * sitemap (**Phase 24**). It is set on the Payload config as `serverURL`, which is where Payload's
+ * own helpers look.
+ *
+ * **What is deliberately not a source: the request.** Deriving an origin from the incoming `Host`
+ * header is the standard shape of host-header injection, and password reset is its textbook victim —
+ * an attacker triggers a reset for someone else's address with a forged `Host`, and the mail that
+ * arrives in the victim's inbox carries a real token pointed at the attacker's server. A value that
+ * comes from configuration cannot be steered by a request, which is the whole property being bought.
+ *
+ * The localhost fallback is for development only in practice, but it is not *conditioned* on the
+ * environment, because a wrong-but-harmless link on a laptop is a better failure than a config
+ * module that throws during `next build`. Preview and production are expected to set `SITE_URL`
+ * explicitly; `VERCEL_PROJECT_PRODUCTION_URL` covers the case where nobody has yet, and it names the
+ * production deployment even when read from a preview — which is why it is the fallback and not the
+ * first choice.
+ */
+function resolveSiteUrl(env: ServerEnv): string {
+  const explicit =
+    env.SITE_URL ??
+    (env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined)
+
+  return (explicit ?? 'http://localhost:3000').replace(/\/+$/, '')
+}
+
+export const siteUrl: string = resolveSiteUrl(serverEnv)
 
 /**
  * §4.1c: "Never use production Stripe credentials in local or preview."

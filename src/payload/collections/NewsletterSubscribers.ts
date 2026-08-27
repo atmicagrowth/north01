@@ -1,5 +1,6 @@
 import type { CollectionConfig } from 'payload'
 
+import { isAdmin, isStaff } from '../access'
 import { normaliseEmail } from '../fields/slug'
 
 /**
@@ -39,6 +40,23 @@ export const NewsletterSubscribers: CollectionConfig = {
   },
 
   defaultSort: '-consentedAt',
+
+  /**
+   * **Staff only, and `create` stays closed for now.** A subscriber list is personal data, so read is
+   * never public. Creation is the interesting half: signing up is a public action, and the obvious
+   * move is `create: anyone`.
+   *
+   * It is not taken, because there is no signup form yet — the newsletter block is plan §10.1a and
+   * the double-opt-in question is §19.1b — and an open, unrated write endpoint for email addresses
+   * with no form in front of it is a spam sink with no product behind it. The phase that builds the
+   * form owns the decision, and Turnstile (**Phase 26**) is what makes `anyone` safe to write here.
+   */
+  access: {
+    read: isStaff,
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
+  },
 
   fields: [
     {

@@ -45,14 +45,15 @@ pointed for generated types.
 | `src/app/(frontend)/` | storefront routes, layouts, pages | Phase 2 |
 | `src/app/(payload)/` | Payload admin + REST API routes | Phase 2 |
 | `src/payload.config.ts` | the Payload config, aliased as `@payload-config` | Phase 2 |
-| `src/payload/` | collections, globals, blocks, reusable fields, hooks, migrations | Phase 2; filled out in Phase 6 |
+| `src/payload/` | collections, globals, blocks, reusable fields, hooks, migrations, **access rules, email** | Phase 2; filled out in Phase 6; `access/` and `email/` in Phase 7 |
 | `src/components/` | reusable presentation and interaction components | Phase 3 |
 | `src/lib/` | integrations, infrastructure, helpers, **server-only** modules | Phase 3 (`cn.ts`); `env.public.ts` / `env.server.ts` / `env.core.ts` from Phase 4 |
 | `src/instrumentation.ts` | Next's startup hook — environment validation | Phase 4 |
+| `src/proxy.ts` | Next 16's renamed `middleware` — the optimistic `/account` redirect | **Phase 7** |
 | `src/features/` | domain-oriented modules, where complexity warrants isolation | as needed |
 | `emails/` | React Email templates | Phase 19 |
 | `tests/` | unit / component / e2e suites and helpers | Phase 27 |
-| `scripts/` | seeding, reindexing, one-off admin tasks | **Phase 6 — `seed.ts`, `baseline-migrations.ts`** |
+| `scripts/` | seeding, reindexing, one-off admin tasks | Phase 6 — `seed.ts`, `baseline-migrations.ts`; **Phase 7 — `verify-access.ts`** |
 | `docs/` | architecture, environment, decisions, runbooks | Phase 1 |
 
 ### Route-group topology
@@ -556,6 +557,63 @@ Email verification is deliberately off until **Phase 19**: `auth.verify` makes e
 depend on an email being delivered, and there is no email infrastructure before then. §7.1e says
 *"email verification **if enabled**"*, which is permission to decide.
 
+### D-22 — Access control is a vocabulary, applied by name
+
+Every collection's `access` block reads as a list of named rules from `src/payload/access/` —
+`publishedOnly`, `ownedByCustomer('customer')`, `isStaff`, `isAdmin`, `nobody` — rather than as a
+closure written out at each of twenty-three call sites.
+
+The reason is auditability rather than brevity. "Who may read an order" is a question with one
+answer, and the failure mode of inline closures is not that one of them is wrong on the day it is
+written; it is that the twenty-third is subtly different from the first and nobody notices for a
+year. A named rule is one implementation, one place to test, and one place to change.
+
+The two halves that cannot be a rule are recorded where they are used: `enforceCustomerOwnership`,
+because access control can say *who* may create a row but not *whose* it is, and field-level access on
+`users.role`, `customers.accountStatus`, `reviews.status` and the Commerce tab of Site Settings,
+because Payload denies a field by removing it from the write rather than by refusing the request.
+
+### D-23 — Route protection is three layers, and only two of them are checks
+
+`proxy.ts` (Next 16's renamed `middleware.ts`) redirects a visitor with no session cookie away from
+`/account` before rendering begins. It does not verify the cookie: that would put Payload and a
+Postgres round trip in front of every matched request, which is the cost the proxy exists to avoid.
+It is an optimistic check, and Next's own authentication guide says not to make it the only one.
+
+`requireCustomer()` in `src/lib/auth/session.ts` is the route-level check — memoised with React's
+`cache()` so a layout and its children cost one verification — and it lives in the *pages*, not in
+`account/layout.tsx`. A layout does not re-render on navigation within its own segment, so a check
+placed there runs on the first load and then stops running, which is the difference between a guard
+and a decoration.
+
+`src/payload/access/` is the check that cannot be forgotten, because every read and write goes
+through it including the REST API's.
+
+### D-24 — There is a password policy, and it is not Payload's
+
+Payload's built-in floor is **three characters** — `fields/validations.password` defaults `minLength`
+to 3, inside `generatePasswordSaltHash` where no configuration reaches it. This project's floor is
+twelve, with no composition rules, following NIST SP 800-63B: required digits and symbols measurably
+push people toward `Password1!` and away from length, which is the property that resists guessing.
+
+It lives in `src/lib/password-policy.ts` — a module with no imports, so the `customers` collection can
+reach it through a relative path under tsx and the Zod schemas can reach it through the alias — and it
+is enforced by a collection hook rather than only by the form, so the REST API, the admin panel and a
+seed script are all held to it. The reset flow is the one path a hook cannot see (`resetPassword`
+writes through `payload.db.updateOne`), so the action calls the same function directly.
+
+### D-25 — The password-reset flow is real; only its delivery is stubbed
+
+Plan §7.1e requires forgot-password and reset-password. Plan §19 owns Resend. Between them, Payload's
+unconfigured default logs an email's *subject* and discards its body — which for a reset mail discards
+the only copy of the token, leaving a form that submits, confirms, and cannot be completed by anyone.
+
+So `src/payload/email/logEmailAdapter.ts` logs the whole message, and the flow is genuinely
+end-to-end in development: submit the form, read the link out of the server log, choose a new
+password. The token, the one-hour expiry, the single use, the session handling and the storefront
+reset route are all real and all tested. Only the transport is missing, it says so at `error` level on
+every send outside local development, and Phase 19 replaces the adapter without touching the flow.
+
 ## 5. Current position
 
 **Phase 1 — Workspace, repository and baseline: complete.** Repository initialized on `main`, baseline
@@ -687,8 +745,36 @@ shared table with the wrong parent foreign key, required address sub-fields that
 draft order impossible to save, and delete cascades written on `afterDelete` when the foreign-key
 violation happens *during* the delete. Details: notes §1.11.
 
-**Next: Phase 7 — access control and authentication.** The columns its rules will be written against
-now exist; nothing in this phase opened one.
+**Phase 7 — Access control and authentication: complete.**
+
+Three roles, an access rule on every collection and both globals, and the six §7.1e flows.
+**No dependency was added**: authorisation is Payload's own access layer, the forms are React 19
+Server Actions and `useActionState`, and validation is the Zod already installed in Phase 4.
+
+| Phase 7 requirement | Status |
+|---|---|
+| Customer, Editor, Admin roles (§7.1a) | **pass** — Editor and Admin are `users.role`; Customer is its own auth collection (**D-21**) |
+| Customers read their own profile, orders, wishlist, addresses (§7.1b) | **pass** — `ownedByCustomer`, which returns a `Where` so a cross-account read is *empty* rather than *forbidden* |
+| Customers cannot read or modify another customer's records (§7.1b) | **pass** — proved for orders, addresses, wishlist, carts and profiles; `pnpm verify:access` |
+| Customers cannot read admin-only fields or reach Payload Admin (§7.1b) | **pass** — `canAccessAdmin` is false for a customer *before* any rule runs, and staff-only fields are stripped from their writes |
+| Editors get merchandising, not financial administration or credentials (§7.1c) | **pass** — Users hidden and refused; deletions admin-only; the Commerce tab of Site Settings read-only, confirmed in the panel |
+| Admin manages everything (§7.1d) | **pass** — with one refusal: an admin may not delete their own account, which would lock everyone out |
+| Registration, login, logout, forgot, reset, sessions, protected routes (§7.1e) | **pass** — `/register`, `/login`, `/forgot-password`, `/reset-password`, a POST sign-out, and `/account` behind `requireCustomer()` |
+| Email verification if enabled (§7.1e) | **deliberately off until Phase 19** — see **D-21**; there is no transport to verify with |
+| The §7.1e edge cases | **pass** — all ten, driven in a browser; see notes §1.12 |
+| Automated tests for cross-user access and role escalation (§7.1e prompt) | **pass** — `pnpm verify:access`, 43 checks. The *framework* is Phase 27; the assertions exist now |
+
+Two defects were found by running the code rather than reading it, and both were fixed here. React
+**resets** an uncontrolled form once its action resolves, so a rejected sign-in emptied the email
+field — the fix is `defaultValue` echoed from the returned state, with the password deliberately not
+echoed. And the first version of `verify-access.ts` treated *any* thrown error as a passing access
+check, which meant a fixture with one wrong field name would have reported a clean run while proving
+nothing; it now names the errors it will accept.
+
+Accessibility: **0 axe-core violations** across all five new routes, at WCAG 2.0/2.1/2.2 A and AA,
+against the production build. Details and evidence: notes §1.12.
+
+**Next: Phase 8 — media and Cloudinary.**
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 

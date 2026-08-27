@@ -1913,6 +1913,365 @@ both context-leak scenarios and the hotspot delete. The seed re-runs clean. `pnp
 `pnpm lint --max-warnings 0` and `pnpm build` all pass.
 ---
 
+## 1.12 Phase 7 — access control and authentication
+
+Twenty-three collections and two globals went from Payload's default — *"is there a session?"* — to a
+stated rule each, three roles arrived, and the six authentication flows §7.1e names were built. **No
+dependency was added.** Authorisation is Payload's own access layer, the forms are React 19 Server
+Actions and `useActionState`, and the validation is the Zod that Phase 4 already installed.
+
+### 1.12.1 The shape of the answer, and why it is three layers
+
+Plan §7.1e's prompt asks to *"protect account and admin routes at both route and data-access levels"*.
+That reads like two layers. It is three, and only two of them are checks.
+
+| Layer | Where | What it decides | What it cannot do |
+|---|---|---|---|
+| `src/proxy.ts` | Next 16's renamed `middleware` | redirect a visitor with no session cookie away from `/account` before rendering starts | verify the cookie — no signature check, no expiry, no revocation |
+| `src/lib/auth/session.ts` | `requireCustomer()`, memoised with React `cache()` | what a *route* does: render, redirect, or 404 | protect anything that does not call it |
+| `src/payload/access/` | every collection and global | what a *query* returns, for every caller including the REST API | know what page it is on |
+
+**The proxy is deliberately weak.** Verifying the cookie there would put Payload and a Postgres round
+trip in front of every matched request, which is the cost a proxy exists to avoid. Next's own
+authentication guide calls this an "optimistic check" and says the same thing: *"it should not be your
+only line of defense"*. Its proxy documentation adds the sharper warning, which is new in Next 16 and
+worth quoting because it is easy to get wrong — a Server Function is a POST to *the route it is used
+on*, so **a matcher change can silently remove proxy coverage from a mutation**. Nothing in
+`lib/auth/actions.ts` relies on the proxy; every action re-derives the caller from the cookie itself.
+
+**The route check is in the pages, not the layout**, and that is the non-obvious half. A layout in the
+App Router does **not** re-render on navigation within its own segment: it renders once and children
+swap beneath it. A guard placed in `account/layout.tsx` would run on the first load of `/account` and
+then never again as the customer moved to `/account/orders` — which is the difference between a guard
+and a decoration. Next's guide says it outright: *"you should fetch the user data in the layout and do
+the auth check in your Data Access Layer"*. Recorded as **D-23**.
+
+**`middleware.ts` is deprecated in Next 16** and renamed `proxy.ts`; the export must be `proxy` or the
+default. Read from `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md`
+rather than assumed, per this repository's standing rule about this version of Next.
+
+### 1.12.2 Roles: two in a column, one in a collection
+
+§7.1a names Customer, Editor and Admin, which reads like one table with a `role` column. It is not,
+and Phase 6 had already decided why (**D-21**): a customer is a row in `customers`, a separate auth
+collection, so *"customers may NOT access Payload Admin"* (§7.1b) is a property of the topology rather
+than of a rule that has to stay right forever. Payload settles it in `getAccessResults` before any
+rule of ours runs — `canAccessAdmin` is `false` for any user whose collection is not `admin.user`.
+Measured, not assumed: a real customer token resolves to `canAccessAdmin !== true`, a staff token to
+`true`.
+
+So `users.role` carries the two staff roles, `editor` and `admin`, and the asymmetry is the point.
+
+**The escalation boundary is field access, not collection access.** An editor may already update their
+own row — that is how a password gets changed — so without a rule on the field itself,
+`PATCH /api/users/<own id>` with `{"role":"admin"}` is a one-line privilege escalation. Payload
+enforces field access by *deleting* the key from the incoming data and falling back to the stored
+value, so the request succeeds and the role does not move. Verified: an editor's self-promotion
+returns a document still reading `editor`.
+
+**The bootstrap problem, and the two answers it needed.** `role` defaults to `editor`, which is the
+right default and the wrong answer twice:
+
+- *On an empty database*, `create-first-user` posts no role, so the founding account would default to
+  `editor` — and then nobody could ever grant anybody anything, because creating staff and editing
+  `role` both require an admin who does not exist. A `beforeValidate` hook forces the first account to
+  `admin`. It runs *after* field-level access (Payload evaluates field access inside the field
+  `beforeValidate` pass, which precedes the collection one), so the assignment lands last and is not
+  stripped.
+- *On a database that already has staff*, the column default would demote every one of them at once.
+  Before this migration there were no roles and every staff account had unrestricted CMS access, so
+  `editor` does not preserve their permissions — it removes them. The migration ends with
+  `UPDATE "users" SET "role" = 'admin';`, which is not a promotion but the truthful translation of the
+  previous state into the new vocabulary. It is the third hand-edit a migration in this project is
+  allowed, and `docs/DATABASE.md` §4 now states the bar for it. Proved on the throwaway database: a
+  row inserted before the migration comes out `admin`, one inserted after comes out `editor`.
+
+### 1.12.3 The access vocabulary, and the two things a rule cannot do
+
+Every collection's `access` block reads as named rules from `src/payload/access/` — `publishedOnly`,
+`ownedByCustomer('customer')`, `isStaff`, `isAdmin`, `nobody`. The reason is auditability rather than
+brevity: "who may read an order" has one answer, and the failure mode of inline closures is not that
+one is wrong on the day it is written, it is that the twenty-third differs subtly from the first and
+nobody notices for a year. Recorded as **D-22**.
+
+**Ownership rules return a `Where`, not `false`, and that is a security property.** A cross-account
+read of somebody else's order is not a 403 that confirms the order exists — it is an empty result,
+which confirms nothing. Payload applies the same constraint to `update` and `delete`, so the whole
+class of attack answers "not found" rather than "forbidden".
+
+Two things a rule genuinely cannot do, both handled beside it:
+
+1. **A rule cannot say whose a *new* row is.** `POST /api/addresses` with `{ customer: <someone
+   else> }` passes any rule that only asks "is this an active customer", and writes into their address
+   book. Field access is no help either: denying `create` on the `customer` field *removes* it, and the
+   column is `required`, so the write would fail for every customer rather than only the dishonest one.
+   `hooks/enforceCustomerOwnership.ts` therefore **forces** the value, on create and on update alike —
+   reassigning an existing row is the same attack a second later. Verified for addresses and wishlist
+   rows: a create naming another customer comes back owned by its creator.
+2. **A rule cannot protect one field of an otherwise-permitted write.** `customers.accountStatus`,
+   `users.role`, `reviews.status`, `reviews.verifiedPurchase` and the Commerce tab of Site Settings are
+   all field-level. Verified: a customer cannot re-enable their own disabled account, and a review
+   created through the API lands `pending` and unverified whatever the request body says.
+
+**The rule with no precedent here, so the one most worth proving:** a product variant carries no
+status of its own and is public exactly when its product is —
+`publishedOn('product.status')`, a `Where` across the relationship that Payload's Postgres adapter
+resolves to a join. If that had not worked, the collection holding every SKU, price and live stock
+count would have been readable while `products` was correctly filtered: next season's line sheet,
+without the products. Measured both ways — a draft product's variants are invisible, and publishing it
+makes them visible.
+
+**Carts are readable by their owner and not writable by them**, which looks inconsistent with the
+wishlist and the address book until you read §7.1b: it grants a customer write access to exactly two
+things, and a cart is neither. Every mutation of a bag has consequences the browser must not be
+trusted with — quantity bounded by live stock and `maxQuantityPerLine`, the variant still existing and
+still purchasable, the attached promotion revalidated — and **Phase 14** does all of that in server
+code through the Local API. Opening `PATCH /api/carts` would be a second, unvalidated door onto the
+same table.
+
+**`orders.create` is `nobody`, and that includes admins.** An order is not authored; it is the record
+of something that happened. Phase 17 writes it from the checkout and finalises it from a
+signature-verified webhook, both in server code past access control. What `nobody` forbids is
+`POST /api/orders` — a request that could only ever be somebody inventing a purchase.
+
+**Promotions are staff-only including read.** An open `GET /api/promotions` hands over every
+unreleased code and threshold; the storefront never reads the collection, because §15.1c requires a
+code to be validated server-side against the real cart at the moment it is applied.
+
+### 1.12.4 The password-reset flow, and the honest way to build it without email
+
+§7.1e requires forgot-password and reset-password. §19 owns Resend. That gap is where the interesting
+decision was.
+
+Payload's unconfigured default, `consoleEmailAdapter`, logs *"Email attempted without being
+configured. To: …, Subject: …"* and discards the body. For a reset mail **the body is the token**, so
+the default would issue a valid single-use credential and destroy the only copy of it — a form that
+submits, confirms, and cannot be completed by anyone. That is plan §0.1.17's fake functionality in a
+very convincing costume.
+
+So `payload/email/logEmailAdapter.ts` logs the whole message and the flow is genuinely end-to-end in
+development: submit, read the link out of the server log, choose a new password. Everything except
+delivery is real — a 40-hex-character token, a one-hour expiry, single use, a storefront reset route —
+and the adapter logs at **`error`** on every send outside local development, because a deployed
+storefront whose resets land in a log file is broken and should say so rather than degrade quietly.
+Recorded as **D-25**.
+
+Three details that had to be got right:
+
+- **The link must not be built from the request.** Payload's default points at
+  `/admin/reset/<token>`, which for a customer is a route their session cannot even load. Overriding
+  `generateEmailHTML` is straightforward; where the *origin* comes from is not. Deriving it from the
+  `Host` header is textbook host-header injection, and password reset is its textbook victim: trigger
+  a reset for someone else's address with a forged `Host`, and the mail in the victim's inbox carries
+  a real token pointed at the attacker's server. The origin comes from `SITE_URL` via
+  `config.serverURL`, which a request cannot steer. Payload's own `getRequestOrigin` reaches the same
+  conclusion by a different route — it prefers `serverURL` and falls back to the request host only
+  when that host is in the CORS/CSRF allowlist.
+- **The token is not validated on page load.** Checking it on `GET` would let a link preview, a mail
+  scanner or a corporate URL-rewriter burn a single-use token before the customer clicked. It is spent
+  on submit, by the person choosing the password.
+- **Resetting does not sign you in.** A reset is the one moment where the person holding the link
+  might not be the account holder; handing out a seven-day session on the strength of an emailed token
+  is how a mailbox compromise becomes an account compromise. They land on the sign-in form and use the
+  password they just chose, which also confirms it works.
+
+`resetPassword` writes through `payload.db.updateOne` and never reaches a collection hook, so it is
+the one path the password policy hook cannot see — the action calls `checkPassword` directly, from the
+same module, so the two cannot diverge.
+
+### 1.12.5 A password policy, because Payload's is three characters
+
+`fields/validations.password` defaults `minLength` to **3**, inside `generatePasswordSaltHash` where
+no configuration reaches it. That is the floor this project's shopper accounts would have shipped
+with.
+
+`src/lib/password-policy.ts` sets twelve, with **no composition rules** — no required digit, symbol or
+mixed case. That is a decision, not an omission: NIST SP 800-63B stopped recommending composition
+rules because they measurably push people toward `Password1!` and away from length, which is the
+property that resists guessing. The upper bound of 128 is not a security rule but a denial-of-service
+one: hashing is deliberately slow, so an unbounded password field is unbounded server CPU anybody can
+spend. The one content rule kept is that a password may not be the email address — the most
+predictable choice a person makes, and the first thing an attacker who already has the address tries.
+
+It is enforced by a **collection hook**, not only by the form, so the REST API, the admin panel and a
+seed script are all held to it. The module has no imports at all, which is what lets the collection
+reach it by relative path under tsx and the Zod schemas reach it by alias. Recorded as **D-24**.
+
+### 1.12.6 The §7.1e edge-case list, one by one
+
+All ten driven in a real browser against the dev server, and the security-relevant half again through
+the Local API in `pnpm verify:access`.
+
+| Edge case | Behaviour |
+|---|---|
+| Wrong password | *"That email and password do not match an account."* |
+| Nonexistent email | The same sentence, deliberately. Anything else makes the login form an oracle for "does this person shop here" |
+| Existing email during registration | **Named**, and this is the one deliberate exception — see below |
+| Expired reset link | *"This link is no longer valid — it may have expired, or it may already have been used."* |
+| Reused reset link | The same sentence, and correctly so: `resetPassword` clears the token on success, so the second use finds nothing, exactly as the sixty-first minute does. Proved by resetting, then re-submitting the same link |
+| Expired session | The token carries a session id checked against the row on every request, so expiry, sign-out and disablement all resolve to "no viewer" and the account route redirects |
+| Logs out from another tab | Proved with two tabs in one browser: signing out in tab A revokes the server-side session, and tab B's next navigation lands on `/login` |
+| Account is disabled | Login refused with the generic message; live sessions emptied on the transition, so an open tab is signed out on its next request; and `activeCustomer` returns `null`, so every ownership rule fails closed even if a token somehow survived |
+| Brute force | Payload's own five attempts / ten-minute lockout, stated explicitly rather than inherited. Proved: the sixth attempt returns *"Too many sign-in attempts…"* |
+| OAuth | No buttons. §7.1e says so outright and it is the account system's instance of the standing rule against UI that looks functional and is not |
+
+**On the duplicate-email exception.** Every other message here refuses to confirm whether an address
+has an account. Registration cannot: telling somebody "that did not work" without saying why leaves
+them stuck on a form with no way forward, and the address is one they typed themselves. The
+privacy-preserving alternative — accept silently, send a mail explaining an account already exists —
+needs a transport, which is Phase 19. The exposure is also narrower than it looks: a registration form
+leaks membership one address at a time at the cost of a round trip, and **Phase 26**'s Turnstile is
+what puts a price on doing it at scale. The forgot-password flow, which is the one an attacker would
+actually script, stays silent — and Payload agrees, its `forgotPassword` operation returning quietly
+when no user matches with the comment *"we prefer to fail silently"*.
+
+**The lockout is the second deliberate exception**, and the reasoning runs the other way. A lockout is
+only reached after five failures against one address, at which point the attacker already knows the
+address exists — telling them nothing new — while the legitimate customer who mistyped five times
+needs to know that waiting is the answer and trying again is not.
+
+### 1.12.7 Two defects found by running it, not by reading it
+
+**React resets an uncontrolled form once its action resolves.** The forms were written on the
+assumption that uncontrolled inputs keep whatever the customer typed — React re-renders the same DOM
+nodes with no `value` prop, so the browser's own contents survive. They do not. Measured in a browser:
+after a rejected registration, `firstName`, `lastName` and `email` all came back **empty**, while the
+one field that had just been re-typed kept its value. A failed sign-in emptied the email box.
+
+The only thing React resets *to* is the rendered `defaultValue`, so the action now echoes back what
+was submitted and the fields read it. The password is deliberately not echoed: it would put the
+plaintext in the RSC payload and in any log that captured the response, to save a customer one field
+that a password manager refills for free. The comment in `login-form.tsx` that asserted the opposite
+is corrected in place rather than deleted, because the wrong assumption is the interesting part.
+
+**The first version of `verify-access.ts` could not fail.** Its `denied()` helper treated *any* thrown
+error as a passing access check — so a fixture with one wrong field name would have thrown
+`ValidationError`, been counted as a refusal, and reported a clean run while proving nothing. It now
+names the errors it will accept (`Forbidden` and `NotFound` by default), and the run that caught this
+also caught a check on the admin-panel boundary asserting `canAccessAdmin === false` where the
+sanitised value is `undefined`, and a "disabling revokes sessions" check that passed against an
+account which had never signed in. All three are fixed, and the file is 43 checks rather than 33.
+
+### 1.12.8 What was verified, and how
+
+- **`pnpm verify:access` — 43/43.** Cross-customer reads of orders, addresses, carts, wishlists and
+  profiles; ownership forcing; role escalation; an admin's self-delete; `orders.create` refused to
+  everyone; review moderation state; the variant/product publication join; disabled accounts; session
+  revocation; the password policy; and both directions of the admin-panel boundary through real
+  tokens. It creates its own fixtures and removes them, and refuses to run against anything but the
+  database `DATABASE_PUSH_TARGET` names.
+- **Browser, dev server — 18/18 and 7/7.** Registration, sign-in, sign-out, the return-path round
+  trip, duplicate email, the session cookie's own attributes (`HttpOnly`, `SameSite=Lax`, seven days),
+  the full reset round trip using a token read from the log, reuse of that link, the old password
+  ceasing to work, and the lockout.
+- **Browser, sessions and accessibility — 11/11.** Two tabs sharing and losing a session together, a
+  disabled account signed out of an open tab, and **0 axe-core violations** on all six new routes at
+  WCAG 2.0/2.1/2.2 A + AA.
+- **Browser, production build — 6/6.** Tab order (`NORTH / 01` → email → password → submit → the two
+  links), a visible 2px focus outline, and the axe sweep again with Next's dev overlay out of the way.
+- **Browser, admin panel as an editor — 5/5.** Sign-in works; Users is absent from the sidebar and
+  answers *"Nothing found"* when typed directly; the Commerce fields render read-only.
+- **The migration** applied, rolled back and re-applied on a throwaway database created beside the
+  development one, and the resulting schema dumped and diffed against the pushed development schema:
+  **identical**, byte for byte, across every column, index and constraint.
+
+**One axe result worth writing down, because it is not a defect and will look like one again.**
+Scanning `/account` in the instant a Server Action redirect lands reports `document-title` (WCAG
+2.4.2, Level A). The page's title is correct before and after — measured directly, `"Your account ·
+NORTH / 01"` on a document load and after the transition settles — but during an RSC client
+transition React removes the old `<title>` before inserting the new one, and a scan fired on
+`waitForURL` can catch the gap. Phase 27's suite should settle the navigation before scanning, or it
+will chase this. Recorded here rather than "fixed", because the fix would be a workaround for
+somebody else's frame.
+
+Playwright and axe-core were used as **tools, not dependencies**, from the scratchpad — the same
+treatment as Phase 3 (§1.8.7), because both are Phase 27 packages and plan §2.1b forbids installing a
+later phase's packages early. `package.json` gained one script and no dependency.
+
+### 1.12.9 Choices that follow the plan rather than depart from it
+
+- **No change-password screen.** §7.1e lists the flows Phase 7 owns and a signed-in password change is
+  not among them; §20.1d gives `/account/settings` to Phase 20. The *permission* exists today — a
+  customer may update their own row and the policy hook applies — so Phase 20 adds a screen, not a
+  rule. A first implementation was written and removed: verifying the current password by attempting a
+  login mints a second session row and can lock the account out on a typo, and neither is a decision
+  Phase 7 should make on Phase 20's behalf.
+- **`/account` shows a profile and a sign-out, and links to nothing.** §7.1e owes a *protected route*;
+  §20.1d owns the five account screens. Linking to `/account/orders` before it exists is the same lie
+  as a button that does nothing, and "coming soon" is that lie with an apology attached.
+- **`customers.create` is open to anyone.** It looks alarming and is not: registration has to be
+  reachable without a session, and the alternative — closing it and registering through a server
+  action with `overrideAccess: true` — would mean the storefront and the REST API are governed by two
+  different rules, one of them a function nobody can audit from the collection file. Everything
+  privileged on the row is closed at the field level instead, so a self-registration cannot arrive
+  pre-enabled and there is no role column here to escalate.
+- **`newsletter-subscribers.create` stays closed.** Signing up is a public action and `create: anyone`
+  is the obvious move, but there is no form yet (§10.1a) and the double-opt-in question is §19.1b's.
+  An open, unrated write endpoint for email addresses with no form in front of it is a spam sink with
+  no product behind it.
+- **The session cookie is `Secure` outside local development.** Payload's default is `false`, which
+  lets a seven-day customer session travel over plain HTTP. It is set in `payload.config.ts` rather
+  than in the two collection files, because that module is the only one in `src/payload/**` allowed to
+  read the environment — widening the **D-14** ESLint exemption to the collections directory to set
+  one boolean would trade a real security property for a small convenience.
+- **`SameSite=Lax` is kept**, which is what stops a cross-site form POST riding the cookie. It matters
+  because the `/api` REST surface is reachable from anywhere.
+
+### 1.12.10 What is now owed
+
+- **A rate limit on registration, login and password reset.** Payload 3 removed its built-in one. The
+  per-account lockout covers a *known* address; per-IP throttling and Turnstile are **Phase 26**
+  (§26.1b), and until then the honest statement is that these endpoints are unrated.
+- **`config.csrf`.** Payload's cookie extraction validates the `Origin` header against a CSRF
+  allowlist when one is configured, and falls back to `Sec-Fetch-Site` when it is not. Setting it
+  would tighten the REST surface; it is not set here because a wrong value breaks the admin panel on
+  every alias a deployment answers on, and no deployment exists yet to enumerate. **Phase 26**, with
+  Phase 33's domain settled.
+- **PBKDF2 at 25 000 iterations** is Payload's, not configurable through the config, and is below
+  OWASP's current guidance for PBKDF2-SHA256. Noted rather than acted on: changing it means replacing
+  Payload's local strategy. Worth revisiting in the **Phase 34** security audit.
+- **Email verification, and the transactional templates.** **Phase 19**. `logEmailAdapter` is replaced
+  then, and `resetPasswordEmail` re-styled alongside the rest of the set — what must not change is the
+  route and the query parameter the reset page reads.
+- **`/account/orders`, `/account/wishlist`, `/account/addresses`, `/account/settings`.** **Phase 20**,
+  with the account navigation between them.
+- **Whether a review author may edit or withdraw their own review.** **Phase 21** (§21.1a). Today
+  `update` and `delete` on `reviews` are staff-only, which is the conservative half.
+
+### 1.12.11 Confirmation sweep of earlier deviations
+
+Step 4 of the append rule.
+
+- **DEV-21 — Oxide is the signal colour. Confirmed and now load-bearing.** Every form error in the
+  auth flows renders in it, paired with an icon so colour is never the sole carrier (WCAG 1.4.1).
+- **DEV-25 — the newsletter column deferred to Phase 19. Still pending and now touched:**
+  `newsletter-subscribers.create` was considered for opening here and deliberately left closed. Same
+  phase, same reason.
+- **DEV-24 — Motion deferred to Phase 10. Untouched.** These forms animate nothing; the busy state is
+  the Phase 3 button's spinner.
+- **DEV-04 — no GraphQL surface. Confirmed.** The access rules govern REST and the Local API, and
+  there is still no third paradigm to keep them in step with.
+- **DEV-16 — route-group topology. Confirmed, and extended one level down.** `(auth)` is a nested
+  group inside `(frontend)`; it adds no URL segment and buys one layout for the four routes. The two
+  root layouts are untouched, so **D-08** holds.
+- **DEV-14 — substantial work uses feature branches. Confirmed.** Phase 7 ran on
+  `phase-7-access-control-and-auth`.
+- **DEV-27 — a review requires a customer. Confirmed and now enforced at both ends:** the column is
+  `required`, and `enforceCustomerOwnership` makes the value the author's own rather than whichever id
+  the request named.
+- **DEV-06 / D-07 — no card data. Untouched and still true.** Nothing in this phase stores or reads a
+  payment credential.
+- **DEV-10 — schema additions Phase 6 does not list. Discharged in Phase 6, and this phase adds two
+  more with the same discipline:** `users.role` and `customers.accountStatus` are both named by
+  §7.1a and §7.1e, both generated as a migration, both documented in `docs/DATABASE.md`.
+- **DEV-17 — schema push disabled from the start. Still correctly withdrawn.** The local workflow was
+  push for iteration, then `migrate:create`, then the throwaway-database check.
+- **D-19 — Phase 6 defines the entities the corpus names, and no more. Confirmed by what was *not*
+  added:** no session-audit table, no login-attempt log, no password-history table. Payload's own
+  `sessions` array and `loginAttempts`/`lockUntil` columns answer everything §7.1e asks.
+
+---
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -2580,6 +2939,57 @@ correction to this entry, not a silent change to a column default.
 
 ---
 
+### DEV-31 — Registration names a duplicate email; every other message refuses to
+
+**Plan §7.1e lists as an edge case:** *"Existing email during registration."* It does not say what to
+answer, and the same list contains *"Nonexistent email"* — whose only safe answer is one
+indistinguishable from a wrong password.
+
+**We do:** registration says *"An account already uses that email address. Sign in instead, or reset
+your password."* Login, and forgot-password, say nothing that distinguishes a known address from an
+unknown one.
+
+**Why:** the two cases are not symmetrical. On the login form, an attacker supplies an address they
+want to *learn about*; on the registration form, the person supplies one they already know is theirs,
+and refusing to explain leaves them on a form with no way forward — a dead end, not a defence. The
+privacy-preserving alternative (accept the registration silently, send an email explaining an account
+already exists) requires an email transport, which is **Phase 19**.
+
+**What this costs, stated plainly:** the registration form is an account-enumeration oracle, one
+address per round trip. **Phase 26**'s Turnstile is what puts a price on doing that at scale, and the
+flow an attacker would actually script — forgot-password — is silent, as is Payload's own
+`forgotPassword` operation.
+
+*Affects Phase 7. Revisit at **Phase 19**, when the silent-accept variant becomes buildable, and at
+**Phase 26**, which adds the rate limit that makes the residual exposure academic.*
+
+---
+
+### DEV-32 — A password-reset flow exists eleven phases before email does
+
+**Plan §7.1e says:** implement *"Forgot password"* and *"Reset password"*, and handle *"Expired reset
+link"* and *"Reused reset link"*. **Plan §19 says:** email is Resend, in Phase 19.
+
+**We do:** build the whole flow now — token issue, one-hour expiry, single use, a storefront
+`/reset-password` route, and the two edge cases — with a **log-only email adapter** standing in for
+delivery until Phase 19.
+
+**Why:** Payload's unconfigured default logs a message's subject and discards its body, and for a
+reset mail the body *is* the token. Shipping that would mean a form that submits, confirms, and cannot
+be completed by anyone — plan §0.1.17's fake functionality. Deferring the whole flow to Phase 19 was
+the other option, and it leaves §7.1e's two named edge cases untestable for eleven phases while an
+account has no recovery path at all.
+
+**What is real and what is not:** the token, the expiry, the single use, the storefront route, the
+session handling and both edge cases are real and tested. Only the transport is missing, and it says
+so at `error` level on every send outside local development rather than degrading quietly.
+`docs/DEVELOPMENT.md` says where the link appears.
+
+*Affects Phases 7 and 19. **Phase 19 replaces the adapter and re-styles the message**; the route and
+its `?token=` parameter must not change.*
+
+---
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -2597,4 +3007,5 @@ correction to this entry, not a silent change to a column default.
 | Phase 5 — Neon Postgres + Payload CMS foundation | 2026-08-26 | Notes **§1.10**: what the phase actually had left to do once Phases 2 and 4 had done §5.1a–b, the initial migration and the discipline around it, and the whole lifecycle proved against a **throwaway database created beside the development one** so the owner's branch and admin user were never at risk — apply, roll back, re-apply through `pnpm build:deploy`, rebuild with `migrate:fresh`, drop. CRUD proved three ways: Local API, REST through the running app, and the admin panel in a real browser. **§1.10.4 records the one real defect** — the adapter attaches an `error` listener to a single pool client, so any other idle connection dying emitted `error` on a listener-less pool and became `uncaughtException`; `next dev` hides it and a production server would not. Fixed with an `onInit` pool handler and re-measured. **§1.10.5**: the push-built and migration-built schemas were dumped and diffed and are **identical**, which is the migration-drift edge case answered rather than discussed. **§1.10.6** records four traps — `delete({trash:true})` is a *permanent* delete, a compound unique index over a nullable column does not constrain NULL rows, compound index names are not namespaced by table, and a generated migration does not compile under `noUnusedParameters`. New decisions **D-16** (migrations run in the build, not the server) and **D-17** (primary keys stay `serial`); new `docs/DATABASE.md`. Step 4 carried out as **§1.10.8** — **DEV-15 confirmed and closed**, DEV-17's withdrawal vindicated with one superseded code line noted. No deviations, no new dependencies. |
 | Phase 6 — Payload data model | 2026-08-27 | Notes **§1.11**: the five decisions that had to precede any field — money as integer minor units, publish state as a column rather than Payload drafts (whose `disableNotNull` strips `NOT NULL` from the *main* table), variants as their own collection, which side of a many-to-many owns the order, and shoppers as a second auth collection. **§1.11.2** answers the two questions Phase 5 left for this phase: the variant SKU needs no partial index because a *global* unique refuses a superset of what §6.1c asks, and `afterSchemaInit` is used once, for `CHECK (inventory_quantity >= 0)`, because Phase 17's atomic decrement will be raw SQL past every validator. **§1.11.3 records three defects that only running it would find** — a `dbName` string that collapsed one block into a table shared by two collections with the wrong parent foreign key; required address sub-fields that made §18.1a's draft order impossible to save; and delete cascades on `afterDelete` that can never run, because a `required` relationship is `NOT NULL` *and* `ON DELETE SET NULL`, so the violation fails the parent's own delete. **§1.11.4**: Drizzle emits `DROP TABLE … CASCADE` alongside explicit drops of constraints the cascade has already removed — twice, and 22 statements the second time — so every generated `DROP CONSTRAINT` now needs `IF EXISTS`; and `migrate:create` is not always non-interactive, which is why the fixture removal was generated as its own migration. **§1.11.5**: 24 behavioural checks against the live database, all passing, plus a signed-in browser pass over the admin panel. Deviations **DEV-27** (a review requires a customer), **DEV-28** (`media` is created here, not in Phase 8), **DEV-29** (SKUs are globally unique), **DEV-30** (currency and locale are this project's choice). New decisions **D-18** through **D-21** in `docs/ARCHITECTURE.md`; **G-01**–**G-05** closed. One dependency: `@payloadcms/richtext-lexical`. Step 4 carried out as **§1.11.8** — **DEV-10 discharged**, DEV-01, DEV-07 and DEV-08 now enforced by the schema rather than by convention. |
 | Phase 6 — post-implementation audit | 2026-08-27 | Note **§1.11.10**: the committed phase re-reviewed by seven independent auditors with adversarial verification — 38 claims, 8 refuted, 30 survived, 8 distinct defects fixed. The headline is that **`context` is not a per-call argument**: `createLocalReq` merges it onto the *same* request object it is handed, so `skipDerivedSync` latched — every permanent variant delete skipped its product's price/stock refresh, and in a bulk variant edit only the first product was refreshed. The suppression now travels as the id of the product being deleted. Second: swallowing a hook error hid a transaction Payload had **already rolled back** via `killTransaction`, so a variant save reported success for a write that no longer existed — both hooks now rethrow. Third: eleven media references and three hotspot references were `NOT NULL` + `ON DELETE SET NULL` inside array and block rows, where no cascade can reach them, making the referenced product or asset permanently undeletable — the columns are nullable and the requirement moved to `validate`, which is also what makes plan §22.1b's "hide the hotspot" and §8.1d's placeholder reachable at all. Fourth: a custom `validate` replaces Payload's built-in one and with it `required`, which money fields and `addresses.country` both relied on. Plus a promotion saveable with no discount value, fractional stock, a seed blind to trashed rows, and both scripts guarding on `appEnv` — which cannot see a connection string — instead of D-10's database identity, now exposed as `developmentDatabase`. Twelve documentation errors corrected, including a table count of 74 that is 73 and a comment asserting the opposite of what its own foreign key did. 13 targeted re-checks against the live database, all passing. |
+| Phase 7 — access control and authentication | 2026-08-27 | Notes **§1.12**: route protection is **three** layers and only two are checks — the Next 16 `proxy.ts` (renamed from `middleware.ts`) is an optimistic cookie-presence redirect that cannot verify anything, and the real route check lives in the *pages* rather than `account/layout.tsx`, because a layout does not re-render on navigation within its own segment. **§1.12.2**: the role bootstrap needed two answers — a hook forcing the first account on an empty database to `admin`, and a data statement in the migration backfilling existing staff, because `editor` would not have preserved their permissions, it would have removed them from all of them at once with no admin left to grant them back. **§1.12.3**: ownership rules return a `Where`, so a cross-account read is *empty* rather than *forbidden*; and two things a rule cannot do — say whose a new row is (`enforceCustomerOwnership` forces it) and protect one field of a permitted write (field access does). The variant/product publication join `publishedOn('product.status')` was measured both ways, because getting it wrong would have published every unreleased SKU, price and stock count. **§1.12.4–5**: why the reset link's origin comes from `SITE_URL` and never the `Host` header, why the token is not validated on page load, why a reset does not sign you in, and a password policy of twelve characters with no composition rules against Payload's built-in floor of **three**. **§1.12.7 records two defects found by running it**: React **resets** an uncontrolled form once its action resolves, so a rejected sign-in emptied the email field — fixed with echoed `defaultValue`s, password excluded; and the first `verify-access.ts` counted *any* thrown error as a passing access check, so a fixture typo would have reported a clean run while proving nothing. Deviations **DEV-31** (registration names a duplicate email), **DEV-32** (the reset flow exists before email does). New decisions **D-22**–**D-25**. New script `pnpm verify:access` — 43 checks, all passing; 42 further browser checks across dev, production and the admin panel; **0 axe-core violations** on six routes. No dependency added. Step 4 carried out as **§1.12.11**. |
 > **Append this table, and the sections above it, at the end of every phase.**

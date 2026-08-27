@@ -17,9 +17,10 @@ import {
   UnorderedListFeature,
   lexicalEditor,
 } from '@payloadcms/richtext-lexical'
+import type { CollectionConfig } from 'payload'
 import { buildConfig } from 'payload'
 
-import { schemaPush, serverEnv } from './lib/env.core'
+import { appEnv, schemaPush, serverEnv, siteUrl } from './lib/env.core'
 import { Addresses } from './payload/collections/Addresses'
 import { Campaigns } from './payload/collections/Campaigns'
 import { CartItems } from './payload/collections/CartItems'
@@ -42,11 +43,36 @@ import { Reviews } from './payload/collections/Reviews'
 import { SizeGuides } from './payload/collections/SizeGuides'
 import { Users } from './payload/collections/Users'
 import { WishlistItems } from './payload/collections/WishlistItems'
+import { logEmailAdapter } from './payload/email/logEmailAdapter'
 import { Navigation } from './payload/globals/Navigation'
 import { SiteSettings } from './payload/globals/SiteSettings'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
+
+/**
+ * **Session cookies get `Secure` outside local development, and Payload does not do that for you.**
+ *
+ * `addDefaultsToAuthConfig` ships `{ sameSite: 'Lax', secure: false }`, so out of the box the
+ * session cookie for both auth collections is transmissible over plain HTTP. Every deployed
+ * environment here is HTTPS, and a cookie that carries a seven-day customer session is not something
+ * to leave on a library default. `SameSite=Lax` is kept: it is what stops a cross-site form POST
+ * riding the cookie, which matters because the `/api` REST surface is reachable from anywhere.
+ *
+ * It is applied *here*, rather than in the two collection files, for one reason: this module is the
+ * only one in `src/payload/**` allowed to read the environment. `env.core` has no `server-only`
+ * guard, and the ESLint rule that keeps it out of every other file is decision **D-14** — widening
+ * that exemption to the collections directory to set one boolean would trade a real security
+ * property for a small convenience. Both collections carry a comment pointing here.
+ */
+const withSecureCookies = (collection: CollectionConfig): CollectionConfig => ({
+  ...collection,
+  auth: {
+    // `auth: true` is the shorthand `users` uses; spread it as an empty object rather than losing it.
+    ...(collection.auth === true ? {} : collection.auth),
+    cookies: { sameSite: 'Lax', secure: appEnv !== 'local' },
+  },
+})
 
 /**
  * Importing the environment module here is what makes plan §4.1b's "fail at build time" true.
@@ -76,6 +102,26 @@ const dirname = path.dirname(filename)
  * with rich-text fields.
  */
 export default buildConfig({
+  /**
+   * **The origin this deployment calls its own.** Payload's own helpers prefer it over the request's
+   * `Host` header when they need an absolute URL, which is the property that matters: a password
+   * reset link built from a request header is host-header injection with a token attached. See
+   * `siteUrl` in `lib/env.core.ts`, and `payload/email/resetPasswordEmail.ts`.
+   *
+   * It is not used for the admin panel's own data fetching — that goes through `routes.api` as a
+   * relative path — so a stale value degrades one email link rather than the CMS.
+   */
+  serverURL: siteUrl,
+
+  /**
+   * **There is no email transport yet, and this says so out loud.** Phase 19 owns Resend; Phase 7
+   * owns a password-reset flow that has to work before then. Payload's unconfigured default logs the
+   * subject and discards the body, which for a reset mail discards the only copy of the token — so
+   * this adapter logs the message in full instead, and logs an error on every send outside local
+   * development. See `payload/email/logEmailAdapter.ts`.
+   */
+  email: logEmailAdapter({ isLocal: appEnv === 'local' }),
+
   admin: {
     user: Users.slug,
     importMap: {
@@ -119,7 +165,7 @@ export default buildConfig({
     Promotions,
 
     // Customers
-    Customers,
+    withSecureCookies(Customers),
     Addresses,
     WishlistItems,
     Reviews,
@@ -128,7 +174,7 @@ export default buildConfig({
     // Content and system
     Faqs,
     Media,
-    Users,
+    withSecureCookies(Users),
   ],
 
   globals: [SiteSettings, Navigation],

@@ -2,6 +2,7 @@ import { randomInt } from 'crypto'
 
 import type { CollectionConfig } from 'payload'
 
+import { isAdmin, isStaff, nobody, ownedByCustomer } from '../access'
 import { addressFields } from '../fields/address'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
@@ -104,6 +105,29 @@ export const Orders: CollectionConfig = {
   trash: true,
 
   defaultSort: '-createdAt',
+
+  /**
+   * **§7.1b's sharpest line: a customer may read their own orders and may not read anyone else's.**
+   *
+   * `ownedByCustomer` returns a `Where`, so the cross-account attempt is not a 403 that confirms the
+   * order exists — it is an empty result, which confirms nothing. That distinction is the difference
+   * between "you may not see order 1042" and "there is no order 1042 for you".
+   *
+   * **`create` is `nobody`, deliberately, and that includes admins.** An order is not authored; it is
+   * the record of something that happened. Plan §17 creates it from the checkout and finalises it
+   * from a signature-verified Stripe webhook, both in server code through the Local API, which does
+   * not consult this rule. What `nobody` forbids is `POST /api/orders` — a request that could only
+   * ever be someone inventing a purchase, whoever they are.
+   *
+   * `update` is staff, because fulfilment status, tracking numbers and refunds are administered
+   * (§18.1c). The transitions themselves are Phase 18's; this only says who may attempt one.
+   */
+  access: {
+    read: ownedByCustomer('customer'),
+    create: nobody,
+    update: isStaff,
+    delete: isAdmin,
+  },
 
   fields: [
     {

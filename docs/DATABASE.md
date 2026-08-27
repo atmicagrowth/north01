@@ -42,6 +42,16 @@ Phase 5's fixture, `schema_probes`, is gone. Removing it was this project's firs
 migration, deliberately rehearsed on something worthless before the same shape of migration is ever
 pointed at an order table.
 
+**Phase 7 added no tables and two columns**, both indexed, both enums:
+
+| Column | Type | Default | What it is |
+|---|---|---|---|
+| `users.role` | `enum_users_role` — `editor` \| `admin` | `editor` | The §7.1a staff roles. `editor` is least privilege; the first account on an empty database is forced to `admin` by a hook, and a pre-existing account was backfilled to `admin` by the migration — §4 step 7 |
+| `customers.account_status` | `enum_customers_account_status` — `active` \| `disabled` | `active` | §7.1e's "account is disabled". Refuses login, revokes live sessions on the transition, and makes every ownership rule fail closed |
+
+Customer is not a value in `users.role`: shoppers are their own auth collection, which is decision
+**D-21** and is what makes "a customer cannot reach the CMS" a property of the topology.
+
 The count is worth knowing because a Payload collection is rarely one table. `products` is four —
 itself, `products_gallery` (the array), `products_texts` (the `hasMany` text fields) and
 `products_rels` (the `hasMany` relationships). An `array` field is a table; a `blocks` field is one
@@ -155,13 +165,29 @@ that check; run it when a migration looks suspicious.
    does not depend on getting a two-hundred-statement ordering right by hand. It changes no end state,
    so the snapshot beside the file stays accurate and needs no regeneration.
 
-   Those two are the only hand-edits a migration ever gets.
-7. **Read the SQL.** This is the step that matters. The generated `up` is the exact statement list
+   Those two are the only *schema* hand-edits a migration ever gets. There is one further case,
+   and Phase 7 is the first to hit it.
+
+7. **A data statement, when a new `NOT NULL` column changes what existing rows mean.** Phase 7 added
+   `users.role`, defaulting to `editor`. That default is right for every account created afterwards
+   and wrong for the ones already there: before the migration there were no roles at all and every
+   staff account had unrestricted access to the CMS, so `editor` would not have preserved their
+   permissions — it would have removed them, from all of them at once, with no admin left to grant
+   anything back. The migration therefore ends with
+   `UPDATE "users" SET "role" = 'admin';`, which is not a promotion but the truthful translation of
+   the previous state into the new vocabulary.
+
+   The bar for this is high, and it is not "the data would be nicer this way". It is: *the schema
+   change alters the meaning of rows that already exist, and leaving them at the column default
+   would be a silent behaviour change.* Write down why, in the migration, at the statement. It
+   alters no schema, so the Drizzle snapshot beside the file stays accurate and needs no
+   regeneration — the same reasoning as the `IF EXISTS` above.
+8. **Read the SQL.** This is the step that matters. The generated `up` is the exact statement list
    that will run against production one day. A `DROP COLUMN` in it is a data-loss event scheduled by
    you, and a migration nobody read is not a reviewed change.
-8. **Verify it on a throwaway database**, or roll it forward and back on the development one — §10.
-9. **Commit all three files together, with the config change that caused them.** A migration
-   separated from its config change is a broken commit in both directions.
+9. **Verify it on a throwaway database**, or roll it forward and back on the development one — §10.
+10. **Commit all three files together, with the config change that caused them.** A migration
+    separated from its config change is a broken commit in both directions.
 
 ### Commit policy
 

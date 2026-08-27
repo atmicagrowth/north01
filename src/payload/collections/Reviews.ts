@@ -1,6 +1,15 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionConfig, Where } from 'payload'
 
+import {
+  activeCustomer,
+  isActiveCustomer,
+  isAdmin,
+  isStaff,
+  isStaffField,
+  staffUser,
+} from '../access'
 import { validateRequiredUpload } from '../fields/required'
+import { enforceCustomerOwnership } from '../hooks/enforceCustomerOwnership'
 
 /**
  * Product reviews. Plan §6.1j lists the fields and states the rule the schema has to make
@@ -61,6 +70,42 @@ export const Reviews: CollectionConfig = {
   indexes: [{ fields: ['product', 'customer'], unique: true }],
 
   defaultSort: '-createdAt',
+
+  /**
+   * **Three readers, three answers.** Anyone sees approved reviews. The author additionally sees
+   * their own, whatever state it is in — which is what makes "submitted, awaiting moderation" a
+   * thing the storefront can honestly show them instead of a review that vanishes on submit. Staff
+   * see everything, because moderating requires seeing the unmoderated.
+   *
+   * `create` is open to any active customer and the row is forced to be theirs, but `status` and
+   * `verifiedPurchase` are staff-only *fields* — so a review created through the API lands `pending`
+   * and unverified no matter what the request body says, and is invisible to everyone but its author
+   * until a human approves it. That is §21.1b's moderation rule expressed as access control rather
+   * than as a hook that could be bypassed.
+   *
+   * `update` and `delete` stay with staff. Whether an author may edit or withdraw their own review —
+   * and what that does to a rating aggregate — is **Phase 21**'s question (§21.1a), and answering it
+   * here by guessing would be the wrong kind of early.
+   */
+  access: {
+    read: ({ req: { user } }) => {
+      if (staffUser(user)) {
+        return true
+      }
+
+      const approved: Where = { status: { equals: 'approved' } }
+      const customer = activeCustomer(user)
+
+      if (!customer) {
+        return approved
+      }
+
+      return { or: [approved, { customer: { equals: customer.id } }] }
+    },
+    create: isActiveCustomer,
+    update: isStaff,
+    delete: isAdmin,
+  },
 
   fields: [
     {
@@ -146,6 +191,10 @@ export const Reviews: CollectionConfig = {
       required: true,
       defaultValue: 'pending',
       index: true,
+      access: {
+        create: isStaffField,
+        update: isStaffField,
+      },
       options: [
         { label: 'Pending moderation', value: 'pending' },
         { label: 'Approved', value: 'approved' },
@@ -163,6 +212,10 @@ export const Reviews: CollectionConfig = {
       required: true,
       defaultValue: false,
       index: true,
+      access: {
+        create: isStaffField,
+        update: isStaffField,
+      },
       admin: {
         position: 'sidebar',
         readOnly: true,
@@ -171,4 +224,12 @@ export const Reviews: CollectionConfig = {
       },
     },
   ],
+
+  hooks: {
+    /**
+     * A review belongs to the account that submitted it, not to whichever customer id the request
+     * named. Same pairing as `Addresses` and `WishlistItems` — see `hooks/enforceCustomerOwnership.ts`.
+     */
+    beforeValidate: [enforceCustomerOwnership('customer')],
+  },
 }

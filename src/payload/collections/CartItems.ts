@@ -1,5 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
+import { isAdmin, isStaff, ownedByCustomer } from '../access'
+
 /**
  * One line in a bag. Plan §6.1k: cart, product, variant, quantity, and *"snapshot of presentation
  * data only if needed"*.
@@ -40,6 +42,18 @@ export const CartItems: CollectionConfig = {
   },
 
   indexes: [{ fields: ['cart', 'variant'], unique: true }],
+
+  /**
+   * A line inherits its bag's ownership through the relationship rather than duplicating the
+   * customer column — one fact, one place. Write access is closed for the same reason as `Carts`:
+   * quantity is checked against live stock in server code, never by whoever sends the request.
+   */
+  access: {
+    read: ownedByCustomer('cart.customer'),
+    create: isStaff,
+    update: isStaff,
+    delete: isAdmin,
+  },
 
   fields: [
     {

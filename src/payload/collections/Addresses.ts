@@ -1,6 +1,8 @@
 import type { CollectionConfig } from 'payload'
 
+import { isActiveCustomer, ownedByCustomer } from '../access'
 import { addressFields } from '../fields/address'
+import { enforceCustomerOwnership } from '../hooks/enforceCustomerOwnership'
 
 /**
  * A customer's saved address book. **Gap G-01**, assigned to this phase and recorded in **DEV-10**:
@@ -39,6 +41,23 @@ export const Addresses: CollectionConfig = {
     group: 'Customers',
     description:
       'Saved addresses. Orders keep their own frozen copy and are unaffected by edits here.',
+  },
+
+  /**
+   * §7.1b, verbatim: *"read/write their own addresses"*. All four operations are the customer's own,
+   * and staff keep full access through `ownedByCustomer`'s staff branch so support can correct a
+   * delivery address on the phone.
+   *
+   * `create` cannot be an ownership `Where` — there is no row to constrain yet — so it asks only
+   * whether the requester is an active customer, and `enforceCustomerOwnership` below forces the
+   * `customer` column to be theirs. Either half alone is a hole: without the hook,
+   * `POST /api/addresses` with someone else's customer id writes into their address book.
+   */
+  access: {
+    read: ownedByCustomer('customer'),
+    create: isActiveCustomer,
+    update: ownedByCustomer('customer'),
+    delete: ownedByCustomer('customer'),
   },
 
   fields: [
@@ -82,6 +101,13 @@ export const Addresses: CollectionConfig = {
   ],
 
   hooks: {
+    /**
+     * The other half of `create: isActiveCustomer` above: access control says *who* may write here,
+     * this says *whose* the row is. Without it, a request that passes the access rule can still name
+     * somebody else's customer id and write into their account. See `hooks/enforceCustomerOwnership.ts`.
+     */
+    beforeValidate: [enforceCustomerOwnership('customer')],
+
     afterChange: [
       async ({ context, doc, req }) => {
         if (context?.skipDefaultAddressSync) {
