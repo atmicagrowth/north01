@@ -445,6 +445,42 @@ log, which is what §4.1b requires.
 
 *Recorded in Phase 4.*
 
+### D-16 — Migrations are applied by the build, not by the server
+
+Plan §5.1d requires that pending migrations reach production *"in a controlled way before the
+application depends on the new schema"*, and that two deployments must not race them. The adapter
+offers a second route — `prodMigrations`, which migrates from inside `connect()` when `NODE_ENV` is
+`production`. That route is deliberately unused: it puts identical DDL in every cold-starting
+serverless instance simultaneously, which is a race by construction rather than by accident.
+
+The build applies them instead. The deployment build command is `pnpm build:deploy`
+(`payload migrate && next build`), which gives three properties in one line: migrations land before
+the code that needs them, a failed migration fails the build so nothing deploys, and re-running it
+without a schema change runs no SQL, because `payload_migrations` already records what ran.
+
+What it does not solve is concurrency across *deployments* — two builds started at once are two
+processes issuing DDL. Nothing in the repository can prevent that; it is a platform setting, recorded
+in `docs/DATABASE.md` §6 alongside the rule it implies: a migration must be backward compatible with
+the deployment still serving traffic while it runs.
+
+*Recorded in Phase 5, and proved against a real database before being written down.*
+
+### D-17 — Primary keys stay `serial`; a public identifier is a separate column
+
+`@payloadcms/db-postgres` can issue `uuid` or `uuidv7` primary keys, and the choice is effectively
+permanent once Phase 6 has created every table — so it is taken here, before the data model exists,
+rather than inherited by default.
+
+Integer keys are kept. They are smaller in every index and every foreign key, and they insert in
+order rather than scattering across the B-tree. The usual argument for UUIDs — not handing customers
+a guessable, countable identifier — is real, but it applies to the handful of identifiers that
+actually reach a customer, not to every join column in the schema. Where one does reach a customer,
+the order number above all, the phase that introduces it adds an opaque public column beside the
+primary key. That is what commerce systems do regardless of their key type, and it keeps the internal
+key internal.
+
+*Recorded in Phase 5. Revisit only with evidence, and only before Phase 6 lands.*
+
 ## 5. Current position
 
 **Phase 1 — Workspace, repository and baseline: complete.** Repository initialized on `main`, baseline
@@ -526,8 +562,34 @@ Every guard in that table was exercised against the real toolchain rather than a
 failure, the startup failure, the empty-string case, the live-Stripe rejection, the partial-integration
 warning, and both push-guard branches. Details and the measurements: notes §1.9.
 
-**Next: Phase 5 — Neon Postgres + Payload CMS foundation.** Migration baseline and the discipline
-around it (plan §5.1c–d).
+**Phase 5 — Neon Postgres + Payload CMS foundation: complete.**
+
+The migration baseline and the discipline around it (**D-16**), the schema conventions the data model
+will inherit (**D-17**, `docs/DATABASE.md` §8), and one fixture collection — `schema-probes` — whose
+only job is to make those conventions concrete and prove them. No new dependencies: the adapter, the
+migration CLI and Drizzle have all been installed since Phase 2.
+
+| Phase 5 acceptance | Status |
+|---|---|
+| Payload admin works against Postgres (§5.1) | **pass** — driven in a real browser against a database built from the committed migration, not from push |
+| Create/read/update/delete a test collection (§5.1) | **pass** — three ways: admin panel, REST through the running app, and the Local API |
+| Migrations generated and applied successfully (§5.1) | **pass** — generated, applied, rolled back with `migrate:down`, re-applied, and rebuilt from nothing with `migrate:fresh` |
+| App survives database restart/reconnect (§5.1) | **pass** — every backend of a running server terminated; the next three requests returned 200 |
+| Development push, committed migrations elsewhere (§5.1d) | **pass** — and the two were proved to produce an *identical* schema |
+| Indexes, unique constraints, foreign keys (§5.1d) | **pass** — single and compound unique, `ON DELETE SET NULL`, filter-column indexes |
+| Nullable vs required deliberate, timestamps, soft delete (§5.1d) | **pass** — `trash: true` with `deleted_at`, kept distinct from the editorial `status` |
+| Build-time migration for production, no racing deployments (§5.1d) | **pass** — `pnpm build:deploy`, **D-16**; deployment serialization is a platform setting and is documented |
+| Connection failures surface clearly, without secrets (§5.1 prompt) | **pass** — measured: named error, exit 1, zero occurrences of the password in the output |
+
+The reviewing pass found one real defect and it was fixed rather than noted: the adapter attaches an
+`error` listener to a single client, so any *other* idle connection dying — a suspended Neon compute,
+a dropped socket — emitted `error` on a pool with no listener, which Node turns into
+`uncaughtException`. `next dev` has its own handler and survived; a production server does not. An
+`onInit` hook now attaches one. Re-measured after the fix: zero uncaught exceptions, one log line,
+requests unaffected. Details: notes §1.10.
+
+**Next: Phase 6 — the Payload data model.** It also removes `schema-probes`, which will be this
+project's first destructive migration — the one shape worth practising on something worthless.
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 
@@ -541,5 +603,6 @@ around it (plan §5.1c–d).
 
 | Owed | Phase | Why |
 |---|---|---|
-| Migration baseline and the discipline around it | 5 | Plan §5.1c–d |
+| A production database, and the Vercel setting that stops two deployments migrating at once | 24 | Both are the project owner's to provision and configure; `docs/DATABASE.md` §6 says what is needed |
+| Removing the `schema-probes` fixture | 6 | It is Phase 5 scaffolding, and its removal is a deliberate first destructive migration |
 | CI running typecheck, lint, tests and build | 27 | Plan §27.1f |

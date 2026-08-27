@@ -68,6 +68,7 @@ export interface Config {
   blocks: {};
   collections: {
     users: User;
+    'schema-probes': SchemaProbe;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -76,6 +77,7 @@ export interface Config {
   collectionsJoins: {};
   collectionsSelect: {
     users: UsersSelect<false> | UsersSelect<true>;
+    'schema-probes': SchemaProbesSelect<false> | SchemaProbesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -141,6 +143,38 @@ export interface User {
   collection: 'users';
 }
 /**
+ * Phase 5 database fixture. Proves connectivity, CRUD and the migration workflow. Removed in Phase 6.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "schema-probes".
+ */
+export interface SchemaProbe {
+  id: number;
+  /**
+   * Stable external key. Unique across the collection.
+   */
+  reference: string;
+  /**
+   * Human-readable name. Unique per owner, not globally — see the compound index.
+   */
+  label: string;
+  /**
+   * Editorial state. Distinct from soft deletion, which is `deletedAt`.
+   */
+  status: 'active' | 'archived';
+  /**
+   * Optional. Deliberately nullable.
+   */
+  note?: string | null;
+  /**
+   * Optional relationship. Set to null if the user is deleted, never cascaded.
+   */
+  owner?: (number | null) | User;
+  updatedAt: string;
+  createdAt: string;
+  deletedAt?: string | null;
+}
+/**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
@@ -163,10 +197,15 @@ export interface PayloadKv {
  */
 export interface PayloadLockedDocument {
   id: number;
-  document?: {
-    relationTo: 'users';
-    value: number | User;
-  } | null;
+  document?:
+    | ({
+        relationTo: 'users';
+        value: number | User;
+      } | null)
+    | ({
+        relationTo: 'schema-probes';
+        value: number | SchemaProbe;
+      } | null);
   globalSlug?: string | null;
   user: {
     relationTo: 'users';
@@ -230,6 +269,20 @@ export interface UsersSelect<T extends boolean = true> {
         createdAt?: T;
         expiresAt?: T;
       };
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "schema-probes_select".
+ */
+export interface SchemaProbesSelect<T extends boolean = true> {
+  reference?: T;
+  label?: T;
+  status?: T;
+  note?: T;
+  owner?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  deletedAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

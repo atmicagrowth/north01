@@ -81,12 +81,18 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 |---|---|
 | `pnpm dev` | Local development server |
 | `pnpm build` | Production build |
+| `pnpm build:deploy` | `payload migrate && next build` — **the deployment build command**. See [`DATABASE.md`](DATABASE.md) §6 |
 | `pnpm start` | Serve the production build |
 | `pnpm typecheck` | TypeScript, no emit, strict |
 | `pnpm lint` | ESLint — **fails on warnings** (`--max-warnings 0`) |
 | `pnpm lint:fix` | ESLint with autofix |
 | `pnpm format` | Prettier write (code only; Markdown is excluded) |
 | `pnpm format:check` | Prettier check — use this in CI |
+| `pnpm migrate:create <name>` | Generate the next migration from the config. Connects to no database |
+| `pnpm migrate` | Apply every pending migration as one batch |
+| `pnpm migrate:status` | Which migrations exist and which have run |
+| `pnpm migrate:down` | Roll back the most recent batch |
+| `pnpm migrate:fresh` | Drop every table and re-run every migration. **Development only** |
 | `pnpm generate:types` | Regenerate `src/payload-types.ts` from the Payload config |
 | `pnpm generate:importmap` | Regenerate the admin import map |
 | `pnpm test` | Vitest unit/component tests *(pending — Phase 27)* |
@@ -94,6 +100,20 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 
 **Run `pnpm generate:types` after any change to a collection, global, or field.** The generated types are
 committed and the build assumes they are current.
+
+### Changing the schema
+
+Local development uses Drizzle's push: edit a collection, restart `pnpm dev`, and the development
+branch is altered in place. Every other environment gets committed migrations, so a schema change is
+not finished until `pnpm migrate:create` has run and its three files are committed alongside the
+config change.
+
+The full workflow, the commit policy, the production procedure, the rollback path and the schema
+conventions Phase 6 has to follow: **[`docs/DATABASE.md`](DATABASE.md)**.
+
+One thing that catches everyone once: a generated migration destructures `{ db, payload, req }` and
+uses only `db`. This project compiles with `noUnusedParameters`, so trim both signatures to `{ db }`
+or `pnpm typecheck` fails. It is the only hand-edit a migration ever gets.
 
 ## Project layout
 
@@ -115,7 +135,9 @@ src/
 │  ├─ env.server.ts      server-only environment — what application code imports
 │  └─ env.core.ts        the same without the `server-only` guard; config and instrumentation only
 ├─ payload.config.ts     aliased as @payload-config
-└─ payload/              collections, access rules, hooks, migrations
+└─ payload/
+   ├─ collections/       one file per collection
+   └─ migrations/        generated, committed, applied in order (Phase 5)
 ```
 
 **`env.server.ts` must never be imported from a client component** — and it cannot be: it imports
@@ -203,6 +225,8 @@ Do not hand-edit these; regenerate them:
 |---|---|---|
 | `src/app/(payload)/admin/importMap.js` | `pnpm generate:importmap` | Payload |
 | `src/payload-types.ts` | `pnpm generate:types` | Payload |
+| `src/payload/migrations/*.json` | `pnpm migrate:create` | Drizzle Kit — the schema snapshot the next migration diffs against |
+| `src/payload/migrations/index.ts` | `pnpm migrate:create` | Payload — the barrel it rewrites on every generation |
 | `AGENTS.md` (block between its BEGIN/END markers) | any `next dev` | Next.js |
 | `pnpm-workspace.yaml` | `pnpm install` | pnpm |
 
@@ -220,6 +244,7 @@ content lives **below** the `END:nextjs-agent-rules` marker, which Next does not
 | `[✓] Pulling schema from database...` | Drizzle's development push. Expected in dev **when the push guard is armed**, off everywhere else — see **D-10**. |
 | `[env] Schema push is disabled: …` | The Phase 4 guard declined to arm. `DATABASE_PUSH_TARGET` is unset or malformed, or `DATABASE_URL` is ambiguous (an `options` parameter, a bad percent-escape). Payload will not create or alter tables. |
 | `[env] Schema push is DISABLED: …` | The pointed version of the same guard: both values are valid but name **different databases**. Usually `DATABASE_URL` was repointed and the target was not. |
+| `ERROR: Postgres pool client error…` | An idle connection died — Neon suspended the compute, the network dropped, or someone terminated the backend. The pool has already discarded it and the next query opens a new one. Logged rather than fatal on purpose; without the handler this is an `uncaughtException`. See [`DATABASE.md`](DATABASE.md) §9 |
 | `[env] The <name> integration is partly configured — …` | Some of a provider's variables are filled in and others are not. The integration is treated as unavailable. Fill in the rest or clear them. |
 
 ### The `/admin` hydration warning is a browser extension

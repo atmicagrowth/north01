@@ -140,6 +140,7 @@ test tier — no paid service is required for local development.
 | Stripe | Phase 17 | **Test mode only.** Secret key, publishable key, webhook signing secret |
 | Resend | Phase 19 | API key; verified sending domain before any production claim |
 | PostHog / GA4 / Sentry | Phase 25 | Optional — the storefront must work fully without them |
+| **Neon Postgres — production** | Phase 24 | A production database separate from development, plus the deployment setting that prevents two builds migrating at once. Added in Phase 5; see §1.10.9 and `docs/DATABASE.md` §6 |
 
 ~~Phases 2, 3 and 4 need none of these.~~ **Corrected in Phase 2:** Phase 2 needs Neon. Phases 3 and 4
 need none of these. See **DEV-15**.
@@ -1237,6 +1238,215 @@ worth naming for a later phase rather than leaving implicit:
   evade it. See §1.9.9. A custom ESLint rule that flags any import of the core from a file carrying
   `'use client'` would close it properly; it is not worth a plugin today.
 
+## 1.10 Phase 5 — Neon Postgres + Payload CMS foundation
+
+### 1.10.1 What Phase 5 still had to do
+
+Two of the phase's four sections were already satisfied when it opened, and by earlier phases rather
+than by luck.
+
+| Plan | State at the start of Phase 5 |
+|---|---|
+| §5.1a — provision a development database | **Done in Phase 2.** Neon PostgreSQL 17.11, development branch, direct endpoint, `sslmode=verify-full`. See **DEV-15** and §1.7.2 |
+| §5.1b — connect Payload to Postgres | **Done in Phase 2**, through the official `@payloadcms/db-postgres` adapter. Hardened here: pool limits, and the connection timeout that was not one |
+| §5.1c — migration discipline | **This phase.** There was no migration at all |
+| §5.1d — database safety | **Partly done in Phase 4** — `push` gated by **D-10**, `disableCreateDatabase`, `migrationDir`. The schema conventions were this phase's |
+
+So what was genuinely outstanding was the migration baseline, the discipline around it, the schema
+conventions the data model will inherit, and — the part that has to be *done* rather than written —
+proof that all of it works. **No dependency was added.** The adapter, Drizzle, `pg` and the migration
+CLI have been installed since Phase 2; Phase 5 is the phase that finally uses them.
+
+### 1.10.2 Proving migrations without destroying the development database
+
+The only honest way to prove a migration applies is to apply it. The development branch cannot be
+that target: it is push-built, so `payload_migrations` carries the `batch = -1` row that push leaves
+behind, and `payload migrate` therefore stops and asks whether to proceed *through data loss*. Both
+ways forward from that prompt — answering yes, or `migrate:fresh` — destroy the admin user the
+project owner created in Phase 2.
+
+The way out was to check what the database role could actually do. `neondb_owner` has `rolcreatedb`,
+so the whole lifecycle ran against a throwaway database created beside the development one in the
+same Neon project, and dropped afterwards:
+
+| Step | Result |
+|---|---|
+| `CREATE DATABASE north01_migration_check` | created; development branch untouched throughout |
+| `pnpm migrate:status` | one migration, `Ran: No` |
+| `pnpm migrate` | applied in 283 ms; nine tables |
+| `pnpm migrate:status` | `Ran: Yes`, batch 1 |
+| CRUD through the Local API | §1.10.3 |
+| `pnpm migrate:down` | rolled the batch back — **every table dropped, `payload_migrations` included** |
+| `pnpm build:deploy` | `payload migrate` re-applied it, then `next build` produced the four routes |
+| `pnpm migrate:fresh --force-accept-warning` | dropped and rebuilt from the migration in 500 ms |
+| `DROP DATABASE … WITH (FORCE)` | the Neon project is back to `neondb` alone |
+
+Two things are worth keeping from how that was done. **Retargeting was a shell variable, not a file
+edit** — Next's env loader assigns only variables that are not already in `process.env`, so
+`DATABASE_URL=… pnpm migrate` overrides `.env` for one command and nothing on disk changes.
+And **the D-10 guard disarmed push by itself**: `DATABASE_PUSH_TARGET` still named the development
+branch, so pointing `DATABASE_URL` at the verification database left push off and said so on the
+first line of `pnpm dev`. The guard was not under test. It simply did the thing it exists for, in the
+exact situation it was written for.
+
+The procedure is now the standing one, in `docs/DATABASE.md` §10.
+
+**Rolling back the initial migration is a teardown, not a rollback** — its `down` drops every table,
+and the migration ledger is one of them. That is inherent to a first migration and worth knowing
+before it is attempted on anything that matters.
+
+### 1.10.3 CRUD, proved three ways
+
+Plan §5.1's acceptance asks for create/read/update/delete on a test collection through Payload Admin
+*and* the application. All three surfaces were driven, because they are three different code paths
+and only one of them is the admin panel.
+
+**Local API** (`payload run`, against the migration-built database): create; read by ID and by query;
+update, with `updatedAt` observed changing; a missing required field rejected; a duplicate `reference`
+rejected; a duplicate `(owner, label)` pair rejected; **two rows with the same label and no owner both
+accepted** — the NULL-distinctness result below; soft delete hiding the row from a default `find` and
+revealing it under `trash: true`; restore; the owner user deleted and the probe's `owner` observed
+becoming `null` rather than the row vanishing or dangling; hard delete followed by `Not Found`.
+
+**REST, through the running application**: unauthenticated `GET /api/schema-probes` → **403**, which
+is Payload's default access control working; then create, read, update, a duplicate rejected with
+`Value must be unique`, soft delete by `PATCH`, and a list that returns `totalDocs: 0` by default and
+`1` with `?trash=true`.
+
+**Admin panel, in a real browser** at 1440×900: logged in, created a document, saw it in the list,
+edited and saved it, watched a duplicate `reference` refused with the error attached to the field and
+a toast repeating it, deleted through the document controls — the confirmation dialog reads *"You are
+about to move the Schema Probe … to the trash"* and offers **Skip trash and delete permanently** —
+and then found the list empty and the Trash view holding both soft-deleted documents.
+
+### 1.10.4 What the phase found: an unhandled pool error is an `uncaughtException`
+
+The acceptance criterion *"app survives database restart/reconnect"* was tested rather than assumed:
+with a dev server running and serving, every backend belonging to it was terminated with
+`pg_terminate_backend`, and the next requests were made immediately.
+
+The requests were fine — 200, then 200 again. The log was not. It contained
+`⨯ uncaughtException: error: terminating connection due to administrator command`.
+
+**The cause.** `connect.ts` in the adapter takes one client from the pool at startup, to prove
+connectivity, and attaches an `error` listener to *that client*. Every other client the pool creates
+is bare. When a bare idle client dies — a suspended Neon compute, a dropped socket, an administrator
+terminating a backend — `pg-pool` discards it and re-emits on the **pool**, and an `error` event with
+no listener is the one event Node turns into a throw. `next dev` installs its own handler and
+survives, which is exactly why this can sit in a codebase unnoticed: the environment where it is
+harmless is the environment where it is visible. A production server has no such handler, and an
+idle Neon compute is not an unusual thing to crash on.
+
+**The fix** is four lines in an `onInit` hook: attach an `error` listener to the pool and log. Nothing
+more, because nothing more is wrong — `pg` has already discarded the client, and the next query opens
+a fresh one, which is precisely what the two 200s showed. The only thing missing was somewhere for
+the event to land. `onInit` is the earliest point that has a pool to attach to: `payload.init()` calls
+`db.connect()` before it. The listener-count guard is for `next dev`'s hot reload, which re-runs
+`onInit` against the same retained pool.
+
+**Re-measured after the fix:** backends terminated again, three requests, all 200, **zero**
+`uncaughtException`, and one line — `Postgres pool client error. The connection was discarded; the
+next query opens a new one.`
+
+### 1.10.5 Push and migrations produce the same schema — measured, not assumed
+
+*Migration drift* is on the plan's edge-case list for this phase, and it is usually discussed rather
+than checked. It was checked. The development branch, whose schema was built entirely by Drizzle's
+push, and the verification database, whose schema was built entirely by the committed migration, were
+dumped along three axes — every column with its type, nullability and default; every index definition;
+every constraint definition — sorted, and diffed.
+
+**Identical.** No differences at all.
+
+That is the answer to the edge case: the two mechanisms are generated from the same config, so a
+difference between them means one of them did not run, not that they disagree. The diff is cheap, and
+`docs/DATABASE.md` §10 keeps it as the check to run when a migration looks unusual.
+
+### 1.10.6 Things that would have been bugs
+
+**`payload.delete({ trash: true })` is not a soft delete.** It reads exactly like one. It means
+*permanently delete, trashed documents included*. The first version of the CRUD proof used it, and
+the evidence was unmistakable once looked at: `deletedAt: null`, `visibleByDefault: 0`, and
+`visibleWithTrash: 0` — the row was gone, not trashed. A soft delete is an **update** that sets
+`deletedAt`, which is what the admin panel's "move to trash" does. Phase 18 will reach for this on
+orders; it is now in `docs/DATABASE.md` §8.
+
+**A compound unique index over a nullable column is weaker than it reads.** `(owner, label)` unique
+does not prevent two rows with the same label and no owner, because Postgres treats NULLs as distinct
+from one another. Both rows were created. PostgreSQL 15+ can say `NULLS NOT DISTINCT`; Drizzle does
+not emit it, so the constraint that exists is the weaker one, and a constraint that must hold across a
+nullable column needs the column made required instead.
+
+**Compound index names are not namespaced by their table.** `indexes: [{ fields: ['owner', 'label'] }]`
+emitted `CREATE UNIQUE INDEX owner_label_idx`. Index names are unique per *schema* in Postgres, so two
+collections declaring a compound index over the same field names collide — and the collision surfaces
+as a failed migration, not as a config error. Phase 6 defines a dozen collections and several of them
+will want an index over something like `(product, slug)`. Recorded before it happens.
+
+**A generated migration does not compile here.** Payload's template destructures
+`{ db, payload, req }` and uses only `db`; this project sets `noUnusedParameters`, so `pnpm typecheck`
+fails on a freshly generated file. Trimming both signatures to `{ db }` is the fix, it is one edit per
+migration, and it is written into the workflow rather than rediscovered each time. The alternative —
+exempting `src/payload/migrations/` from typechecking — was rejected: migrations are the code that
+runs against production, and they are the last place to turn the compiler off.
+
+**`payload migrate` cannot run unattended against a pushed database.** The `batch = -1` prompt has no
+answer in a non-interactive build. It is another reason production must never be pushed to, and it is
+why the deployment build command is safe: a production database has never seen push, so the prompt
+never appears.
+
+### 1.10.7 Choices that follow the plan rather than depart from it
+
+Recorded here rather than in Section 2, because none of them departs from a canonical document.
+
+- **The fixture collection is scaffolding, and Phase 6 removes it.** Plan §5.1's prompt asks for
+  *"one small test collection"* to prove CRUD before the ecommerce collections exist. `schema-probes`
+  is that, and every field in it is a worked example of one §5.1d requirement. Its removal in Phase 6
+  is deliberate: it will be the project's first destructive migration, which is the one migration
+  shape worth practising on something worthless.
+- **Its access control is left at Payload's default**, which is `Boolean(req.user)` — closed, not
+  open, as the 403 above confirms. Phase 7 owns access rules and the fixture will be gone before then;
+  writing speculative rules for it would be Phase 7 work done early and thrown away.
+- **No health endpoint was invented.** The reconnect criterion could have been demonstrated with a
+  public `/api/health/db` route, and no canonical document asks for one. Building an unrequested
+  public endpoint to make a test convenient is how surface area accumulates; `pg_terminate_backend`
+  and three requests answered the same question with nothing left behind.
+- **Migrations run in the build, not in the server** — `pnpm build:deploy`. The adapter's
+  `prodMigrations` option would run them from `connect()` in every cold-starting instance at once.
+  Plan §5.1d explicitly asks that deployments not race migrations; this is **D-16**.
+- **Primary keys stay `serial`.** The adapter can issue `uuid`/`uuidv7`, and the choice is effectively
+  permanent once Phase 6 creates the tables, so it was taken deliberately rather than inherited.
+  **D-17**, with the reasoning and the place where the customer-facing identifier problem actually
+  gets solved.
+
+### 1.10.8 Confirmation sweep of earlier deviations
+
+Step 4 of the append rule.
+
+- **DEV-15 — Postgres is required from Phase 2, not Phase 5. Confirmed, and now closed.** Phase 5
+  arrived to find the database already provisioned and connected, which is what the deviation
+  predicted. Nothing further is owed by it.
+- **DEV-17 — schema push disabled from the start. Still correctly withdrawn**, and this phase is the
+  one that vindicates the withdrawal: the local workflow is push, exactly as §5.1d prescribes, and the
+  migration baseline was generated from the config without push ever being disabled. One correction:
+  the entry's *"We do"* line still quotes `push: process.env.NODE_ENV === 'development'`, which Phase 4
+  replaced with `push: schemaPush.allowed`. The entry already points at Phase 4 for the guard; the
+  quoted line is superseded, not the reasoning.
+- **§1.7.2's `sslmode` item** — closed in §1.7.4 and re-confirmed in use here: the connection string
+  ends in `sslmode=verify-full`, and `docs/DATABASE.md` §2 states it as a rule rather than a habit.
+- **DEV-10 (schema additions Phase 6 does not list)** and **DEV-12 (category browsing must not route
+  through Algolia)** are Phase 6 and Phase 12 respectively. Not due, not touched.
+
+### 1.10.9 What is now owed
+
+- **A production database, and the deployment setting that stops two builds migrating at once.** Both
+  are the project owner's to provision and configure, and neither is needed before deployment.
+  `docs/DATABASE.md` §6 says what is required. Added to `docs/ARCHITECTURE.md` §5's owed table
+  against **Phase 24**.
+- **Removing `schema-probes`** — Phase 6, as above.
+- **Keeping compound-index field combinations distinct across collections** — Phase 6, for the
+  index-name collision in §1.10.6.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -1778,4 +1988,5 @@ it.***
 | Phase 3 — post-implementation audit | 2026-08-24 | Note **§1.8.10**: the committed phase re-reviewed for latent defects, 23 findings confirmed of 37 and all fixed. `<Button asChild>` threw on every use (Slot given two children); a "persistent" toast dismissed itself in 0.1ms (`setTimeout` overflow); toast exit animations were dead classes; `crypto.randomUUID` fails outside a secure context; `max-w-prose` was 65ch not 672px and `max-w-xs` was 6px (Tailwind width-namespace precedence); `--font-weight-*` survived `--font-*: initial`; `cn()` could not conflict `transparent`/`current`/`inherit`; three dead `peer-*`/`group-*` variants; and eight accessibility defects that coexisted with a clean axe run — two `<h1>`s on the specimen sheet, a suppressed focus ring on a focusable tab panel, a `banner` landmark inside the drawer, and **no skip link** (WCAG 2.4.1, Level A). Records which gates are blind to which failure modes, for Phase 27. |
 | Phase 4 — environment configuration and secret management | 2026-08-26 | Notes **§1.9**: the four contexts that evaluate the environment module and what each can gate (`instrumentation.ts` is **not** a build hook; `payload.config.ts` is **not** a startup hook), the push hazard measured down to two real paths, **D-10 closed** with `DATABASE_PUSH_TARGET` and proved by running it, the three-module split that `server-only` forced, and the would-be bugs — empty-string-is-not-absent, `NODE_ENV` undefined under the Payload CLI, `z.httpUrl()` rejecting localhost, `.env.local` loading in production builds, module scope not being once-per-server. **§1.9.7 and §1.9.9 record two post-implementation audits** that found a client component could import the environment and ship a secret in prerendered HTML, a `NODE_ENV`-unset fail-open in the guard, a total bypass via `?host=`, asymmetric case folding, a port-blind comparison, and a preview deployment able to carry live Stripe keys — all fixed. Deviation **DEV-26** (variable names this project had to choose). New decisions **D-14** and **D-15** in `docs/ARCHITECTURE.md`; new `docs/ENVIRONMENT.md`. Step 4 carried out as **§1.9.6**. |
 | Phase 4 — second audit | 2026-08-26 | Note **§1.9.9**: the round-one fixes re-audited on the committed code. 40 claims, 32 refuted, 8 confirmed. The headline: the ESLint rule fencing the unguarded `env.core.ts` **does not see `import()`** — core `no-restricted-imports` registers no `ImportExpression` visitor — so a client component doing `use(import('@/lib/env.core'))` passed typecheck, lint and build and put `PAYLOAD_SECRET` into prerendered HTML: §1.9.3's leak, reached through different syntax. Closed with a companion `no-restricted-syntax` rule; seven bypass spellings probed and all caught. Also fixed: an empty `?port=` arming push against a different server (`??` where pg uses truthiness), IPv6 targets that could never arm, an acceptance-table row crediting the superseded runtime tripwire, a wrong file reference in `payload.config.ts`, an undocumented `VERCEL`, and an undercounted docblock. **D-14 now distinguishes** what fails the build from what only fails lint. |
+| Phase 5 — Neon Postgres + Payload CMS foundation | 2026-08-26 | Notes **§1.10**: what the phase actually had left to do once Phases 2 and 4 had done §5.1a–b, the initial migration and the discipline around it, and the whole lifecycle proved against a **throwaway database created beside the development one** so the owner's branch and admin user were never at risk — apply, roll back, re-apply through `pnpm build:deploy`, rebuild with `migrate:fresh`, drop. CRUD proved three ways: Local API, REST through the running app, and the admin panel in a real browser. **§1.10.4 records the one real defect** — the adapter attaches an `error` listener to a single pool client, so any other idle connection dying emitted `error` on a listener-less pool and became `uncaughtException`; `next dev` hides it and a production server would not. Fixed with an `onInit` pool handler and re-measured. **§1.10.5**: the push-built and migration-built schemas were dumped and diffed and are **identical**, which is the migration-drift edge case answered rather than discussed. **§1.10.6** records four traps — `delete({trash:true})` is a *permanent* delete, a compound unique index over a nullable column does not constrain NULL rows, compound index names are not namespaced by table, and a generated migration does not compile under `noUnusedParameters`. New decisions **D-16** (migrations run in the build, not the server) and **D-17** (primary keys stay `serial`); new `docs/DATABASE.md`. Step 4 carried out as **§1.10.8** — **DEV-15 confirmed and closed**, DEV-17's withdrawal vindicated with one superseded code line noted. No deviations, no new dependencies. |
 > **Append this table, and the sections above it, at the end of every phase.**

@@ -257,7 +257,7 @@ document; Phase 4 chose them, recorded as **DEV-26**.
 
 | Variable | Tier | Environments | Source |
 |---|---|---|---|
-| `DATABASE_URL` | server | all three, a **different value in each** | Neon console → the branch's **direct** (non-pooled) endpoint. End it with `sslmode=verify-full`, not `require` |
+| `DATABASE_URL` | server | all three, a **different value in each** | Neon console → the **direct** (non-pooled) endpoint locally, the **pooled** (`-pooler`) one in a deployed environment. End it with `sslmode=verify-full`, not `require`. [`DATABASE.md`](DATABASE.md) §2 |
 | `PAYLOAD_SECRET` | server | all three, a different value in each | self-generated: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Minimum 32 characters |
 
 ### Set by the platform — never write these into a `.env`
@@ -308,9 +308,12 @@ Development Algolia index and Cloudinary folder. `DATABASE_PUSH_TARGET` set to t
 **Preview.** A non-production database or an isolated Neon branch. Stripe test mode only.
 Non-production credentials throughout. Push is off — `appEnv` is `preview`.
 
-**Production.** Production database, its own Payload secret, production media namespace and
-search index, email from a verified domain. Stripe stays in test mode until real payments are
-explicitly required. Push cannot run: the decision is constant-folded to `false` in the build.
+**Production.** Production database — the **pooled** (`-pooler`) endpoint, because a serverless
+deployment is many processes each holding a pool — its own Payload secret, production media
+namespace and search index, email from a verified domain. Stripe stays in test mode until real
+payments are explicitly required. Push cannot run: the decision is constant-folded to `false` in the
+build, and schema changes arrive through migrations applied by the build command (**D-16**,
+[`DATABASE.md`](DATABASE.md) §6).
 
 Never use production customer data in development.
 

@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:deploy": "payload migrate && next build",
     "start": "next start",
     "lint": "eslint --max-warnings 0",
     "lint:fix": "eslint --fix",
@@ -18,6 +19,11 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "payload": "payload",
+    "migrate": "payload migrate",
+    "migrate:create": "payload migrate:create",
+    "migrate:status": "payload migrate:status",
+    "migrate:down": "payload migrate:down",
+    "migrate:fresh": "payload migrate:fresh",
     "generate:types": "payload generate:types",
     "generate:importmap": "payload generate:importmap"
   },

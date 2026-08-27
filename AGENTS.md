@@ -37,7 +37,8 @@ For anything visual, `NORTH01_Visual_Guide_OnlineOnly.md` is the source of truth
 `NORTH01_Visual_Reference_OnlineOnly.png` is directional context only.
 
 Orientation for the codebase itself: `docs/ARCHITECTURE.md`, `docs/STACK_VERSIONS.md`,
-`docs/DEVELOPMENT.md`.
+`docs/DEVELOPMENT.md`. Anything that touches the schema: `docs/DATABASE.md` first — migrations are
+committed, generated, and never hand-authored.
 
 ## Rules that do not bend
 

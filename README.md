@@ -49,6 +49,7 @@ payment success. All of it is recalculated server-side.
 | [`docs/STACK_VERSIONS.md`](docs/STACK_VERSIONS.md) | Every version pin and the evidence for it |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Local setup and day-to-day workflow |
 | [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) | Every environment variable, its tier, its source, and the guards around them |
+| [`docs/DATABASE.md`](docs/DATABASE.md) | Connection rules, the migration workflow and its commit policy, the production and rollback procedures, and the schema conventions |
 
 ## Canonical specification
 
@@ -91,6 +92,16 @@ half-configured provider is reported instead of failing later at the point of us
 It also closes **D-10**: Drizzle's development schema push is now aimed at one named database rather
 than at whatever `DATABASE_URL` happens to point at, so repointing the connection string disarms push
 instead of redirecting it. Details: [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
+
+**Phase 5 — Neon Postgres + Payload CMS foundation: complete.** The database foundation the data
+model will be built on: a committed initial migration, a deployment build command that applies
+pending migrations before the code that needs them (`pnpm build:deploy`), and the schema conventions
+Phase 6 inherits — indexes, unique and compound-unique constraints, foreign keys that null rather
+than orphan, deliberate nullability, timestamps, and soft delete kept separate from an editorial
+archive state. All of it proved against a real database rather than asserted: CRUD through the admin
+panel, over REST and through the Local API; migrations applied, rolled back and re-applied; and the
+push-built development schema compared against the migration-built one and found identical. Full
+workflow: [`docs/DATABASE.md`](docs/DATABASE.md).
 
 No storefront *feature* is built yet. The shell components exist and are proved, but they are mounted
 in Phase 9, alongside the search overlay and cart drawer that make their controls do something.
