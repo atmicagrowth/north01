@@ -33,10 +33,20 @@ the project owner's job, not this repository's. Nothing in the workflow below as
 
 ### The tables today
 
-Eight belong to Payload — `users`, `users_sessions`, `payload_preferences`,
-`payload_preferences_rels`, `payload_locked_documents`, `payload_locked_documents_rels`,
-`payload_migrations`, `payload_kv` — and one is Phase 5's own fixture, `schema_probes`. Phase 6
-replaces the fixture with the real data model.
+**Seventy-four.** Nine belong to Payload's own machinery — `users`, `users_sessions`,
+`customers_sessions`, `payload_preferences`, `payload_preferences_rels`, `payload_locked_documents`,
+`payload_locked_documents_rels`, `payload_migrations`, `payload_kv` — and the rest are Phase 6's data
+model: twenty-two collections, two globals, and the array, block and relationship tables beneath them.
+
+Phase 5's fixture, `schema_probes`, is gone. Removing it was this project's first destructive
+migration, deliberately rehearsed on something worthless before the same shape of migration is ever
+pointed at an order table.
+
+The count is worth knowing because a Payload collection is rarely one table. `products` is six —
+itself, `products_gallery`, `products_texts` (the `hasMany` text fields), `products_rels` (the
+`hasMany` relationships), and the locked-document and preference rows that reference it. An `array`
+field is a table; a `blocks` field is one table per block type; a `hasMany` relationship is a shared
+`_rels` table. This is why field names have to be watched for identifier length — §8.
 
 ---
 
@@ -128,12 +138,28 @@ that check; run it when a migration looks suspicious.
    config against the previous snapshot — so it works offline and cannot touch anything by accident.
 5. **Trim the unused parameters.** The generated file destructures `{ db, payload, req }` and uses
    only `db`; this project compiles with `noUnusedParameters`, so reduce both signatures to `{ db }`.
-   One edit per migration, and it is the only hand-edit a migration ever gets.
-6. **Read the SQL.** This is the step that matters. The generated `up` is the exact statement list
+6. **Make every `DROP CONSTRAINT` an `IF EXISTS`** — required whenever the migration drops a
+   collection, which means in the `down` of every migration that adds one. Drizzle emits
+   `DROP TABLE … CASCADE` alongside explicit cleanup of the objects that referenced those tables, and
+   `CASCADE` has already removed them by the time the explicit statement runs:
+
+   ```
+   error: constraint "payload_locked_documents_rels_schema_probes_fk"
+          of relation "payload_locked_documents_rels" does not exist
+   ```
+
+   Measured in Phase 6, twice: once in the `up` that removed `schema_probes`, and once across
+   twenty-two constraints in the `down` of the data-model migration. Both rolled the whole batch back.
+   `IF EXISTS` rather than reordering: the statement is *redundant* rather than wrong, and idempotence
+   does not depend on getting a two-hundred-statement ordering right by hand. It changes no end state,
+   so the snapshot beside the file stays accurate and needs no regeneration.
+
+   Those two are the only hand-edits a migration ever gets.
+7. **Read the SQL.** This is the step that matters. The generated `up` is the exact statement list
    that will run against production one day. A `DROP COLUMN` in it is a data-loss event scheduled by
    you, and a migration nobody read is not a reviewed change.
-7. **Verify it on a throwaway database** — §10.
-8. **Commit all three files together, with the config change that caused them.** A migration
+8. **Verify it on a throwaway database**, or roll it forward and back on the development one — §10.
+9. **Commit all three files together, with the config change that caused them.** A migration
    separated from its config change is a broken commit in both directions.
 
 ### Commit policy
@@ -235,15 +261,42 @@ Plan §5.1d asks for each of these to be deliberate. They are worked examples in
 | Concern | Convention |
 |---|---|
 | **Index** | Any column that filters or sorts a list. `unique: true` implies one. Payload indexes `created_at`, `updated_at` and `deleted_at` for you |
+| **CHECK** | Only where application validation can be bypassed. One exists: `inventory_quantity >= 0`, because Phase 17's atomic decrement will be raw SQL. Added through `afterSchemaInit` — see below |
 | **Unique, one column** | `unique: true`. For anything a human types twice — SKU, slug, external reference |
 | **Unique, several columns** | `indexes: [{ fields: [...], unique: true }]` on the collection |
 | **Foreign key** | A single non-polymorphic `relationship` writes a real `REFERENCES` column with **`ON DELETE SET NULL`** |
 | **Required vs nullable** | `required` means the row cannot be read meaningfully without it. A statement about the domain, never about the form |
 | **Timestamps** | `timestamps: true` on every collection |
-| **Soft delete** | `trash: true` where a delete must be recoverable — orders, customers. Sets `deleted_at`; reads exclude trashed rows unless they ask for them |
+| **Soft delete** | `trash: true` where a delete must be recoverable: `orders`, `order_items`, `customers`, `products`, `product_variants`, `reviews`. Sets `deleted_at`; reads exclude trashed rows unless they ask for them |
 | **Archive** | A `status` field. An *editorial* state, and deliberately not the same column as `deleted_at` |
+| **Publish state** | `status` (`draft` \| `published`) plus `publishedAt`, **not** Payload's `versions: { drafts: true }` — see "Drafts are not used" below |
+| **Money** | An integer count of minor units, in a column whose name ends `Minor`. `src/payload/fields/money.ts` |
+| **Cascade** | A `beforeDelete` hook, wherever a dependant carries a *required* reference. Postgres cannot do it — see the sixth trap |
 
-### Five traps, all of them load-bearing
+### Drafts are not used, and the reason is a column property
+
+Payload's `versions: { drafts: true }` is not enabled on any collection. The obvious argument is
+weight — every collection gains a parallel `_v` table, and so does every array and block table beneath
+it, which for eleven editorial collections is a large multiple of the tables the model needs. The
+decisive argument is narrower and was verified in the adapter source
+(`@payloadcms/drizzle/schema/buildRawSchema.js`):
+
+```js
+buildTable({ …, disableNotNull: !!collection?.versions?.drafts, tableName /* the MAIN table */ })
+```
+
+Enabling drafts strips `NOT NULL` from **every column of the collection's own table**, not just the
+versions table — because a draft is allowed to be incomplete. On an editorial collection that is
+merely untidy. On `orders`, where `total_minor` and `payment_status` are the record, it would make
+`required: true` unenforceable at the only layer that cannot be bypassed.
+
+What the corpus actually asks for is a publish *state* (plan §6.1e, §6.1g), and nothing anywhere asks
+to see, restore or edit a previous revision. A `status` column answers the question that was asked;
+`publishedAt` answers the scheduling one (feature matrix §12's "scheduled/past campaign") by being
+compared against the clock. A later phase that genuinely needs revision history can turn drafts on
+beside these fields.
+
+### Six traps, all of them load-bearing
 
 **A compound unique index over a nullable column is weaker than it reads.** `(owner, label)` unique
 does not stop two rows with the same label and no owner: in Postgres, NULLs are distinct from one
@@ -251,25 +304,59 @@ another. Proved in Phase 5 — both rows were created. PostgreSQL 15+ can say `N
 but Drizzle does not emit it, so a constraint that must hold across a nullable column needs the
 column made required instead.
 
-**Compound index names are not namespaced by table.** `indexes: [{ fields: ['owner', 'label'] }]`
-produced an index called literally `owner_label_idx`. Index names are unique per *schema* in
-Postgres, so two collections declaring a compound index over the same field names collide, and the
-collision surfaces as a failed migration rather than a config error. Phase 6 defines many
-collections: keep compound-index field combinations distinct, or the second one will not migrate.
+**Compound index names are not namespaced by table, and they are built from *field* names.**
+`indexes: [{ fields: ['owner', 'label'] }]` produced an index called literally `owner_label_idx`.
+Index names are unique per *schema* in Postgres, so two collections declaring a compound index over
+the same field names contend for one name. The adapter de-duplicates by appending a counter
+(`buildIndexName` in `@payloadcms/drizzle`), which means the loser's name depends on collection order
+in the config — a rename waiting for the next reshuffle. Keep the field combinations distinct instead.
+
+Phase 6's four are `product_color_size_idx`, `cart_variant_idx`, `customer_product_idx` (wishlist) and
+`product_customer_idx` (reviews). Note the last two: **the column order is load-bearing**, because it
+is the name. `(customer, product)` and `(product, customer)` would have collided had reviews been
+written the other way round — and the order chosen is also the better index for the query each one
+serves.
+
+Second half of the same trap: the name comes from the *field* name, not the column name. A field
+called `colorName` produced `"product_colorName_size_idx"` — a mixed-case identifier, which Postgres
+preserves and then requires quoting forever. The field is called `color` for that reason.
 
 **`ON DELETE SET NULL` means every relationship can resolve to nothing.** Deleting a user does not
 delete or orphan the rows pointing at it — their reference becomes null. Every consumer of a
 relationship must treat "resolves to nothing" as an ordinary state. Proved in Phase 5.
 
-**`indexes` cannot express a *partial* unique index, and Phase 6 needs one.** Plan §6.1c's critical
-rule — *"do not allow two active variants of the same product to share the same SKU"* — is a unique
-constraint over `(product, sku)` **`WHERE active`**. Payload's compound-index API is
-`{ fields, unique }` and has no `where`, so the only two spellings are a *stricter* constraint
-(unique regardless of `active`, which also blocks reusing a SKU after a variant is retired) or the
-adapter's `afterSchemaInit` hook, which is where Payload documents composite and otherwise
-unsupported indexes. Adding the index in a hand-written migration is the third option and the worst
-one: the Drizzle snapshot would not know it exists, so no later migration would ever maintain it.
-Decide this in Phase 6 deliberately rather than discovering it at the first duplicate SKU.
+**`indexes` cannot express a *partial* unique index.** ~~and Phase 6 needs one~~ — **settled in
+Phase 6, and it did not.** Plan §6.1c's critical rule — *"do not allow two active variants of the same
+product to share the same SKU"* — reads as a unique constraint over `(product, sku)` **`WHERE active`**,
+which Payload's `{ fields, unique }` API cannot express.
+
+The resolution was to notice that the rule is a *lower bound on correctness*, not a specification. The
+constraint that exists is `UNIQUE (sku)` across the whole collection, and it refuses a superset:
+the same SKU on two different products (incoherent — a stock-keeping unit that identifies two garments
+cannot be picked or counted), and reusing a SKU after retiring a variant (the case `WHERE active`
+exists to allow, and the case that breaks order history, because order lines snapshot the SKU). Both
+are defects; a partial index would have permitted both. Reasoning in full at the top of
+`src/payload/collections/ProductVariants.ts`.
+
+`afterSchemaInit` is used once, and for the constraint that genuinely has no other spelling:
+`CHECK (inventory_quantity >= 0)`. That one matters because Phase 17's decrement will be raw SQL past
+every Payload validator, and negative stock is a lost write rather than an oversell. `drizzle-orm` is
+reached through `@payloadcms/db-postgres/drizzle/pg-core`, which the adapter re-exports, so it costs no
+new direct dependency — and drizzle-kit does carry the CHECK into the snapshot, so later migrations
+maintain it. The rejected third option remains rejected: an index added in a hand-written migration is
+invisible to the snapshot chain, so nothing would ever maintain it.
+
+**A `required` relationship is `NOT NULL` *and* `ON DELETE SET NULL`, which makes the parent
+undeletable.** The two are set independently and their combination is a contradiction that only
+appears at delete time — Postgres tries to null a column that may not be null and raises
+`null value in column "variant_id" violates not-null constraint`, failing the *parent's* delete.
+Every dependant with a required back-reference therefore needs a `beforeDelete` cascade:
+`carts`→lines, `orders`→lines, `products`→variants/lines/wishlist/reviews, `product_variants`→lines,
+`customers`→addresses/wishlist/reviews. `src/payload/hooks/cascadeDelete.ts`.
+
+`beforeDelete`, not `afterDelete`: the violation happens *during* the parent's delete statement, so a
+cleanup scheduled afterwards never runs — the transaction has already rolled back. Nullable references
+are deliberately left to `SET NULL`, which is why deleting a customer keeps their orders.
 
 **`payload.delete({ trash: true })` is not a soft delete.** It means *permanently delete, trashed
 documents included* — the opposite of what it reads like. A soft delete is an **update** that sets
@@ -300,6 +387,11 @@ internal. Recorded as **D-17**.
 | Null relationships | Expected, not exceptional: see `ON DELETE SET NULL` above |
 | Orphaned records | Cannot occur through a foreign key — the reference nulls rather than dangling. Payload's own `_rels` tables cascade |
 | Database restart / reconnect | Survived, measured: every backend of a running server was terminated and the next three requests returned 200 |
+| Deleting a row other rows require | Cascaded in `beforeDelete` — sixth trap above. Measured: deleting a product removed its variants and the bag line referencing it |
+| Money losing precision | Cannot: every amount is an integer count of minor units, exact through `numeric` and through JavaScript's `Number`. A fractional value is refused by a field validator |
+| Stock going negative | Refused by a `CHECK`, past every application validator. Measured with a raw `UPDATE` |
+| A duplicate line in one bag | Refused by `UNIQUE (cart, variant)` — which is what makes plan §14.1b's "sum the quantities" merge rule enforceable rather than aspirational |
+| A product edited after it was bought | Order lines snapshot name, SKU, variant label and unit price. Measured: renaming a product left the line unchanged |
 
 ---
 
@@ -336,6 +428,38 @@ A variable set in the shell wins over `.env`: Next's loader does not overwrite w
 
 Everything above is safe against a development Neon project, and none of it touches the development
 branch's own data.
+
+### What Phase 6 ran instead, and why
+
+The development database was rebuilt from the migration chain rather than from a throwaway copy —
+`migrate` → `migrate:down` → `migrate` — which exercises the same statements plus the rollback, and is
+the cycle that found both `DROP CONSTRAINT` failures in §4. Afterwards `pnpm dev` was started and
+`/admin` requested: Drizzle pulled the schema, found no difference, and applied nothing. That is the
+§3 cross-check — push and migrations agree — repeated against a data model instead of a fixture.
+
+### Baselining a pushed development database
+
+A database built by push has never run a migration: `payload_migrations` holds a single `batch = -1`
+marker, `migrate:status` reports everything as *not run*, and `pnpm migrate` would try to create
+tables that push already created. `pnpm migrate:fresh` fixes it by destroying the database, including
+the admin user and any local content.
+
+`scripts/baseline-migrations.ts` is the third path. It records the migrations whose schema the database
+already *matches* as having run, and removes the push marker, so `pnpm migrate` applies only what is
+genuinely pending:
+
+```bash
+pnpm payload run scripts/baseline-migrations.ts 20260827_022341_initial
+pnpm migrate
+```
+
+It writes nothing but `payload_migrations` rows, refuses to run outside the local environment, and is
+safe to run twice. The premise is §3's measurement: push and the committed migration produce identical
+schemas, which is what makes "already ran" a fact rather than a convenient fiction.
+
+**It is also needed after `pnpm seed`**, or after any `payload run` script: those initialise Payload
+without `PAYLOAD_MIGRATING`, so push runs and re-creates the `batch = -1` marker, and the next
+`pnpm migrate` stops to ask an interactive question a non-interactive shell cannot answer.
 
 ---
 

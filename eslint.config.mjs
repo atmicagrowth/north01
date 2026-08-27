@@ -76,10 +76,26 @@ const config = [
     },
   },
   {
-    // The three files that legitimately reach the unguarded core: `env.server.ts`, which is the
-    // guard and re-exports it; the Payload config, which must stay resolvable under tsx; and the
-    // instrumentation hook, which runs before any React graph exists.
-    files: ['src/lib/env.server.ts', 'src/payload.config.ts', 'src/instrumentation.ts'],
+    // The files that legitimately reach the unguarded core: `env.server.ts`, which is the guard and
+    // re-exports it; the Payload config, which must stay resolvable under tsx; the instrumentation
+    // hook, which runs before any React graph exists; and `scripts/`, added in Phase 6.
+    //
+    // `scripts/` qualifies for the same reason `payload.config.ts` does, and the reason is worth
+    // stating because the exemption is security-relevant. The rule protects one thing: a *client
+    // bundle* importing the environment and shipping a secret in prerendered HTML. A file under
+    // `scripts/` cannot reach a client bundle — nothing in `src/` imports it, and it is run by the
+    // Payload CLI through tsx, outside Next entirely. That is also why it cannot use the guarded
+    // module: `env.server.ts` imports `server-only`, which throws under plain Node.
+    //
+    // The narrow risk this opens is a script importing something from `src/` that a route also
+    // imports, dragging the core into a graph that is bundled. Nothing does, and the directory
+    // boundary in plan §1.3 — `scripts/` is one-off local administration — is what keeps it that way.
+    files: [
+      'src/lib/env.server.ts',
+      'src/payload.config.ts',
+      'src/instrumentation.ts',
+      'scripts/**/*.ts',
+    ],
     rules: {
       'no-restricted-imports': 'off',
       'no-restricted-syntax': 'off',

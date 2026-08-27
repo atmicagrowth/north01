@@ -1461,6 +1461,347 @@ Step 4 of the append rule.
 - **Keeping compound-index field combinations distinct across collections** — Phase 6, for the
   index-name collision in §1.10.6.
 
+## 1.11 Phase 6 — Payload data model
+
+Twenty-two collections, two globals, seventy-four tables, one new dependency. This is the phase the
+first five were foundation for, and the phase every later one builds on: from here the schema is the
+thing that has to be right, because a column added in Phase 17 is a migration and a column *shaped*
+wrongly in Phase 6 is a rewrite.
+
+### 1.11.1 The five decisions that had to be taken before a single field could be written
+
+Each of these determines the shape of many tables, and none of them is reversible cheaply.
+
+**1. Money.** Payload's `type: 'number'` compiles to Postgres `numeric` — exact — and the adapter reads
+it back through Drizzle's `numeric({ mode: 'number' })`, which hands JavaScript a binary float. Exact
+in the database and approximate in the application is the worse half of both designs: the database
+would be right and every total computed from it would be a rounding argument. Integers survive both
+halves unchanged, and are what Stripe's API already speaks.
+
+So every amount is an integer count of minor units, in a column whose name ends `Minor`. The name is
+the enforcement — a field called `price` holding `1999` is a bug waiting for `product.price * quantity`
+— and a field validator refuses a fractional value, because `min` and `step` govern the admin widget
+only and a REST client can send `19.99`. Recorded as **D-20**.
+
+**2. Publish state, and not Payload drafts.** `versions: { drafts: true }` was the obvious way to
+express plan §6.1e's "publish state". It is not used, and the reason is a column property rather than
+a preference. In `@payloadcms/drizzle/schema/buildRawSchema.js`:
+
+```js
+buildTable({ …, disableNotNull: !!collection?.versions?.drafts, tableName /* the MAIN table */ })
+```
+
+Enabling drafts strips `NOT NULL` from every column of the collection's **own** table, not just the
+versions mirror — because a draft is allowed to be incomplete. On an editorial page that is untidy. On
+`orders`, where `total_minor` and `payment_status` *are* the record, it makes `required: true`
+unenforceable at the only layer that cannot be bypassed. And the weight is real: every array and block
+table beneath every collection gains a mirror, which for eleven editorial collections is a large
+multiple of the tables the model needs, in every migration, forever.
+
+What the corpus asks for is narrower than versioning. `status` answers "should the public see this";
+`publishedAt` answers feature matrix §12's "scheduled/past campaign" by being compared against the
+clock. Nothing anywhere asks to see, restore or edit a previous revision. A later phase that needs
+revision history can turn drafts on beside these two columns.
+
+**3. Where variants live.** A separate collection, not an array on the product. The critical rule in
+§6.1c is a uniqueness constraint, and Payload's compound-index API operates on collection fields, not
+on array sub-fields — so an array could not express it at all. A separate table is also what lets a
+cart line and an order line point at a purchasable row by id, which is the whole point of §2.1's
+"a variant is the purchasable unit".
+
+**4. Which side owns a many-to-many.** `products.collections` and `collections.products` cannot both be
+stored — that is the duplication the phase brief warns against, and the two copies disagree within a
+week. The direction is forced by *ordering*: feature matrix §12 requires curated product ordering on a
+collection page, and an order is a property of the list rather than of its members. So the collection
+owns an ordered `hasMany`, and the product reads it back through a `join`, which is virtual and adds
+no column.
+
+Categories go the other way for the same reason inverted: a category page has no hand-curated order —
+products sort by `sortOrder`, price or newness — so the product owns `categories` and the category
+needs no list. The asymmetry is deliberate and each direction is owned by whoever needs the order.
+
+**5. Two auth collections.** Plan §7.1b states that customers *"may NOT access Payload Admin"*. With
+one collection and a role column that is a conditional inside an access function, one inverted
+comparison away from letting a shopper into the CMS. With two, `admin.user` points at `users` and a
+customer has nowhere to log in *to*. Structural, like **D-08**'s route groups. Recorded as **D-21**;
+Phase 2's `users` collection had already anticipated it in a comment.
+
+### 1.11.2 The constraints that are stricter than the plan asks
+
+Phase 5 left two questions open and labelled them for this phase (`docs/DATABASE.md` §8). Both are
+now answered, and neither needed the escape hatch it looked like it needed.
+
+**The variant SKU.** Plan §6.1c: *"do not allow two active variants of the same product to share the
+same SKU."* Read literally that is `UNIQUE (product_id, sku) WHERE active` — a partial compound index,
+which Payload's `{ fields, unique }` API cannot express, and which Phase 5 expected would need
+`afterSchemaInit`.
+
+What it actually needed was noticing that the rule is a *lower bound on correctness* rather than a
+specification. The constraint in the database is `UNIQUE (sku)` across the whole collection, and it
+refuses a superset of what the plan asks to be refused. The two things the literal rule permits are
+both defects:
+
+- **The same SKU on two different products.** Nothing in the wording forbids it and it is incoherent —
+  a stock-keeping unit that identifies two different garments cannot be picked, counted or reconciled,
+  and every downstream system assumes otherwise.
+- **Reusing a SKU after retiring a variant.** This is precisely the case `WHERE active` exists to
+  allow, and precisely the case that breaks order history: order lines snapshot the SKU (§6.1k,
+  §18.1d), so a reassignable SKU means two orders eighteen months apart record the same code for two
+  different garments and no report can separate them afterwards.
+
+Recorded as **DEV-29**.
+
+**Inventory.** `afterSchemaInit` *is* used, once, for the constraint that genuinely has no other
+spelling: `CHECK (inventory_quantity >= 0)`. It earns it because plan §17.1f requires the decrement at
+order finalisation to be atomic, which means Phase 17 will issue `UPDATE … SET inventory_quantity =
+inventory_quantity - $n` directly against Postgres, past every field validator this config declares. A
+`CHECK` is the only rule that statement cannot step around, and negative stock is not an oversell to
+reconcile later — it is a lost write, and the row recording it is the last honest count anyone has.
+
+`drizzle-orm` is reached through `@payloadcms/db-postgres/drizzle/pg-core`, which the adapter
+re-exports for exactly this, so it costs no new direct dependency. Verified that drizzle-kit carries
+the constraint into the `.json` snapshot, so later migrations will maintain it — which is the property
+a hand-written migration would have lacked, and the reason that third option stays rejected.
+
+Measured, not assumed: a raw `UPDATE` subtracting 100 000 from every variant of a product was refused
+by the constraint.
+
+### 1.11.3 Three defects that only running it would have found
+
+All three passed typecheck, lint and the production build. None would have been found by reading.
+
+**A `dbName` string replaces the whole table name, and shares it across collections.** The shop-the-look
+block's default naming produced `collections_blocks_shop_the_look_hotspots_product_id_products_id_fk`
+— 67 characters, over Postgres's 63-byte identifier limit. Payload validates *table* identifier lengths
+and not constraint names, so nothing warned. The fix looked obvious: `dbName: 'look'`.
+
+It was wrong, and worse than the problem. `createTableName` uses a custom name **instead of** the
+`${parentTable}_blocks_` prefix, not with it — so a block used by two collections collapsed into one
+shared `look` table whose parent foreign key referenced `collections` alone:
+
+```sql
+ALTER TABLE "look" ADD CONSTRAINT "look_parent_id_fk"
+  FOREIGN KEY ("_parent_id") REFERENCES "public"."collections"("id")
+```
+
+Saving that block on an *Edit* would have written a row pointing at an `edits` id through a key that
+says `collections`. A silent cross-collection corruption, traded for four characters. The function form
+— `dbName: ({ tableName }) => \`${tableName}_blocks_look\`` — receives the parent table name and keeps
+them separate. Longest generated identifier is now 58.
+
+**Required address sub-fields made a draft order impossible to save.** Plan §18.1a creates a pending
+order *before or at* checkout creation, which is before the customer has typed an address. The address
+field group was written once and reused twice — correct for the address book, wrong for the order
+snapshot — and Payload has no "required only when the group has data", so `payload.create` on an order
+failed with twelve validation errors at once. The requirement belongs where the corpus already puts
+it: checkout preflight (§17.1a, and **DEV-11**, which adds shipping-address validation to it
+precisely because shipping and tax cannot be computed without one). `addressFields` now takes
+`required` as a parameter.
+
+**A delete cascade written on `afterDelete` never runs.** Payload compiles a single non-polymorphic
+`relationship` to `ON DELETE SET NULL` with no option to change it, and a `required` relationship is
+also `NOT NULL`. The two are set independently and their combination is a contradiction that surfaces
+only at delete time — Postgres tries to null a column that may not be null and raises
+`null value in column "variant_id" violates not-null constraint`, failing the **parent's** delete. A
+cleanup scheduled for `afterDelete` therefore never runs at all: the transaction has already rolled
+back. Moved to `beforeDelete`, and extended to every dependant with a required back-reference:
+`carts`→lines, `orders`→lines, `products`→variants/lines/wishlist/reviews, `product_variants`→lines,
+`customers`→addresses/wishlist/reviews. Nullable references are deliberately left to `SET NULL`, which
+is why deleting a customer keeps their orders.
+
+### 1.11.4 Drizzle's generated migrations do not always run, and it is systematic
+
+Twice, and the second time across twenty-two statements: the generator emits `DROP TABLE … CASCADE`
+alongside explicit cleanup of the objects that referenced those tables, and `CASCADE` has already
+removed them by the time the explicit statement runs.
+
+```
+error: constraint "payload_locked_documents_rels_schema_probes_fk"
+       of relation "payload_locked_documents_rels" does not exist
+```
+
+Found first in the `up` that removed `schema_probes` — the fixture Phase 5 created for exactly this
+purpose, and it earned itself on its way out — and then again in the `down` of the data-model
+migration, where it would have made a production rollback impossible. Both rolled the batch back
+cleanly, which is the one comfort: migrations are transactional.
+
+The fix is `DROP CONSTRAINT IF EXISTS` rather than reordering. The statement is *redundant* rather than
+wrong — the constraint is meant to be gone — and idempotence does not depend on getting a
+two-hundred-statement ordering right by hand. It changes no end state, so the snapshot beside the file
+stays accurate. `docs/DATABASE.md` §4 now lists it as a required step after `migrate:create`, beside
+the parameter trim, and those two remain the only hand-edits a migration ever gets.
+
+**A second migration-workflow finding: `migrate:create` is not always non-interactive.** Generating a
+migration that drops one enum while creating fifty asks, through `prompts`, whether each new enum is a
+rename of the dropped one — and with no TTY it cancels silently and writes nothing, exit code 0. The
+answer was to remove the ambiguity rather than to answer it: the fixture removal was generated as its
+own migration first, against a temporary config containing only `Users`, so the data-model migration
+that followed had no drops in it at all. That also produced a better commit — a destructive migration
+that stands alone and can be read.
+
+### 1.11.5 What was verified, and how
+
+The development database was rebuilt from the migration chain rather than from a throwaway copy —
+`migrate` → `migrate:down` → `migrate` — which exercises the same statements plus the rollback and is
+the cycle that found both `DROP CONSTRAINT` failures. Afterwards `pnpm dev` was started and `/admin`
+requested: Drizzle pulled the schema, found no difference, and applied nothing. That is §1.10.5's
+push-versus-migration cross-check repeated against a data model instead of a fixture.
+
+Then twenty-four behavioural checks against the live database, **all twenty-four passing**:
+
+| Check | Result |
+|---|---|
+| `derived` price range, compare-at and stock match the variants | matches — 22000–22000, compare-at 28000, 54 units over 10 variants |
+| Deactivating a variant recomputes it; reactivating restores it | 157 → 149 → 157 |
+| Duplicate SKU, anywhere in the catalogue | refused — `Value must be unique` |
+| Duplicate colour + size within one product | refused |
+| Duplicate slug within a collection | refused |
+| A slug is trimmed and lower-cased before it is compared | `"  Slug-Normalisation-TEST  "` → `slug-normalisation-test` |
+| A malformed slug | refused with the field-level reason |
+| A fractional price | refused — whole minor units only |
+| Negative stock through raw SQL, past every validator | refused by the `CHECK` |
+| A cart issues its own token and expiry | 256-bit token, 30-day expiry |
+| Two bag lines for one variant | refused |
+| Deleting a cart removes its lines | 2 lines removed |
+| A draft order saves with no address | `N01-B2MFB0ZV`, draft / unfulfilled |
+| An order line after the product is renamed | snapshot unchanged |
+| A promotion code is trimmed and upper-cased | `"  verify-test  "` → `VERIFY-TEST` |
+| Soft delete hides a product; restore returns it | ordinary read 0, read-with-trash 1 |
+| Hard delete cascades to variants and bag lines | all removed |
+| Globals read back what the seed wrote | 6 primary navigation items |
+| A seventh primary navigation item | refused — `no more than 6 Rows` |
+| A hotspot with no product | refused |
+| A hotspot coordinate above 100% | refused |
+| A `javascript:` CTA href | refused |
+| `publishedAt` on the transition to published | stamped once, not on a draft |
+| A category set as its own parent | refused |
+
+And in a real browser, signed in to the admin panel: all six sidebar groups render, the product editor
+shows its six tabs, the `variants` join lists ten rows in size order with SKU, colour, price and stock,
+the read-only *Derived from variants* panel shows the maintained values, Site Settings renders its six
+tabs with the seeded content, and the console is clean. The temporary admin user created for that pass
+was deleted afterwards.
+
+`pnpm typecheck`, `pnpm lint --max-warnings 0` and `pnpm build` all pass. The build adds no routes,
+which is correct: this phase adds no UI.
+
+### 1.11.6 Things that would have been bugs
+
+- **A `lowStock` flag on the product.** It was in the first draft of the derived cache. It would have
+  been computed against `siteSettings.lowStockThreshold` at write time, so every product in the
+  catalogue would have held a stale answer the moment an editor changed that threshold. Replaced with
+  a **count** — `inventoryTotal` — and the threshold applied at render. Sold out is `= 0`, low stock is
+  `<= threshold`, and neither can drift.
+- **A compare-at price taken as the largest discount in the product.** It is the cheapest variant's,
+  because that is the price being displayed beside it. "$240, was $400" when the $240 variant was never
+  $400 is a false price claim, which plan §24.1b forbids in structured data and which is worse than
+  useless on a card.
+- **`customer_product_idx` on two collections.** Wishlist and reviews both index `(customer, product)`
+  conceptually. Payload builds compound index names from the field list with no table prefix, and index
+  names are unique per Postgres *schema*, so the two contend for one name; the adapter de-duplicates by
+  appending a counter, which makes the loser's name depend on collection order in the config. Avoided
+  by ordering the columns differently — `customer_product_idx` and `product_customer_idx` — which is
+  also the better index for the query each one serves. **The column order is load-bearing because it is
+  the name.**
+- **A mixed-case index name.** The same naming rule uses *field* names, not column names, so a field
+  called `colorName` produced `"product_colorName_size_idx"` — legal, and quoted forever afterwards.
+  The field is called `color`.
+- **A price snapshot on the cart line.** Tempting, because it is the only way to tell a customer "the
+  price of this changed since you added it". Rejected: it puts money on a table whose entire invariant
+  is that it holds none, and it invites the next reader to compute a total from it. No document requires
+  the notice. The bag holds no money at all, and the order is where amounts are finally written down.
+- **Seeded orders, customers and reviews.** Also rejected. Plan §6's brief is *"seed only representative
+  demo content"*, and an order is not content — it is a record of something that happened. An admin
+  panel full of purchases nobody made is the same category of lie as fake UI (§0.1.17), and it is worse
+  than an empty order list because it looks trustworthy.
+
+### 1.11.7 Choices that follow the plan rather than depart from it
+
+Recorded so they are not mistaken for omissions, and to keep Section 2 for genuine departures.
+
+- **Access control is Payload's default.** Every operation requires an authenticated session, which is
+  closed rather than open. Phase 7 owns roles and rules (§7.1a–e); this phase built the columns those
+  rules will be written against and opened none of them.
+- **No `inventoryCommittedAt`, `confirmationEmailSentAt`, `checkoutIdempotencyKey`, Stripe event
+  record, email delivery record or Algolia sync record.** Each is required by plan §17.1d, §19.1c or
+  §12.1b, and each belongs to the phase that writes it — **G-07**, and **DEV-10**'s own last row. A
+  column no phase writes reads empty through five phases and stops being trusted. Recorded as **D-19**.
+- **No promotion-redemption table.** A per-customer usage limit is a count of paid orders carrying that
+  promotion, which `orders.promotion` already answers. A second table recording the same fact is the
+  duplication the §6 prompt warns against.
+- **No review aggregates on the product**, for the same reason, even though the price aggregate beside
+  them is denormalised. Price is gap **G-04**, assigned to this phase. Reviews are Phase 21.
+- **The homepage block system is not here.** Plan §10.1a's hero, promotional strip, category tiles,
+  brand story, social gallery and newsletter belong to Phase 10, which owns the homepage. What Phase 6
+  defines is the shared editorial vocabulary §6.1e and §6.1f ask for — seven blocks, each mapping to a
+  sentence of visual guide §09 — which Phase 10 may reuse.
+- **`type: 'select'` enums are namespaced per table** (`enum_products_status`, `enum_carts_status`), so
+  the collision hazard that applies to compound index names does not apply to enums. Verified in the
+  adapter rather than assumed.
+- **The seed creates no media.** Every image field is optional and every one is left empty. Media is
+  Phase 8, and committing placeholder binaries to stand in for it would be a different kind of fiction;
+  plan §8.1d already specifies what the storefront does with a missing asset.
+
+### 1.11.8 Confirmation sweep of earlier deviations
+
+Step 4 of the append rule.
+
+- **DEV-10 — schema additions Phase 6 does not list. Now due, and discharged.** Customer address
+  (**G-01**) and size guide (**G-02**) exist as collections; gender (**G-03**) and the product display
+  price (**G-04**) exist as fields; variant availability (**G-05**) is enumerated as a derivation and
+  explained in `ProductVariants.ts`. The row for infrastructure records is honoured by *not* building
+  them — the entry itself says "created in their own phases rather than up front".
+- **DEV-01 — Essentials is a Collection, not an Edit. Confirmed and now encoded in data.** The seed
+  creates Essentials at `/collections/essentials`, and the Edit set is the structure document's four.
+- **DEV-07 — six primary navigation items. Confirmed, and now enforced by the schema.**
+  `navigation.primary` has `maxRows: 6`; a seventh is refused. Phase 3 encoded it in `navigation.ts`;
+  Phase 6 makes it a property of the data an editor cannot exceed.
+- **DEV-08 — one discount code per order. Confirmed.** `carts.promotion` and `orders.promotion` are
+  single relationships, so stacking is unrepresentable rather than merely discouraged. `combinable` is
+  modelled and unused, exactly as the entry says.
+- **DEV-02 / DEV-03 — `PENDING_PAYMENT`, and order state as two axes. Both now exist as columns.**
+  `paymentStatus` carries `pending_payment`; `fulfillmentStatus` is separate. Transitions remain
+  unrestricted here — that is §18.1b's and Phase 18's, and a half-built state machine would be a rule
+  to work around.
+- **DEV-09 — reference-image elements out of scope. Confirmed by absence.** No PILLAR facet, no
+  pre-order availability state, no per-product community gallery. The availability enumeration
+  deliberately stops at four values.
+- **DEV-06 / D-07 — no card data.** Nothing in this schema stores a PAN, a CVC or a payment method.
+  The only payment identifiers are Stripe's own, read-only.
+- **DEV-12 — category and collection browsing must not route through Algolia.** Not due until Phase 12,
+  and the schema supports it: a collection owns an ordered product list, and a category page is a
+  `where` clause on an indexed column. Neither needs a search index.
+- **DEV-17 — schema push disabled from the start. Still correctly withdrawn**, and this phase leaned on
+  push being available: the local workflow was push for iteration and committed migrations for
+  everything else, exactly as §5.1d prescribes.
+- **DEV-14 — substantial work uses feature branches. Confirmed.** Phase 6 ran on
+  `phase-6-payload-data-model`.
+- **DEV-16** (route-group topology) and **DEV-04** (no GraphQL surface) — both untouched and both still
+  true; this phase added no route and exposed no new API paradigm.
+- **DEV-24** (Motion, Phase 10) and **DEV-25** (newsletter column, Phase 19) — untouched, still pending
+  their phases.
+
+### 1.11.9 What is now owed
+
+- **A `deletedAt` sweep for expired carts.** `carts.expiresAt` exists and nothing acts on it. An
+  expired bag is treated as empty on read, so this is housekeeping rather than correctness — but the
+  table grows without it, and a cart with no customer is still personal data by association. No phase
+  has claimed it; it belongs with the maintenance tasks in Phase 24 or with a scheduled job if one is
+  ever introduced.
+- **Restricting order status transitions.** Phase 18, per §18.1b and §18.1c. The vocabulary exists; the
+  state machine does not, deliberately.
+- **Opening access control.** Phase 7. Every collection is currently authenticated-only, which means
+  the storefront cannot read a published product yet — correct at this point in the build order, and
+  the first thing Phase 7 changes.
+- **Media requiredness and validation.** Phase 8 owns mime types, size and dimension limits, focal
+  points, `imageSizes` and the Cloudinary adapter. Phase 6 left every image field optional so that a
+  seed without assets is a legitimate state rather than a blocked one.
+- **A rebuild path for `products.derived`.** Re-saving any variant recomputes it, which is enough today
+  and is not a script. If the cache is ever found wrong in bulk — after a direct SQL edit, say — a
+  small script over `recalculateProductDerived` is the fix, and it is exported for that reason.
+
+---
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -1636,6 +1977,13 @@ but appear in no schema, and will be added:
 | **Infrastructure records** — Stripe webhook/idempotency, email delivery, search sync | entity list §2.2 and Phases 12/17/19 | Phase 6. Created in their own phases rather than up front. |
 
 *Resolves G-01 through G-05 and G-07. Affects Phase 6 and later.*
+
+***Discharged in Phase 6.*** Customer address and size guide exist as collections; gender and the
+product display price exist as fields; variant availability is enumerated as a derivation rather than
+a column, and the reasoning is at the top of `src/payload/collections/ProductVariants.ts`. The
+infrastructure row is honoured by *not* building those records — the entry's own wording says "created
+in their own phases rather than up front", and **D-19** records the rule that follows from it. See
+notes §1.11.8.
 
 ---
 
@@ -1988,6 +2336,139 @@ introduce a second name for a variable that already exists here.
 it.***
 
 
+### DEV-27 — A review requires a customer
+
+**Plan §6.1j says:** a review has a *"customer reference **if applicable**"* — which reads as nullable.
+
+**We do:** make `reviews.customer` **required**.
+
+**Why:** two other requirements are unsatisfiable without it, and one of them is a constraint that
+silently does nothing.
+
+- **Duplicate prevention.** Plan §21.1c's first abuse case is *"duplicate review by same customer for
+  same product"*. The constraint that stops it is `UNIQUE (product, customer)` — and over a *nullable*
+  `customer` that constraint does nothing at all, because Postgres treats NULLs as distinct from one
+  another, so every anonymous review satisfies it. This was measured in Phase 5 on the fixture
+  (§1.10.6) and is the first of `docs/DATABASE.md` §8's traps. Requiring the column is what turns the
+  index from decoration into enforcement.
+- **Verified purchase.** Feature matrix §9 wants a *"verified-purchase indicator based on order
+  history"* and plan §21.1a wants to *"match customer to a paid order containing the product"*.
+  Neither is possible without knowing who wrote it.
+
+Plan §21.1a independently expects it: *"only authenticated customers should submit reviews unless a
+deliberately designed verified-review workflow is implemented."* No such workflow is designed anywhere
+in the corpus, so the required column follows the more specific instruction. `displayName` stays a
+separate field precisely so the public byline never has to be the account name.
+
+**Authoritative:** this document. §6.1j's "if applicable" is a field-list hedge; §21.1c states a rule
+that the hedge would make unenforceable.
+
+*Affects Phases 6 and 21.*
+
+---
+
+### DEV-28 — The `media` collection is created in Phase 6, not Phase 8
+
+**Plan §8.1a says:** media architecture — Payload metadata records plus Cloudinary delivery — is
+**Phase 8**.
+
+**We do:** create the `media` collection in Phase 6 as an upload-enabled skeleton with two fields,
+`alt` (required) and `caption`. Phase 8 adds everything else.
+
+**Why:** Phase 6 cannot be built without it. Plan §6.1a asks a global for a logo; §6.1b asks a product
+for a gallery and an optional video; §6.1e, §6.1f, §6.1g and §6.1h ask for hero, intro and cover media;
+§6.1i asks an article for a hero image; §6.1j asks a review for photos. Every one is an `upload` field,
+and an `upload` field needs a collection to point at. The alternatives were both worse: text columns
+holding URLs, to be swapped for real relationships in Phase 8 — a rewrite of a dozen tables and every
+foreign key between them — or leaving the fields out and adding them later, which is the same rewrite
+under a different name.
+
+It is the precedent Phase 2 set with `Users`, which exists as *"foundation, not a feature"* because
+Payload requires one auth collection before any feature needs authentication (§1.7.5).
+
+**What Phase 8 still owns, and this does not pre-empt:** the Cloudinary storage adapter (**DEV-05**),
+`sharp`, `imageSizes`, focal point and crop, mime-type and size validation, and the media-role and
+dimension metadata §8.1a lists. `sharp` is deliberately not installed — without it Payload stores the
+original and skips image processing, which is exactly the reduced behaviour intended, and installing it
+now would be installing a later phase's dependency.
+
+`alt` is required from the start because accessibility is *"part of implementation, not a final
+cosmetic pass"* (§0.1.19), and alt text backfilled across a seeded catalogue months later is the thing
+that never happens.
+
+*Affects Phases 6 and 8.*
+
+---
+
+### DEV-29 — A variant SKU is unique across the whole catalogue
+
+**Plan §6.1c says**, in a box of its own: *"Do not allow two active variants of the same product to
+share the same SKU."*
+
+**We do:** `UNIQUE (sku)` across the entire `product-variants` collection — strictly more than the rule
+asks.
+
+**Why:** the rule is a lower bound on correctness rather than a specification, and the two things it
+permits are both defects.
+
+- **The same SKU on two different products.** Nothing in the wording forbids it, and it is incoherent.
+  A stock-keeping unit that identifies two different garments cannot be picked, counted or reconciled,
+  and every downstream system — Stripe line items, the Algolia index, a fulfilment export — assumes
+  otherwise.
+- **Reusing a SKU after retiring a variant.** This is the case the `WHERE active` clause exists to
+  allow, and precisely the case that breaks order history. Order lines snapshot the SKU (§6.1k,
+  §18.1d); if a SKU may be reassigned, two orders eighteen months apart can record the same code for
+  two different garments and no report can tell them apart. Retired SKUs staying retired is what makes
+  the snapshot mean anything.
+
+It is also the constraint Payload's API can actually express. The literal reading is a *partial*
+unique index, which `{ fields, unique }` cannot produce; Phase 5 flagged the choice for this phase
+(`docs/DATABASE.md` §8) between `afterSchemaInit`, a hand-written migration, and a stricter constraint.
+The stricter one is both simpler and more correct, and unlike a hand-written index it is visible to the
+Drizzle snapshot chain, so later migrations maintain it.
+
+A second, weaker constraint carries the presentation half: `UNIQUE (product, color, size)`, so a size
+selector can never face two rows offering the same combination — plan §13.1c requires the server to
+determine whether *the* exact variant exists, singular.
+
+**Authoritative:** this document. The plan states a minimum; nothing in the corpus asks for a SKU to be
+reusable.
+
+*Affects Phases 6, 12, 17 and 18.*
+
+---
+
+### DEV-30 — Default currency and locale are this project's choice
+
+**The documents say:** plan §6.1a lists *"default currency"* and *"default locale"* as site settings,
+and carries currency on the cart (§6.1k) and the order (§6.1k), and asks a promotion to check
+*"currency compatibility if applicable"* (§15.1a). **No document in the corpus names a currency, a
+country or a locale.** There is no price, no address and no market anywhere in the six artifacts.
+
+**We do:** default to **USD** and **`en-US`**, with GBP and EUR available in the enum, and record both
+as editable in Site Settings.
+
+**Why:** something has to be chosen before a price column can be written, and USD is the least
+surprising default for a Stripe test-mode build. The choice is deliberately shallow: it is a *default*
+in a settings row, not an assumption baked into the schema.
+
+**What this is not:** multi-currency pricing. Catalogue prices are held in one currency — the one
+`site-settings.defaultCurrency` names — and the `currency` column on a cart and an order records which
+currency *that row's* money was denominated in, so a historical order still reads correctly if the
+store default is ever changed. Changing the default converts nothing and reprices nothing. The schema
+should not be read as offering more than that.
+
+One assumption does reach the schema: the minor-unit convention (**D-20**) assumes a two-decimal
+currency. All three enum values are. Adding a zero-decimal currency such as JPY means revisiting the
+formatting layer before the enum.
+
+**A later phase may correct this** with a real market requirement from the project owner — that is a
+correction to this entry, not a silent change to a column default.
+
+*Affects Phases 6, 14, 15, 16 and 17.*
+
+---
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -2003,4 +2484,5 @@ it.***
 | Phase 4 — environment configuration and secret management | 2026-08-26 | Notes **§1.9**: the four contexts that evaluate the environment module and what each can gate (`instrumentation.ts` is **not** a build hook; `payload.config.ts` is **not** a startup hook), the push hazard measured down to two real paths, **D-10 closed** with `DATABASE_PUSH_TARGET` and proved by running it, the three-module split that `server-only` forced, and the would-be bugs — empty-string-is-not-absent, `NODE_ENV` undefined under the Payload CLI, `z.httpUrl()` rejecting localhost, `.env.local` loading in production builds, module scope not being once-per-server. **§1.9.7 and §1.9.9 record two post-implementation audits** that found a client component could import the environment and ship a secret in prerendered HTML, a `NODE_ENV`-unset fail-open in the guard, a total bypass via `?host=`, asymmetric case folding, a port-blind comparison, and a preview deployment able to carry live Stripe keys — all fixed. Deviation **DEV-26** (variable names this project had to choose). New decisions **D-14** and **D-15** in `docs/ARCHITECTURE.md`; new `docs/ENVIRONMENT.md`. Step 4 carried out as **§1.9.6**. |
 | Phase 4 — second audit | 2026-08-26 | Note **§1.9.9**: the round-one fixes re-audited on the committed code. 40 claims, 32 refuted, 8 confirmed. The headline: the ESLint rule fencing the unguarded `env.core.ts` **does not see `import()`** — core `no-restricted-imports` registers no `ImportExpression` visitor — so a client component doing `use(import('@/lib/env.core'))` passed typecheck, lint and build and put `PAYLOAD_SECRET` into prerendered HTML: §1.9.3's leak, reached through different syntax. Closed with a companion `no-restricted-syntax` rule; seven bypass spellings probed and all caught. Also fixed: an empty `?port=` arming push against a different server (`??` where pg uses truthiness), IPv6 targets that could never arm, an acceptance-table row crediting the superseded runtime tripwire, a wrong file reference in `payload.config.ts`, an undocumented `VERCEL`, and an undercounted docblock. **D-14 now distinguishes** what fails the build from what only fails lint. |
 | Phase 5 — Neon Postgres + Payload CMS foundation | 2026-08-26 | Notes **§1.10**: what the phase actually had left to do once Phases 2 and 4 had done §5.1a–b, the initial migration and the discipline around it, and the whole lifecycle proved against a **throwaway database created beside the development one** so the owner's branch and admin user were never at risk — apply, roll back, re-apply through `pnpm build:deploy`, rebuild with `migrate:fresh`, drop. CRUD proved three ways: Local API, REST through the running app, and the admin panel in a real browser. **§1.10.4 records the one real defect** — the adapter attaches an `error` listener to a single pool client, so any other idle connection dying emitted `error` on a listener-less pool and became `uncaughtException`; `next dev` hides it and a production server would not. Fixed with an `onInit` pool handler and re-measured. **§1.10.5**: the push-built and migration-built schemas were dumped and diffed and are **identical**, which is the migration-drift edge case answered rather than discussed. **§1.10.6** records four traps — `delete({trash:true})` is a *permanent* delete, a compound unique index over a nullable column does not constrain NULL rows, compound index names are not namespaced by table, and a generated migration does not compile under `noUnusedParameters`. New decisions **D-16** (migrations run in the build, not the server) and **D-17** (primary keys stay `serial`); new `docs/DATABASE.md`. Step 4 carried out as **§1.10.8** — **DEV-15 confirmed and closed**, DEV-17's withdrawal vindicated with one superseded code line noted. No deviations, no new dependencies. |
+| Phase 6 — Payload data model | 2026-08-27 | Notes **§1.11**: the five decisions that had to precede any field — money as integer minor units, publish state as a column rather than Payload drafts (whose `disableNotNull` strips `NOT NULL` from the *main* table), variants as their own collection, which side of a many-to-many owns the order, and shoppers as a second auth collection. **§1.11.2** answers the two questions Phase 5 left for this phase: the variant SKU needs no partial index because a *global* unique refuses a superset of what §6.1c asks, and `afterSchemaInit` is used once, for `CHECK (inventory_quantity >= 0)`, because Phase 17's atomic decrement will be raw SQL past every validator. **§1.11.3 records three defects that only running it would find** — a `dbName` string that collapsed one block into a table shared by two collections with the wrong parent foreign key; required address sub-fields that made §18.1a's draft order impossible to save; and delete cascades on `afterDelete` that can never run, because a `required` relationship is `NOT NULL` *and* `ON DELETE SET NULL`, so the violation fails the parent's own delete. **§1.11.4**: Drizzle emits `DROP TABLE … CASCADE` alongside explicit drops of constraints the cascade has already removed — twice, and 22 statements the second time — so every generated `DROP CONSTRAINT` now needs `IF EXISTS`; and `migrate:create` is not always non-interactive, which is why the fixture removal was generated as its own migration. **§1.11.5**: 24 behavioural checks against the live database, all passing, plus a signed-in browser pass over the admin panel. Deviations **DEV-27** (a review requires a customer), **DEV-28** (`media` is created here, not in Phase 8), **DEV-29** (SKUs are globally unique), **DEV-30** (currency and locale are this project's choice). New decisions **D-18** through **D-21** in `docs/ARCHITECTURE.md`; **G-01**–**G-05** closed. One dependency: `@payloadcms/richtext-lexical`. Step 4 carried out as **§1.11.8** — **DEV-10 discharged**, DEV-01, DEV-07 and DEV-08 now enforced by the schema rather than by convention. |
 > **Append this table, and the sections above it, at the end of every phase.**

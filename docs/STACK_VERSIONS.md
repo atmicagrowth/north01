@@ -5,7 +5,7 @@
 > **Rule:** versions here are chosen from *verified compatibility evidence*, never from the npm `latest` tag.
 > Every pin below is justified. Re-verify before any core upgrade and re-run the Gate 1 checks.
 
-**Verified:** 2026-08-22 (pins) · **Installed and proven:** 2026-08-22, Phase 2 · **Verification method:** npm registry metadata (`npm view <pkg> peerDependencies engines`) plus a
+**Verified:** 2026-08-22 (pins) · **Installed and proven:** 2026-08-22, Phase 2; re-proven 2026-08-27, Phase 6 · **Verification method:** npm registry metadata (`npm view <pkg> peerDependencies engines`) plus a
 `pnpm install --lockfile-only --strict-peer-dependencies` full-graph resolution dry-run.
 
 ---
@@ -31,7 +31,7 @@
 | `payload` | 3.88.0 | Current stable `latest`. **Payload 4.x is canary only — excluded.** |
 | `@payloadcms/next` | 3.88.0 | Declares `payload: "3.88.0"` as an *exact* peer. |
 | `@payloadcms/db-postgres` | 3.88.0 | Exact peer `payload: "3.88.0"`. Drizzle + node-postgres under the hood. |
-| `@payloadcms/richtext-lexical` | 3.88.0 | Exact peer. Required only once rich-text fields exist (Phase 6). |
+| `@payloadcms/richtext-lexical` | 3.88.0 | **Phase 6 — installed.** Exact peer on `payload`, plus `@faceless-ui/modal@3.0.0` and `@faceless-ui/scroll-info@2.0.0`, both of which `@payloadcms/ui` already pulled in — so the install resolved clean with no peer warnings. Brings `lexical@0.41.0` and its `@lexical/*` siblings. |
 | `graphql` | 16.14.2 | **Unavoidable peer dependency of `payload` itself** (`^16.8.1`). See note in §5. |
 | `sharp` | 0.35.3 | Required by Payload image resizing. Added only when media handling begins (Phase 8). |
 
@@ -97,18 +97,26 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
    404 on the npm registry. Official adapters cover S3, Vercel Blob, Azure, GCS and Uploadthing only.
    See `docs/ARCHITECTURE.md` → "Decision D-03" for the resolution.
 
-3. **pnpm 11 `minimumReleaseAge` gating.** pnpm 11 writes recently-published packages into a
+3. **A restricted Lexical feature set is a deliberate pin of its own.** `lexicalEditor()` defaults to
+   a large feature list — alignment, indentation, subscript, strikethrough, checklists, horizontal
+   rules, tables, an upload node. `src/payload.config.ts` replaces it with nine features. That is a
+   design decision (visual guide §11 and **D-11**: the design system is enforced by the compiler, not
+   by an editor's toolbar), and it is recorded here because the *upgrade* consequence lands on this
+   page: a Payload minor release that adds a default feature will not silently add it to this project,
+   and one that renames an exported feature will fail the build rather than change the editor.
+
+4. **pnpm 11 `minimumReleaseAge` gating.** pnpm 11 writes recently-published packages into a
    `minimumReleaseAgeExclude` list in `pnpm-workspace.yaml` during resolution. This file is generated and
    must be committed so CI resolves identically.
 
-4. **Tailwind v4 preflight vs. the Payload admin route — resolved in Phase 2, and it cannot occur.**
+5. **Tailwind v4 preflight vs. the Payload admin route — resolved in Phase 2, and it cannot occur.**
    The storefront and the admin are separate route groups with separate root layouts, so Next.js builds
    them as separate CSS graphs. Verified against the production build: the Tailwind chunk is referenced by
    the storefront document and by no admin bundle. No scoping directive was needed. The invariant that
    keeps this true is that `src/app/(payload)/layout.tsx` never imports the storefront stylesheet — see
    `docs/ARCHITECTURE.md` → **D-08**.
 
-5. **Postgres is needed from Phase 2, not Phase 5.** Payload connects during `payload.init()`, so `/admin`
+6. **Postgres is needed from Phase 2, not Phase 5.** Payload connects during `payload.init()`, so `/admin`
    and `/api/*` return HTTP 500 without a reachable database. Build, typecheck, lint and the storefront
    are unaffected. See **DEV-15**.
 
@@ -143,8 +151,9 @@ Plan §2.1b: *"Do not install the entire final dependency list on day one."* Six
 `@types/node` tracks the **installed runtime major (22.x)**, not the `latest` tag (26.2.0), so the types
 describe the Node that actually runs the code.
 
-**Deliberately not installed yet:** `@payloadcms/richtext-lexical` (Phase 6 — no rich-text field exists),
-`sharp` (Phase 8 — no media collection exists), and everything in §4. See **DEV-18**.
+**Deliberately not installed yet:** ~~`@payloadcms/richtext-lexical` (Phase 6 — no rich-text field
+exists)~~ **installed in Phase 6, §8 below**; `sharp` (Phase 8 — image processing, and the reason the
+Phase 6 `media` collection declares no `imageSizes`); and everything in §4. See **DEV-18**.
 
 ### pnpm 11 build-script gating
 
@@ -264,3 +273,31 @@ resolve at all: `pnpm generate:types` fails with `ERR_MODULE_NOT_FOUND`. Measure
 Hence the split. `env.core.ts` carries the schemas and stays tsx-resolvable for the Payload config;
 `env.server.ts` is that module plus the `server-only` import, and is what application code imports.
 An ESLint `no-restricted-imports` rule stops anything else reaching past the guard. See **D-14**.
+
+---
+
+## 8. Phase 6 — the data model's one dependency
+
+```
+pnpm add @payloadcms/richtext-lexical@3.88.0
+→ +102 packages. Exit 0. No unmet peer dependencies.
+pnpm install --lockfile-only --strict-peer-dependencies
+→ "Already up to date". Exit 0.
+```
+
+**732 packages resolved from 23 direct dependencies** — 14 runtime, 9 dev. One package added by the
+phase that defines twenty-two collections and two globals, which is the point: a data model is
+configuration, not libraries.
+
+| Added | Version | Why |
+|---|---|---|
+| `@payloadcms/richtext-lexical` | 3.88.0 | The rich-text editor. Plan §6.1b needs a full description, §6.1g a campaign story, §6.1i an article body; `type: 'richText'` has no implementation without it. `src/payload.config.ts` predicted this in Phase 2 and named the phase. |
+
+Its own dependency tree is where the 102 packages come from — `lexical@0.41.0` and eleven `@lexical/*`
+siblings, `@payloadcms/ui`, and the Markdown/JSX plumbing behind the converters. Two of its peers,
+`@faceless-ui/modal@3.0.0` and `@faceless-ui/scroll-info@2.0.0`, were already in the store as
+dependencies of `@payloadcms/ui`, so nothing new had to be satisfied by hand.
+
+**Still not installed, and still deliberate:** `sharp`. Uploads work without it; `imageSizes`,
+`focalPoint` and `crop` are silently inert, which is why the `media` collection declares none of them
+until Phase 8 brings the media layer and its dependency together.

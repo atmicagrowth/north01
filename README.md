@@ -103,8 +103,35 @@ panel, over REST and through the Local API; migrations applied, rolled back and 
 push-built development schema compared against the migration-built one and found identical. Full
 workflow: [`docs/DATABASE.md`](docs/DATABASE.md).
 
-No storefront *feature* is built yet. The shell components exist and are proved, but they are mounted
-in Phase 9, alongside the search overlay and cart drawer that make their controls do something.
+**Phase 6 — Payload data model: complete.** The domain model the rest of the build stands on:
+twenty-two collections and two globals across seventy-four tables — products and variants, the
+taxonomy and size guides, collections, Edits, campaigns, lookbooks with shoppable hotspots and the
+Journal, carts and orders with frozen purchase snapshots, promotions, customers, addresses, wishlist,
+reviews, FAQs and site settings.
+
+The parts worth knowing without reading the schema:
+
+- **Money is an integer count of minor units**, everywhere, in columns whose names end `Minor`.
+  Floats never touch a price.
+- **A variant is the purchasable unit.** Products carry no price and no stock; a hook keeps a
+  product-level price range and stock count in step for listings that need to sort by them.
+- **Orders are snapshots.** Item name, SKU, variant label and unit price are frozen at purchase, and
+  editing a product afterwards leaves them alone — measured, not assumed.
+- **The bag holds no money at all.** Subtotals, discounts, shipping and tax are recalculated on the
+  server from live prices on every read, because a stored total is a stale one.
+- **Shoppers and staff are separate auth collections**, so "customers cannot reach the admin panel" is
+  a property of the topology rather than a rule that has to keep being enforced.
+
+`pnpm seed` fills it with a representative catalogue — ten products, sixty-five variants, four
+collections, four Edits, a campaign, a lookbook and the Journal — and deliberately creates no orders,
+customers or media, because those are records of things that happened rather than content. Schema
+conventions, migration workflow and the traps found along the way:
+[`docs/DATABASE.md`](docs/DATABASE.md).
+
+No storefront *feature* is built yet, and nothing is publicly readable: every collection is
+authenticated-only until Phase 7 opens the ones that should be. The shell components exist and are
+proved, but they are mounted in Phase 9, alongside the search overlay and cart drawer that make their
+controls do something.
 
 Local setup: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 

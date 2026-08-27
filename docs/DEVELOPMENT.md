@@ -94,12 +94,19 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm migrate:down` | Roll back the most recent batch |
 | `pnpm migrate:fresh` | Drop every table and re-run every migration. **Development only** |
 | `pnpm generate:types` | Regenerate `src/payload-types.ts` from the Payload config |
-| `pnpm generate:importmap` | Regenerate the admin import map |
+| `pnpm generate:importmap` | Regenerate the admin import map. **Required after adding a rich-text feature or any custom admin component** — the Lexical editor's field, cell and feature components are all resolved through it |
+| `pnpm seed` | Representative demo content — catalogue, editorial, globals. Idempotent, local only, and deliberately creates no customers, orders or media. See `scripts/seed.ts` |
+| `pnpm payload run scripts/baseline-migrations.ts <name…>` | Put a push-built development database onto the migration chain without destroying it. [`DATABASE.md`](DATABASE.md) §10 |
 | `pnpm test` | Vitest unit/component tests *(pending — Phase 27)* |
 | `pnpm test:e2e` | Playwright *(pending — Phase 27)* |
 
 **Run `pnpm generate:types` after any change to a collection, global, or field.** The generated types are
 committed and the build assumes they are current.
+
+One thing the generated types get wrong for you: a `required` field supplied by a hook or a default —
+a cart token, an order number, `products.derived.inventoryTotal` — is still `required` in the `create`
+data type, because Payload cannot know a hook will fill it. The columns are correctly `NOT NULL`; the
+call site is what has to be told. Cast at the call site rather than loosening the column.
 
 ### Changing the schema
 
@@ -136,9 +143,20 @@ src/
 │  └─ env.core.ts        the same without the `server-only` guard; config and instrumentation only
 ├─ payload.config.ts     aliased as @payload-config
 └─ payload/
+   ├─ blocks/            reusable editorial block definitions (Phase 6)
    ├─ collections/       one file per collection
+   ├─ fields/            reusable field builders — money, slug, seo, address, link, hotspot
+   ├─ globals/           site settings and navigation
+   ├─ hooks/             collection hooks — derived-price sync, delete cascades
    └─ migrations/        generated, committed, applied in order (Phase 5)
+
+scripts/                 one-off local administration — seed, migration baseline
 ```
+
+**`scripts/` is the one place outside `src/` that may import `lib/env.core`.** It runs under the
+Payload CLI through tsx, outside Next, where `server-only` cannot resolve — the same reason
+`payload.config.ts` is exempt. Nothing in `src/` imports `scripts/`, which is what keeps the exemption
+from reaching a client bundle. The allowance is in `eslint.config.mjs` with the reasoning beside it.
 
 **`env.server.ts` must never be imported from a client component** — and it cannot be: it imports
 `server-only`, so doing that is a build error. Client code imports `env.public.ts`, which holds only

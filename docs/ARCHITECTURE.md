@@ -45,14 +45,14 @@ pointed for generated types.
 | `src/app/(frontend)/` | storefront routes, layouts, pages | Phase 2 |
 | `src/app/(payload)/` | Payload admin + REST API routes | Phase 2 |
 | `src/payload.config.ts` | the Payload config, aliased as `@payload-config` | Phase 2 |
-| `src/payload/` | collections, globals, access rules, hooks, migrations | Phase 2 |
+| `src/payload/` | collections, globals, blocks, reusable fields, hooks, migrations | Phase 2; filled out in Phase 6 |
 | `src/components/` | reusable presentation and interaction components | Phase 3 |
 | `src/lib/` | integrations, infrastructure, helpers, **server-only** modules | Phase 3 (`cn.ts`); `env.public.ts` / `env.server.ts` / `env.core.ts` from Phase 4 |
 | `src/instrumentation.ts` | Next's startup hook — environment validation | Phase 4 |
 | `src/features/` | domain-oriented modules, where complexity warrants isolation | as needed |
 | `emails/` | React Email templates | Phase 19 |
 | `tests/` | unit / component / e2e suites and helpers | Phase 27 |
-| `scripts/` | seeding, reindexing, one-off admin tasks | Phase 6 |
+| `scripts/` | seeding, reindexing, one-off admin tasks | **Phase 6 — `seed.ts`, `baseline-migrations.ts`** |
 | `docs/` | architecture, environment, decisions, runbooks | Phase 1 |
 
 ### Route-group topology
@@ -159,13 +159,13 @@ assigned to the phase that first needs it.
 
 | # | Gap | First needed |
 |---|---|---|
-| G-01 | **Customer address** has routes (`/account/addresses`), access rules, and order snapshots — but appears in neither the plan's entity list §2.2 nor the Phase 6 schema. | Phase 6 |
+| G-01 | **Customer address** has routes (`/account/addresses`), access rules, and order snapshots — but appears in neither the plan's entity list §2.2 nor the Phase 6 schema. | ~~Phase 6~~ **Closed in Phase 6** — the `addresses` collection, plus a reusable field group used a second time as the frozen snapshot on an order. |
 | G-02 | **Size guide** is a feature with its own dialog, and Phase 6.1b defines a *"Size guide reference"* field pointing at a collection that is never defined. | Phase 6 |
-| G-03 | **Gender** is an Algolia filterable attribute (plan §12.1a) and a facet drawn in the reference image, but no product or variant field stores it. | Phase 6 |
-| G-04 | **Product display price.** Price is owned by the variant, yet listings and the PDP must show a product-level price. No document says how it is derived. | Phase 6 |
-| G-05 | **Variant availability state** is in the domain model §2.1 but absent from the Phase 6.1c variant schema, and its values are never enumerated. | Phase 6 |
+| G-03 | **Gender** is an Algolia filterable attribute (plan §12.1a) and a facet drawn in the reference image, but no product or variant field stores it. | ~~Phase 6~~ **Closed in Phase 6** — `products.gender`, indexed. Women / Men / Unisex. |
+| G-04 | **Product display price.** Price is owned by the variant, yet listings and the PDP must show a product-level price. No document says how it is derived. | ~~Phase 6~~ **Closed in Phase 6** — `products.derived`, a hook-maintained aggregate over active variants. See **D-18**. |
+| G-05 | **Variant availability state** is in the domain model §2.1 but absent from the Phase 6.1c variant schema, and its values are never enumerated. | ~~Phase 6~~ **Closed in Phase 6** — enumerated as a *derivation*, not a column: discontinued / sold out / low stock / in stock, from `active`, `inventoryQuantity` and `siteSettings.lowStockThreshold`. A fourth stored state would be a fourth thing to keep in step. See `ProductVariants.ts`. |
 | G-06 | **Shipping method** is a required entity §2.2, "Postgres configuration" in the feature matrix, and a code-level static provider in plan §16.1a — three different homes. | Phase 16 |
-| G-07 | **Infrastructure records** — Stripe webhook/idempotency, email delivery, search sync — are required by §2.2 and by Phases 12/17/19, but Phase 6 never defines them. | Their own phases |
+| G-07 | **Infrastructure records** — Stripe webhook/idempotency, email delivery, search sync — are required by §2.2 and by Phases 12/17/19, but Phase 6 never defines them. | Their own phases — **confirmed in Phase 6**, which deliberately created none of them. See **D-19**. |
 | G-08 | **About**, **Order Tracking**, and the support surface (**FAQ / Contact / Shipping / Returns**) are navigation destinations in the structure doc with no dedicated implementation phase. | Phase 23 |
 | G-09 | **Recommendations** are fully specified in feature matrix §10 but have no phase of their own — only incidental mentions inside the Phase 11 and 13 prompts. | Phase 13 |
 | G-10 | **Checkout preflight** (plan §17.1a) never validates a shipping address, though the tech stack makes one mandatory for physical goods. | Phase 17 |
@@ -479,7 +479,82 @@ the order number above all, the phase that introduces it adds an opaque public c
 primary key. That is what commerce systems do regardless of their key type, and it keeps the internal
 key internal.
 
-*Recorded in Phase 5. Revisit only with evidence, and only before Phase 6 lands.*
+*Recorded in Phase 5. **Confirmed in Phase 6** — integer keys throughout, and the order number is the
+opaque public column the entry predicted.*
+
+### D-18 — A product's price and stock are a maintained cache, not a query
+
+Closes **G-04** and **G-05**. Price and stock are owned by the variant, and every listing needs both at
+the *product* level — a price on the card (feature matrix §4), a price sort (plan §11.1a), a Sale
+state and a Sold-out state (plan §11.1b). The three places that could live are a query per card, a
+Payload `virtual` field, or a denormalised column. The first two cannot be sorted or filtered by
+Postgres, because neither produces a column.
+
+So `products.derived` holds four values — lowest active price, highest, the compare-at belonging to
+the *cheapest* variant, and the total units across active variants — recomputed by a variant hook
+inside the caller's transaction. It duplicates nothing and derives everything: if it ever disagrees
+with the variants, the variants are right, and re-saving any variant rebuilds it.
+
+Two details are the decision rather than the implementation. The compare-at is the cheapest variant's,
+not the largest discount anywhere in the product, because "$240, was $400" when the $240 variant was
+never $400 is a false price claim — plan §24.1b forbids exactly that in structured data. And stock is
+a **count**, not an `inStock` or `lowStock` flag: a flag computed against `lowStockThreshold` would be
+stale on every product the moment an editor changed that threshold. Sold out is `= 0`, low stock is
+`<= threshold`, both compared at render.
+
+Review aggregates are deliberately *not* here. The same argument would apply, and it is not made,
+because reviews are Phase 21 and a column no phase yet writes reads as zero on every product card in
+the meantime.
+
+### D-19 — Phase 6 defines the entities the corpus names, and no more
+
+The rule the phase followed, stated because the omissions are otherwise indistinguishable from
+oversights. Phase 6 implements plan §6.1a–6.1o plus the gaps §3.2 assigns to it (**G-01**–**G-05**).
+A field whose only consumer is a later phase's *behaviour* is added by that phase.
+
+So there is no `inventoryCommittedAt`, no `confirmationEmailSentAt`, no `checkoutIdempotencyKey`, no
+Stripe event record, no email delivery record, no Algolia sync record — plan §17.1d, §19.1c and
+§12.1b each require one, and each belongs to the phase that writes it (**G-07**, **DEV-10**). There is
+no promotion-redemption table either: a per-customer usage limit is a count of paid orders carrying
+that promotion, which the `orders.promotion` relationship already answers, and a second table
+recording the same fact is the duplication the phase brief warns against.
+
+The exceptions are the identifiers the tech stack §3 assigns to *this* side of an integration boundary
+— `customers.stripeCustomerId`, and the order's Stripe session and payment-intent IDs. They are
+columns of the mapping, not of the integration, and all three are read-only.
+
+Adding a column later is an ordinary migration. Guessing at one now, and having it read empty through
+five phases, is how a schema fills with fields nobody trusts.
+
+### D-20 — Money is an integer count of minor units
+
+`type: 'number'` compiles to Postgres `numeric` and is read back through Drizzle's
+`numeric({ mode: 'number' })` — exact in the database, a binary float in JavaScript, which is the
+worse half of both designs. Integers survive the round trip unchanged and are what Stripe's API
+speaks, so the number that is stored is the number that is charged.
+
+Every money column's name ends in `Minor`, and that is the enforcement: a field called `price` holding
+`1999` is a bug waiting for `product.price * quantity`. A field validator refuses a fractional value,
+because `min` and `step` govern only the admin widget and a REST client can send `19.99`.
+
+The convention assumes a two-decimal currency. Adding a zero-decimal one (JPY) means revisiting the
+formatting layer, not the schema.
+
+### D-21 — Shoppers and staff are two auth collections
+
+Plan §7.1b states a boundary: customers *"may NOT access Payload Admin"*. With one collection and a
+role column, that boundary is a conditional inside an access function — one that has to be right on
+every operation forever, and is one inverted comparison away from letting a shopper into the CMS.
+
+With two, `admin.user` in the Payload config points at `users` and a customer has nowhere to log in
+*to*. The guarantee is topological, like **D-08**'s route groups, rather than a rule that has to keep
+being enforced. Phase 2's `users` collection anticipated this — *"customer-facing accounts are a
+separate concern defined in Phases 6 and 7"* — and Phase 6 is the half that creates the entity. Roles,
+access rules and the auth flows remain Phase 7's.
+
+Email verification is deliberately off until **Phase 19**: `auth.verify` makes every registration
+depend on an email being delivered, and there is no email infrastructure before then. §7.1e says
+*"email verification **if enabled**"*, which is permission to decide.
 
 ## 5. Current position
 
@@ -588,8 +663,32 @@ a dropped socket — emitted `error` on a pool with no listener, which Node turn
 `onInit` hook now attaches one. Re-measured after the fix: zero uncaught exceptions, one log line,
 requests unaffected. Details: notes §1.10.
 
-**Next: Phase 6 — the Payload data model.** It also removes `schema-probes`, which will be this
-project's first destructive migration — the one shape worth practising on something worthless.
+**Phase 6 — Payload data model: complete.**
+
+Twenty-two collections, two globals, seventy-four tables. Every entity plan §6.1a–6.1o names, plus the
+five gaps §3.2 assigned to this phase (**G-01**–**G-05**) and the additions **DEV-10** predicted. One
+dependency added — `@payloadcms/richtext-lexical` — for a phase that defines the whole domain model,
+because a data model is configuration rather than libraries.
+
+| Phase 6 requirement (§6 prompt) | Status |
+|---|---|
+| Relationships, validation, indexes, unique constraints | **pass** — four compound uniques, single uniques on every human-typed key, indexes on every filter and sort column |
+| Access control | **deferred to Phase 7 by design** — Payload's default is `Boolean(req.user)`, which is closed, not open |
+| Publishing status | **pass** — `status` + `publishedAt`, not Payload drafts. `docs/DATABASE.md` §8 gives the column-level reason |
+| Historical order snapshots | **pass** — measured: renaming a product left the order line unchanged |
+| Generate and test migrations | **pass** — `up`, `down` and `up` again against a real database; both directions found and fixed a Drizzle codegen defect |
+| Seed representative demo content | **pass** — `pnpm seed`: 9 categories, 10 products, 65 variants, 4 collections, 4 Edits, a campaign, a lookbook, 3 articles, 6 FAQs, 2 promotions, both globals |
+| Inspect the schema, explain compromises | **pass** — the denormalisation is **D-18**; the SKU constraint and the delete cascades are in `docs/DATABASE.md` §8 |
+
+Twenty-four behavioural checks were run against the live database — constraints, cascades, snapshot
+immutability, soft delete, normalisation, the derived cache — and all twenty-four passed. Three real
+defects were found by running them rather than by reading: a `dbName` that collapsed one block into a
+shared table with the wrong parent foreign key, required address sub-fields that made plan §18.1a's
+draft order impossible to save, and delete cascades written on `afterDelete` when the foreign-key
+violation happens *during* the delete. Details: notes §1.11.
+
+**Next: Phase 7 — access control and authentication.** The columns its rules will be written against
+now exist; nothing in this phase opened one.
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 
@@ -604,5 +703,5 @@ project's first destructive migration — the one shape worth practising on some
 | Owed | Phase | Why |
 |---|---|---|
 | A production database, and the Vercel setting that stops two deployments migrating at once | 24 | Both are the project owner's to provision and configure; `docs/DATABASE.md` §6 says what is needed |
-| Removing the `schema-probes` fixture | 6 | It is Phase 5 scaffolding, and its removal is a deliberate first destructive migration |
+| ~~Removing the `schema-probes` fixture~~ | ~~6~~ | **Done in Phase 6** — its own migration, and the rehearsal that found the `DROP CONSTRAINT` ordering defect before a real table met it |
 | CI running typecheck, lint, tests and build | 27 | Plan §27.1f |

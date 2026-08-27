@@ -3,11 +3,47 @@ import { fileURLToPath } from 'url'
 
 import type { PostgresAdapter } from '@payloadcms/db-postgres'
 import { postgresAdapter } from '@payloadcms/db-postgres'
+import { sql } from '@payloadcms/db-postgres/drizzle'
+import { check } from '@payloadcms/db-postgres/drizzle/pg-core'
+import {
+  BlockquoteFeature,
+  BoldFeature,
+  HeadingFeature,
+  InlineToolbarFeature,
+  ItalicFeature,
+  LinkFeature,
+  OrderedListFeature,
+  ParagraphFeature,
+  UnorderedListFeature,
+  lexicalEditor,
+} from '@payloadcms/richtext-lexical'
 import { buildConfig } from 'payload'
 
 import { schemaPush, serverEnv } from './lib/env.core'
-import { SchemaProbes } from './payload/collections/SchemaProbes'
+import { Addresses } from './payload/collections/Addresses'
+import { Campaigns } from './payload/collections/Campaigns'
+import { CartItems } from './payload/collections/CartItems'
+import { Carts } from './payload/collections/Carts'
+import { Categories } from './payload/collections/Categories'
+import { Collections } from './payload/collections/Collections'
+import { Customers } from './payload/collections/Customers'
+import { Edits } from './payload/collections/Edits'
+import { Faqs } from './payload/collections/Faqs'
+import { Journal } from './payload/collections/Journal'
+import { Lookbooks } from './payload/collections/Lookbooks'
+import { Media } from './payload/collections/Media'
+import { NewsletterSubscribers } from './payload/collections/NewsletterSubscribers'
+import { OrderItems } from './payload/collections/OrderItems'
+import { Orders } from './payload/collections/Orders'
+import { ProductVariants } from './payload/collections/ProductVariants'
+import { Products } from './payload/collections/Products'
+import { Promotions } from './payload/collections/Promotions'
+import { Reviews } from './payload/collections/Reviews'
+import { SizeGuides } from './payload/collections/SizeGuides'
 import { Users } from './payload/collections/Users'
+import { WishlistItems } from './payload/collections/WishlistItems'
+import { Navigation } from './payload/globals/Navigation'
+import { SiteSettings } from './payload/globals/SiteSettings'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -29,11 +65,15 @@ const dirname = path.dirname(filename)
  * Payload runs embedded inside this Next.js application - one deployable, not a separate
  * backend. See docs/ARCHITECTURE.md.
  *
- * Deliberately absent at Phase 2, and added by the phase that needs them:
- *   - `editor`  (@payloadcms/richtext-lexical) - Phase 6, once rich-text fields exist
- *   - `sharp`                                  - Phase 8, with the media collection
- *   - storage / plugins                        - Phase 8 onward
+ * Still deliberately absent, and added by the phase that needs them:
+ *   - `sharp`             - Phase 8, with image processing. Uploads work without it; resizing,
+ *                           focal points and `imageSizes` do not, which is why `media` carries
+ *                           none of them yet.
+ *   - storage / plugins   - Phase 8 onward (Cloudinary, per DEV-05)
  * No GraphQL API surface is exposed; see deviation DEV-04.
+ *
+ * `editor` arrived here in Phase 6, as this block predicted, because Phase 6 is the first phase
+ * with rich-text fields.
  */
 export default buildConfig({
   admin: {
@@ -46,7 +86,88 @@ export default buildConfig({
     },
   },
 
-  collections: [Users, SchemaProbes],
+  /**
+   * **Order is presentation, not precedence.** Payload lists collections in the admin sidebar in
+   * config order within each `admin.group`, so this reads the way the shop is actually worked on:
+   * what is sold, what is written about it, what is bought, who buys it, and the supporting content
+   * and staff accounts last.
+   *
+   * `SchemaProbes` is gone. It was Phase 5 scaffolding whose stated purpose was to be removed here
+   * (notes §1.10.9, and the comment at the top of the file itself), and its removal is this
+   * project's first destructive migration - rehearsed on something worthless before the same shape
+   * of migration is ever pointed at an order table.
+   */
+  collections: [
+    // Catalogue
+    Products,
+    ProductVariants,
+    Categories,
+    SizeGuides,
+
+    // Editorial
+    Collections,
+    Edits,
+    Campaigns,
+    Lookbooks,
+    Journal,
+
+    // Commerce
+    Carts,
+    CartItems,
+    Orders,
+    OrderItems,
+    Promotions,
+
+    // Customers
+    Customers,
+    Addresses,
+    WishlistItems,
+    Reviews,
+    NewsletterSubscribers,
+
+    // Content and system
+    Faqs,
+    Media,
+    Users,
+  ],
+
+  globals: [SiteSettings, Navigation],
+
+  /**
+   * **A restricted feature set, chosen rather than inherited.** Payload's `defaultFeatures` include
+   * alignment, indentation, subscript, superscript, strikethrough, inline code, checklists,
+   * horizontal rules, tables and an upload node. Most of those are *styling* controls, and visual
+   * guide §11 and decision **D-11** both say the same thing: the design system is enforced by the
+   * compiler, not by what an editor chose in a toolbar. An editorial paragraph that can be
+   * centre-aligned and indented is an editorial paragraph that will be, and the page stops being
+   * the design system's.
+   *
+   * What survives is the vocabulary the corpus actually asks for - paragraphs, two heading levels,
+   * bold, italic, links, lists and a blockquote - which is enough for a product description
+   * (§6.1b), an article body (§6.1i) and a campaign story (§6.1g), and nothing more.
+   *
+   * `HeadingFeature` is limited to h2 and h3 because the page owns its h1. A rich-text field that
+   * can emit a second h1 breaks the document outline on every page it appears on, which is an
+   * accessibility defect (plan §0.1.19, and §30's "proper headings") rather than a matter of taste.
+   *
+   * `LinkFeature` carries no `fields` override: the default link node stores a URL, and the
+   * document-reference link that `fields/link.ts` provides for navigation and CTAs is deliberately
+   * not extended into prose. Phase 23 may revisit it if editorial links to products become common
+   * enough to justify the population cost on every rich-text read.
+   */
+  editor: lexicalEditor({
+    features: () => [
+      ParagraphFeature(),
+      HeadingFeature({ enabledHeadingSizes: ['h2', 'h3'] }),
+      BoldFeature(),
+      ItalicFeature(),
+      LinkFeature(),
+      UnorderedListFeature(),
+      OrderedListFeature(),
+      BlockquoteFeature(),
+      InlineToolbarFeature(),
+    ],
+  }),
 
   db: postgresAdapter({
     pool: {
@@ -103,6 +224,42 @@ export default buildConfig({
     disableCreateDatabase: true,
 
     migrationDir: path.resolve(dirname, 'payload/migrations'),
+
+    /**
+     * **The one constraint Payload's field API cannot express, and the only one that needs to be
+     * here.** Phase 5 flagged `afterSchemaInit` as the escape hatch to decide about in Phase 6
+     * (`docs/DATABASE.md` §8); this is that decision, used once and deliberately.
+     *
+     * Stock may not go negative. `inventoryQuantity` already has `min: 0`, but that is *Payload's*
+     * validation, and plan §17.1f requires the decrement at order finalisation to be atomic —
+     * which means Phase 17 will issue `UPDATE ... SET inventory_quantity = inventory_quantity - $n`
+     * against Postgres directly, past every field validator this config declares. A `CHECK` is the
+     * only rule that statement cannot step around, and negative stock is not an oversell to reconcile
+     * later: it is a lost write, and the row that records it is the last honest count anyone has.
+     *
+     * `drizzle-orm` is reached through `@payloadcms/db-postgres/drizzle/*`, which the adapter exports
+     * for exactly this. No new direct dependency, and nothing to keep in step with the adapter's own
+     * pin.
+     *
+     * **Note what is deliberately *not* done here.** Plan §6.1c's variant-SKU rule reads as a partial
+     * unique index and could have been written the same way; it is not, because a stricter constraint
+     * the field API *can* express is also the more correct one. See `ProductVariants.ts`.
+     */
+    afterSchemaInit: [
+      ({ extendTable, schema }) => {
+        extendTable({
+          table: schema.tables.product_variants,
+          extraConfig: () => ({
+            inventoryNotNegative: check(
+              'product_variants_inventory_non_negative',
+              sql`inventory_quantity >= 0`,
+            ),
+          }),
+        })
+
+        return schema
+      },
+    ],
   }),
 
   // Payload signs and encrypts with this. Server-only; must never be exposed.

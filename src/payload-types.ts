@@ -63,21 +63,77 @@ export type SupportedTimezones =
 
 export interface Config {
   auth: {
+    customers: CustomerAuthOperations;
     users: UserAuthOperations;
   };
   blocks: {};
   collections: {
+    products: Product;
+    'product-variants': ProductVariant;
+    categories: Category;
+    'size-guides': SizeGuide;
+    collections: Collection;
+    edits: Edit;
+    campaigns: Campaign;
+    lookbooks: Lookbook;
+    journal: Journal;
+    carts: Cart;
+    'cart-items': CartItem;
+    orders: Order;
+    'order-items': OrderItem;
+    promotions: Promotion;
+    customers: Customer;
+    addresses: Address;
+    'wishlist-items': WishlistItem;
+    reviews: Review;
+    'newsletter-subscribers': NewsletterSubscriber;
+    faqs: Faq;
+    media: Media;
     users: User;
-    'schema-probes': SchemaProbe;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
   };
-  collectionsJoins: {};
+  collectionsJoins: {
+    products: {
+      variants: 'product-variants';
+      collections: 'collections';
+    };
+    carts: {
+      items: 'cart-items';
+    };
+    orders: {
+      items: 'order-items';
+    };
+    customers: {
+      addresses: 'addresses';
+      orders: 'orders';
+    };
+  };
   collectionsSelect: {
+    products: ProductsSelect<false> | ProductsSelect<true>;
+    'product-variants': ProductVariantsSelect<false> | ProductVariantsSelect<true>;
+    categories: CategoriesSelect<false> | CategoriesSelect<true>;
+    'size-guides': SizeGuidesSelect<false> | SizeGuidesSelect<true>;
+    collections: CollectionsSelect<false> | CollectionsSelect<true>;
+    edits: EditsSelect<false> | EditsSelect<true>;
+    campaigns: CampaignsSelect<false> | CampaignsSelect<true>;
+    lookbooks: LookbooksSelect<false> | LookbooksSelect<true>;
+    journal: JournalSelect<false> | JournalSelect<true>;
+    carts: CartsSelect<false> | CartsSelect<true>;
+    'cart-items': CartItemsSelect<false> | CartItemsSelect<true>;
+    orders: OrdersSelect<false> | OrdersSelect<true>;
+    'order-items': OrderItemsSelect<false> | OrderItemsSelect<true>;
+    promotions: PromotionsSelect<false> | PromotionsSelect<true>;
+    customers: CustomersSelect<false> | CustomersSelect<true>;
+    addresses: AddressesSelect<false> | AddressesSelect<true>;
+    'wishlist-items': WishlistItemsSelect<false> | WishlistItemsSelect<true>;
+    reviews: ReviewsSelect<false> | ReviewsSelect<true>;
+    'newsletter-subscribers': NewsletterSubscribersSelect<false> | NewsletterSubscribersSelect<true>;
+    faqs: FaqsSelect<false> | FaqsSelect<true>;
+    media: MediaSelect<false> | MediaSelect<true>;
     users: UsersSelect<false> | UsersSelect<true>;
-    'schema-probes': SchemaProbesSelect<false> | SchemaProbesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -87,16 +143,40 @@ export interface Config {
     defaultIDType: number;
   };
   fallbackLocale: null;
-  globals: {};
-  globalsSelect: {};
+  globals: {
+    'site-settings': SiteSetting;
+    navigation: Navigation;
+  };
+  globalsSelect: {
+    'site-settings': SiteSettingsSelect<false> | SiteSettingsSelect<true>;
+    navigation: NavigationSelect<false> | NavigationSelect<true>;
+  };
   locale: null;
   widgets: {
     collections: CollectionsWidget;
   };
-  user: User;
+  user: Customer | User;
   jobs: {
     tasks: unknown;
     workflows: unknown;
+  };
+}
+export interface CustomerAuthOperations {
+  forgotPassword: {
+    email: string;
+    password: string;
+  };
+  login: {
+    email: string;
+    password: string;
+  };
+  registerFirstUser: {
+    email: string;
+    password: string;
+  };
+  unlock: {
+    email: string;
+    password: string;
   };
 }
 export interface UserAuthOperations {
@@ -118,6 +198,1804 @@ export interface UserAuthOperations {
   };
 }
 /**
+ * Merchandising records. Price, SKU and stock live on the variants beneath each one.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "products".
+ */
+export interface Product {
+  id: number;
+  /**
+   * The product name as the customer reads it.
+   */
+  name: string;
+  /**
+   * One or two lines. Used on cards, in search results and as the SEO description fallback.
+   */
+  shortDescription?: string | null;
+  /**
+   * The full description, shown in the PDP accordion.
+   */
+  description?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * Optional. The voice-led paragraph beside the gallery — plan §6.1b. Distinct from the description, which is factual.
+   */
+  editorialCopy?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * The purchasable rows. Price, SKU and stock live here — a product with no active variant cannot be bought.
+   */
+  variants?: {
+    docs?: (number | ProductVariant)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  /**
+   * The first image is the card image. Media handling is completed in Phase 8; missing images render a neutral placeholder rather than breaking the layout.
+   */
+  gallery?:
+    | {
+        image: number | Media;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Optional — plan §6.1b. Plan §13.1a treats it as an addition to the gallery, never a replacement.
+   */
+  video?: (number | null) | Media;
+  /**
+   * One per entry — "100% Japanese cotton", "Horn buttons".
+   */
+  materials?: string[] | null;
+  /**
+   * The Care accordion on the PDP — plan §13.1e.
+   */
+  care?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * A searchable attribute — plan §12.1a.
+   */
+  fit?: ('slim' | 'regular' | 'relaxed' | 'oversized') | null;
+  /**
+   * Optional. "Model is 6'1" and wears a medium." Rendered in the Size & Fit accordion.
+   */
+  fitNotes?: string | null;
+  /**
+   * Opens from the PDP beside the size selector — feature matrix §8. Gap G-02: §6.1b names this reference and no document defined what it points at.
+   */
+  sizeGuide?: (number | null) | SizeGuide;
+  /**
+   * Where this product appears in shop navigation and filters.
+   */
+  categories?: (number | Category)[] | null;
+  /**
+   * Merchandising sets this product appears in. Add or remove it from the collection itself.
+   */
+  collections?: {
+    docs?: (number | Collection)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  /**
+   * A filterable attribute in plan §12.1a. Gap G-03: the attribute was required and no field stored it.
+   */
+  gender?: ('women' | 'men' | 'unisex') | null;
+  /**
+   * Free-form, lowercase. A filterable attribute in plan §12.1a; keep the vocabulary small or the facet becomes noise.
+   */
+  tags?: string[] | null;
+  /**
+   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
+   */
+  seo?: {
+    /**
+     * Around 60 characters renders in full. Longer is truncated by the engine.
+     */
+    title?: string | null;
+    /**
+     * Around 155 characters renders in full.
+     */
+    description?: string | null;
+    /**
+     * Social share card. Landscape, roughly 1200 × 630.
+     */
+    image?: (number | null) | Media;
+  };
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * Drafts are never rendered on the public site.
+   */
+  status: 'draft' | 'published';
+  /**
+   * A future date schedules the page. Set automatically when first published.
+   */
+  publishedAt?: string | null;
+  /**
+   * Eligible for the homepage and for the Featured sort.
+   */
+  featured?: boolean | null;
+  /**
+   * Drives the NEW navigation entry. Set and cleared by hand — nothing expires it.
+   */
+  isNew?: boolean | null;
+  isBestSeller?: boolean | null;
+  isLimitedEdition?: boolean | null;
+  /**
+   * Lower sorts first in curated listings.
+   */
+  sortOrder: number;
+  /**
+   * Maintained automatically whenever a variant changes. Read-only: the variants are the source of truth, and if these disagree the variants are right.
+   */
+  derived: {
+    /**
+     * Minor units — 1999 is 19.99. Whole numbers only; no decimal point.
+     */
+    priceFromMinor?: number | null;
+    /**
+     * Minor units — 1999 is 19.99. Whole numbers only; no decimal point.
+     */
+    priceToMinor?: number | null;
+    /**
+     * Minor units — 1999 is 19.99. Whole numbers only; no decimal point.
+     */
+    compareAtFromMinor?: number | null;
+    inventoryTotal: number;
+  };
+  updatedAt: string;
+  createdAt: string;
+  deletedAt?: string | null;
+}
+/**
+ * One row per purchasable colour and size. Cart and order lines point here.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "product-variants".
+ */
+export interface ProductVariant {
+  id: number;
+  /**
+   * The merchandising record this variant belongs to.
+   */
+  product: number | Product;
+  /**
+   * Unique across the whole catalogue, and permanent. Never reassign a retired SKU — order history records it as a snapshot.
+   */
+  sku: string;
+  /**
+   * As the customer reads it — "Bone", "Graphite".
+   */
+  color: string;
+  /**
+   * The swatch shown in the colour selector. Six-digit hex, with the #.
+   */
+  colorHex?: string | null;
+  /**
+   * What the colour filter groups this under. The swatch name above is what is displayed.
+   */
+  colorFamily: 'black' | 'charcoal' | 'grey' | 'bone' | 'white' | 'tan' | 'brown' | 'navy' | 'blue' | 'green' | 'rust';
+  /**
+   * Free text because apparel sizing is not one scale — XS…XXL, 28…38, One Size. Keep it identical across variants that mean the same size.
+   */
+  size: string;
+  /**
+   * Lower shows first in the size selector. XS=10, S=20, M=30 leaves room to insert.
+   */
+  sizeSortOrder: number;
+  /**
+   * Minor units — 1999 is 19.99. Whole numbers only; no decimal point.
+   */
+  priceMinor: number;
+  /**
+   * The former price, shown struck through. Leave empty when not on sale — an equal or lower value is not a sale and must not be displayed as one.
+   */
+  compareAtPriceMinor?: number | null;
+  /**
+   * Centralised online fulfilment stock. Decremented only by a confirmed payment — see decision D-06.
+   */
+  inventoryQuantity: number;
+  /**
+   * Uncheck to withdraw this colour and size from sale without deleting it.
+   */
+  active: boolean;
+  /**
+   * Optional — plan §6.1c. Shown when this colour is selected; the product gallery is used when empty.
+   */
+  image?: (number | null) | Media;
+  /**
+   * Optional. Packed weight, in grams.
+   */
+  weightGrams?: number | null;
+  lengthMm?: number | null;
+  widthMm?: number | null;
+  heightMm?: number | null;
+  updatedAt: string;
+  createdAt: string;
+  deletedAt?: string | null;
+}
+/**
+ * Images and video. Cloudinary delivery and responsive variants arrive in Phase 8.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "media".
+ */
+export interface Media {
+  id: number;
+  /**
+   * What the image shows, for screen readers and for when it fails to load. Describe the subject, not the file.
+   */
+  alt: string;
+  /**
+   * Optional. Rendered beside editorial imagery where the layout calls for it.
+   */
+  caption?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  url?: string | null;
+  thumbnailURL?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  filesize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  focalX?: number | null;
+  focalY?: number | null;
+}
+/**
+ * Measurement tables opened from the product page beside the size selector.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "size-guides".
+ */
+export interface SizeGuide {
+  id: number;
+  /**
+   * What the customer sees at the top of the dialog — "Men's tops".
+   */
+  title: string;
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * Which categories this guide was written for. A hint for editors — the binding link is the field on the product itself.
+   */
+  appliesTo?: (number | Category)[] | null;
+  /**
+   * One unit per guide. Write a second guide rather than mixing units in one table.
+   */
+  unit: 'cm' | 'in';
+  /**
+   * One row per size, in the order they should be displayed.
+   */
+  rows: {
+    /**
+     * Must match the variant size exactly — "M", "32" — or the guide and the selector disagree.
+     */
+    size: string;
+    measurements: {
+      /**
+       * Chest, Waist, Sleeve…
+       */
+      label: string;
+      /**
+       * A number or a range — "98" or "96–101".
+       */
+      value: string;
+      id?: string | null;
+    }[];
+    id?: string | null;
+  }[];
+  /**
+   * How the garment is cut, and how to choose between two sizes.
+   */
+  fitNotes?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * Optional — feature matrix §8. "Model is 183 cm and wears a size M."
+   */
+  modelNote?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * The shop taxonomy. Only create a category that navigation or a filter uses.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "categories".
+ */
+export interface Category {
+  id: number;
+  /**
+   * As it appears in navigation. Title case — "Field Jackets".
+   */
+  name: string;
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * Leave empty for a top-level category.
+   */
+  parent?: (number | null) | Category;
+  /**
+   * Optional. Rendered as the introduction on the category page.
+   */
+  description?: string | null;
+  /**
+   * Optional. Used by the featured-category tiles and the mega menu.
+   */
+  image?: (number | null) | Media;
+  /**
+   * Lower sorts first, within the same parent.
+   */
+  sortOrder: number;
+  /**
+   * Drafts are hidden from navigation, filters and the sitemap.
+   */
+  status: 'draft' | 'published';
+  /**
+   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
+   */
+  seo?: {
+    /**
+     * Around 60 characters renders in full. Longer is truncated by the engine.
+     */
+    title?: string | null;
+    /**
+     * Around 155 characters renders in full.
+     */
+    description?: string | null;
+    /**
+     * Social share card. Landscape, roughly 1200 × 630.
+     */
+    image?: (number | null) | Media;
+  };
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Campaign-led merchandising pages at /collections/…
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "collections".
+ */
+export interface Collection {
+  id: number;
+  title: string;
+  /**
+   * The restrained introduction beneath the hero. Two or three sentences — the guide is emphatic about this.
+   */
+  description?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * The large opening image — plan §6.1e, visual guide §09.
+   */
+  heroMedia?: (number | null) | Media;
+  /**
+   * Optional second image, beside the introduction — plan §6.1e lists hero and intro media separately.
+   */
+  introMedia?: (number | null) | Media;
+  /**
+   * Every product in this collection, in the order the customer sees. Dragging a row is the curation — feature matrix §12.
+   */
+  products?: (number | Product)[] | null;
+  /**
+   * Shown at the foot of the page — plan §23.1a. Keeps an editorial page from being a dead end.
+   */
+  relatedCollections?: (number | Collection)[] | null;
+  /**
+   * The visual chapters. Alternate image-led and typography-led sections rather than stacking one kind.
+   */
+  body?:
+    | (
+        | FigureBlock
+        | SplitFeatureBlock
+        | EditorialBlock
+        | GalleryBlock
+        | PullQuoteBlock
+        | ProductGroupBlock
+        | ShopTheLookBlock
+      )[]
+    | null;
+  /**
+   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
+   */
+  seo?: {
+    /**
+     * Around 60 characters renders in full. Longer is truncated by the engine.
+     */
+    title?: string | null;
+    /**
+     * Around 155 characters renders in full.
+     */
+    description?: string | null;
+    /**
+     * Social share card. Landscape, roughly 1200 × 630.
+     */
+    image?: (number | null) | Media;
+  };
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * Drafts are never rendered on the public site.
+   */
+  status: 'draft' | 'published';
+  /**
+   * A future date schedules the page. Set automatically when first published.
+   */
+  publishedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "FigureBlock".
+ */
+export interface FigureBlock {
+  image: number | Media;
+  /**
+   * Optional. A portrait crop for narrow screens. Falls back to the image above when unset — visual guide §10, "image crops".
+   */
+  mobileImage?: (number | null) | Media;
+  /**
+   * "Occasional full-bleed moments" — sparingly, per visual guide §09.
+   */
+  treatment?: ('contained' | 'fullBleed') | null;
+  caption?: string | null;
+  cta: {
+    /**
+     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+     */
+    label?: string | null;
+    kind: 'reference' | 'url';
+    /**
+     * The URL is derived from this document at render time, so renaming it cannot break the link.
+     */
+    reference?:
+      | ({
+          relationTo: 'products';
+          value: number | Product;
+        } | null)
+      | ({
+          relationTo: 'categories';
+          value: number | Category;
+        } | null)
+      | ({
+          relationTo: 'collections';
+          value: number | Collection;
+        } | null)
+      | ({
+          relationTo: 'edits';
+          value: number | Edit;
+        } | null)
+      | ({
+          relationTo: 'lookbooks';
+          value: number | Lookbook;
+        } | null)
+      | ({
+          relationTo: 'journal';
+          value: number | Journal;
+        } | null)
+      | ({
+          relationTo: 'campaigns';
+          value: number | Campaign;
+        } | null);
+    /**
+     * A site path such as /shop, or a full https:// address.
+     */
+    href?: string | null;
+  };
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'figure';
+}
+/**
+ * Intent-based shopping pages at /edit/… Keep the set small and obvious.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "edits".
+ */
+export interface Edit {
+  id: number;
+  title: string;
+  /**
+   * What this edit is, and why it exists. Plan §23.1b — answer it in two sentences.
+   */
+  intro?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * The opening image.
+   */
+  hero?: (number | null) | Media;
+  /**
+   * Captioned sets of products. The order of groups is the order of the page.
+   */
+  productGroups?:
+    | {
+        title: string;
+        /**
+         * Optional. One line of context for the group.
+         */
+        intro?: string | null;
+        /**
+         * Drag to set the order the customer sees.
+         */
+        products: (number | Product)[];
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Optional — plan §6.1f. Links the edit to the editorial story behind it, and gives the reader somewhere to go next.
+   */
+  lookbooks?: (number | Lookbook)[] | null;
+  /**
+   * Editorial around the groups — an opening image, a quote, a shop-the-look.
+   */
+  body?:
+    | (
+        | FigureBlock
+        | SplitFeatureBlock
+        | EditorialBlock
+        | GalleryBlock
+        | PullQuoteBlock
+        | ProductGroupBlock
+        | ShopTheLookBlock
+      )[]
+    | null;
+  /**
+   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
+   */
+  seo?: {
+    /**
+     * Around 60 characters renders in full. Longer is truncated by the engine.
+     */
+    title?: string | null;
+    /**
+     * Around 155 characters renders in full.
+     */
+    description?: string | null;
+    /**
+     * Social share card. Landscape, roughly 1200 × 630.
+     */
+    image?: (number | null) | Media;
+  };
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * Drafts are never rendered on the public site.
+   */
+  status: 'draft' | 'published';
+  /**
+   * A future date schedules the page. Set automatically when first published.
+   */
+  publishedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Chaptered editorial with shoppable hotspots.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "lookbooks".
+ */
+export interface Lookbook {
+  id: number;
+  title: string;
+  /**
+   * Free text — "AW26". Groups lookbooks; does not drive layout.
+   */
+  season?: string | null;
+  /**
+   * The index-page cover.
+   */
+  coverImage?: (number | null) | Media;
+  /**
+   * Optional. A short standfirst before the first chapter.
+   */
+  intro?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * In reading order. Each chapter is a full-screen editorial moment.
+   */
+  chapters?:
+    | {
+        /**
+         * Strong chapter titles — visual guide §09.
+         */
+        title: string;
+        /**
+         * The chapter opener. Usually full-bleed.
+         */
+        heroImage?: (number | null) | Media;
+        /**
+         * Short. "Short text blocks", per the guide.
+         */
+        editorialText?: {
+          root: {
+            type: string;
+            children: {
+              type: any;
+              version: number;
+              [k: string]: unknown;
+            }[];
+            direction: ('ltr' | 'rtl') | null;
+            format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+            indent: number;
+            version: number;
+          };
+          [k: string]: unknown;
+        } | null;
+        gallery?:
+          | {
+              image: number | Media;
+              caption?: string | null;
+              id?: string | null;
+            }[]
+          | null;
+        /**
+         * Shoppable points on the chapter hero image. Positions are percentages, so they survive every crop and breakpoint.
+         */
+        hotspots?:
+          | {
+              /**
+               * Tapping the hotspot opens a preview of this product.
+               */
+              product: number | Product;
+              /**
+               * Optional. Overrides the product name in the marker, for a styling note.
+               */
+              label?: string | null;
+              xDesktop: number;
+              yDesktop: number;
+              xMobile: number;
+              yMobile: number;
+              markerTone?: ('light' | 'dark') | null;
+              id?: string | null;
+            }[]
+          | null;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
+   */
+  seo?: {
+    /**
+     * Around 60 characters renders in full. Longer is truncated by the engine.
+     */
+    title?: string | null;
+    /**
+     * Around 155 characters renders in full.
+     */
+    description?: string | null;
+    /**
+     * Social share card. Landscape, roughly 1200 × 630.
+     */
+    image?: (number | null) | Media;
+  };
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * Drafts are never rendered on the public site.
+   */
+  status: 'draft' | 'published';
+  /**
+   * A future date schedules the page. Set automatically when first published.
+   */
+  publishedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "SplitFeatureBlock".
+ */
+export interface SplitFeatureBlock {
+  image: number | Media;
+  imageSide?: ('left' | 'right') | null;
+  /**
+   * Optional. A short label above the heading — a season, a chapter number.
+   */
+  eyebrow?: string | null;
+  heading?: string | null;
+  body?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  cta: {
+    /**
+     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+     */
+    label?: string | null;
+    kind: 'reference' | 'url';
+    /**
+     * The URL is derived from this document at render time, so renaming it cannot break the link.
+     */
+    reference?:
+      | ({
+          relationTo: 'products';
+          value: number | Product;
+        } | null)
+      | ({
+          relationTo: 'categories';
+          value: number | Category;
+        } | null)
+      | ({
+          relationTo: 'collections';
+          value: number | Collection;
+        } | null)
+      | ({
+          relationTo: 'edits';
+          value: number | Edit;
+        } | null)
+      | ({
+          relationTo: 'lookbooks';
+          value: number | Lookbook;
+        } | null)
+      | ({
+          relationTo: 'journal';
+          value: number | Journal;
+        } | null)
+      | ({
+          relationTo: 'campaigns';
+          value: number | Campaign;
+        } | null);
+    /**
+     * A site path such as /shop, or a full https:// address.
+     */
+    href?: string | null;
+  };
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'splitFeature';
+}
+/**
+ * Articles at /journal/… Reached from the footer and from editorial surfaces.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "journal".
+ */
+export interface Journal {
+  id: number;
+  title: string;
+  /**
+   * The standfirst on the index, and the SEO description fallback. Two sentences at most.
+   */
+  excerpt?: string | null;
+  /**
+   * The index card image and the article opener.
+   */
+  heroImage?: (number | null) | Media;
+  /**
+   * The article.
+   */
+  body?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * The way out of the article and into the shop — plan §23.1c. An article with none is an editorial dead end.
+   */
+  relatedProducts?: (number | Product)[] | null;
+  relatedCollections?: (number | Collection)[] | null;
+  /**
+   * Feature matrix §15 — "related stories".
+   */
+  relatedArticles?: (number | Journal)[] | null;
+  /**
+   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
+   */
+  seo?: {
+    /**
+     * Around 60 characters renders in full. Longer is truncated by the engine.
+     */
+    title?: string | null;
+    /**
+     * Around 155 characters renders in full.
+     */
+    description?: string | null;
+    /**
+     * Social share card. Landscape, roughly 1200 × 630.
+     */
+    image?: (number | null) | Media;
+  };
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * The editorial topic. Deliberately a short fixed list, not the product taxonomy.
+   */
+  category?: ('craft' | 'design' | 'people' | 'places' | 'style') | null;
+  /**
+   * The byline as printed. Not linked to a staff account — see the note at the top of this file.
+   */
+  author?: string | null;
+  /**
+   * Drafts are never rendered on the public site.
+   */
+  status: 'draft' | 'published';
+  /**
+   * A future date schedules the page. Set automatically when first published.
+   */
+  publishedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Seasonal statements. One is usually the homepage hero.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "campaigns".
+ */
+export interface Campaign {
+  id: number;
+  title: string;
+  /**
+   * Free text — "AW26", "Resort". Used to group campaigns, not to drive layout.
+   */
+  season?: string | null;
+  /**
+   * The campaign image. Desktop crop.
+   */
+  hero?: (number | null) | Media;
+  /**
+   * Optional portrait crop. Falls back to the desktop hero when empty — plan §10.1b.
+   */
+  mobileHero?: (number | null) | Media;
+  /**
+   * The campaign copy. Short — it sits over or beside the image.
+   */
+  story?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  cta: {
+    /**
+     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+     */
+    label?: string | null;
+    kind: 'reference' | 'url';
+    /**
+     * The URL is derived from this document at render time, so renaming it cannot break the link.
+     */
+    reference?:
+      | ({
+          relationTo: 'products';
+          value: number | Product;
+        } | null)
+      | ({
+          relationTo: 'categories';
+          value: number | Category;
+        } | null)
+      | ({
+          relationTo: 'collections';
+          value: number | Collection;
+        } | null)
+      | ({
+          relationTo: 'edits';
+          value: number | Edit;
+        } | null)
+      | ({
+          relationTo: 'lookbooks';
+          value: number | Lookbook;
+        } | null)
+      | ({
+          relationTo: 'journal';
+          value: number | Journal;
+        } | null)
+      | ({
+          relationTo: 'campaigns';
+          value: number | Campaign;
+        } | null);
+    /**
+     * A site path such as /shop, or a full https:// address.
+     */
+    href?: string | null;
+  };
+  /**
+   * The collection this campaign sells. The CTA usually points here — plan §10.1c requires an explicit path from editorial to commerce.
+   */
+  collection?: (number | null) | Collection;
+  /**
+   * Optional. A handful of hero pieces, in order, for the campaign rail.
+   */
+  products?: (number | Product)[] | null;
+  /**
+   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
+   */
+  seo?: {
+    /**
+     * Around 60 characters renders in full. Longer is truncated by the engine.
+     */
+    title?: string | null;
+    /**
+     * Around 155 characters renders in full.
+     */
+    description?: string | null;
+    /**
+     * Social share card. Landscape, roughly 1200 × 630.
+     */
+    image?: (number | null) | Media;
+  };
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * Drafts are never rendered on the public site.
+   */
+  status: 'draft' | 'published';
+  /**
+   * A future date schedules the page. Set automatically when first published.
+   */
+  publishedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "EditorialBlock".
+ */
+export interface EditorialBlock {
+  /**
+   * Optional. A short label above the heading — a season, a chapter number.
+   */
+  eyebrow?: string | null;
+  heading?: string | null;
+  /**
+   * Short. The guide asks for "short text blocks", not essays.
+   */
+  body?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * Narrow keeps the line length readable. Wide is for a statement.
+   */
+  width?: ('narrow' | 'wide') | null;
+  cta: {
+    /**
+     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+     */
+    label?: string | null;
+    kind: 'reference' | 'url';
+    /**
+     * The URL is derived from this document at render time, so renaming it cannot break the link.
+     */
+    reference?:
+      | ({
+          relationTo: 'products';
+          value: number | Product;
+        } | null)
+      | ({
+          relationTo: 'categories';
+          value: number | Category;
+        } | null)
+      | ({
+          relationTo: 'collections';
+          value: number | Collection;
+        } | null)
+      | ({
+          relationTo: 'edits';
+          value: number | Edit;
+        } | null)
+      | ({
+          relationTo: 'lookbooks';
+          value: number | Lookbook;
+        } | null)
+      | ({
+          relationTo: 'journal';
+          value: number | Journal;
+        } | null)
+      | ({
+          relationTo: 'campaigns';
+          value: number | Campaign;
+        } | null);
+    /**
+     * A site path such as /shop, or a full https:// address.
+     */
+    href?: string | null;
+  };
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'editorial';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "GalleryBlock".
+ */
+export interface GalleryBlock {
+  images: {
+    image: number | Media;
+    caption?: string | null;
+    id?: string | null;
+  }[];
+  layout?: ('pair' | 'triptych' | 'grid') | null;
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'gallery';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "PullQuoteBlock".
+ */
+export interface PullQuoteBlock {
+  quote: string;
+  /**
+   * Optional. Who said it.
+   */
+  attribution?: string | null;
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'pullQuote';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ProductGroupBlock".
+ */
+export interface ProductGroupBlock {
+  heading?: string | null;
+  /**
+   * Optional. One or two lines of context for the group.
+   */
+  intro?: string | null;
+  /**
+   * Drag to set the order the customer sees.
+   */
+  products: (number | Product)[];
+  layout?: ('grid' | 'rail') | null;
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'productGroup';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ShopTheLookBlock".
+ */
+export interface ShopTheLookBlock {
+  image: number | Media;
+  heading?: string | null;
+  hotspots: {
+    /**
+     * Tapping the hotspot opens a preview of this product.
+     */
+    product: number | Product;
+    /**
+     * Optional. Overrides the product name in the marker, for a styling note.
+     */
+    label?: string | null;
+    xDesktop: number;
+    yDesktop: number;
+    xMobile: number;
+    yMobile: number;
+    markerTone?: ('light' | 'dark') | null;
+    id?: string | null;
+  }[];
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'shopTheLook';
+}
+/**
+ * Server-side bags. Totals are never stored here — they are recalculated from the live catalogue on every request.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "carts".
+ */
+export interface Cart {
+  id: number;
+  /**
+   * The guest cart identifier. Issued by the server, never by the browser.
+   */
+  token: string;
+  /**
+   * Empty for a guest bag. Set when a guest signs in and the carts are merged.
+   */
+  customer?: (number | null) | Customer;
+  /**
+   * The lines in this bag.
+   */
+  items?: {
+    docs?: (number | CartItem)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  /**
+   * Fixed when the bag is created, so a later change to the store default cannot reprice an open bag.
+   */
+  currency: 'USD' | 'GBP' | 'EUR';
+  /**
+   * A converted bag is history. Nothing may be added to it.
+   */
+  status: 'active' | 'converted';
+  /**
+   * The applied discount code — one per bag (DEV-08). Its validity is rechecked on every read and again at checkout.
+   */
+  promotion?: (number | null) | Promotion;
+  /**
+   * Thirty days from creation by default. An expired bag is treated as empty.
+   */
+  expiresAt: string;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Shopper accounts. Separate from staff Users — a customer cannot sign in to this admin panel.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "customers".
+ */
+export interface Customer {
+  id: number;
+  firstName: string;
+  lastName: string;
+  /**
+   * Optional. Offered to carriers as a delivery contact.
+   */
+  phone?: string | null;
+  /**
+   * Set by Stripe at first checkout (Phase 17). Never edited by hand.
+   */
+  stripeCustomerId?: string | null;
+  /**
+   * The customer's saved address book, editable by them at /account/addresses.
+   */
+  addresses?: {
+    docs?: (number | Address)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  /**
+   * Every order placed by this account.
+   */
+  orders?: {
+    docs?: (number | Order)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  updatedAt: string;
+  createdAt: string;
+  deletedAt?: string | null;
+  email: string;
+  resetPasswordToken?: string | null;
+  resetPasswordExpiration?: string | null;
+  salt?: string | null;
+  hash?: string | null;
+  loginAttempts?: number | null;
+  lockUntil?: string | null;
+  sessions?:
+    | {
+        id: string;
+        createdAt?: string | null;
+        expiresAt: string;
+      }[]
+    | null;
+  password?: string | null;
+  collection: 'customers';
+}
+/**
+ * Saved addresses. Orders keep their own frozen copy and are unaffected by edits here.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "addresses".
+ */
+export interface Address {
+  id: number;
+  /**
+   * The account this address belongs to. Ownership is enforced in Phase 7.
+   */
+  customer: number | Customer;
+  /**
+   * Optional. What the customer calls it — "Home", "Studio".
+   */
+  label?: string | null;
+  firstName: string;
+  lastName: string;
+  /**
+   * Optional.
+   */
+  company?: string | null;
+  line1: string;
+  /**
+   * Optional. Apartment, suite, floor.
+   */
+  line2?: string | null;
+  city: string;
+  /**
+   * Optional — many countries do not use one.
+   */
+  region?: string | null;
+  postalCode: string;
+  /**
+   * ISO 3166-1 alpha-2 — GB, US, FR.
+   */
+  country: string;
+  /**
+   * Optional. Used by carriers for delivery contact.
+   */
+  phone?: string | null;
+  isDefaultShipping?: boolean | null;
+  isDefaultBilling?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Durable purchase records. Item names, prices and addresses are frozen at purchase.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "orders".
+ */
+export interface Order {
+  id: number;
+  /**
+   * Moved to Paid only by a signature-verified Stripe webhook — never by a browser reaching the success page.
+   */
+  paymentStatus:
+    'draft' | 'checkout_started' | 'pending_payment' | 'paid' | 'payment_failed' | 'refunded' | 'cancelled';
+  /**
+   * Independent of payment. An order can be refunded after it shipped.
+   */
+  fulfillmentStatus: 'unfulfilled' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  /**
+   * The purchased lines, frozen at purchase. Editing a product does not change them.
+   */
+  items?: {
+    docs?: (number | OrderItem)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  /**
+   * Empty for a guest purchase, and after an account is deleted.
+   */
+  customer?: (number | null) | Customer;
+  /**
+   * Where the confirmation was sent, as given at checkout. A snapshot — not read from the customer record.
+   */
+  email: string;
+  /**
+   * Fixed at checkout. Every amount below is in this currency.
+   */
+  currency: 'USD' | 'GBP' | 'EUR';
+  /**
+   * The sum of the line totals, before anything else.
+   */
+  subtotalMinor: number;
+  /**
+   * Recalculated server-side at checkout — plan §15.1a.
+   */
+  discountMinor: number;
+  /**
+   * Minor units — 1999 is 19.99. Whole numbers only; no decimal point.
+   */
+  shippingMinor: number;
+  /**
+   * The authoritative amount used for the transaction — plan §16.1d.
+   */
+  taxMinor: number;
+  /**
+   * What was charged. Stored rather than derived so it can be compared against Stripe and never silently recomputed.
+   */
+  totalMinor: number;
+  /**
+   * The promotion applied — one per order (DEV-08).
+   */
+  promotion?: (number | null) | Promotion;
+  /**
+   * Snapshot of the code used. Survives the promotion being renamed or deleted.
+   */
+  discountCode?: string | null;
+  /**
+   * The normalised method ID from the shipping provider — plan §16.1a.
+   */
+  shippingMethodCode?: string | null;
+  /**
+   * As the customer chose it — "Express". A snapshot; the rate card may change.
+   */
+  shippingMethodLabel?: string | null;
+  /**
+   * Frozen at purchase. Empty on a draft order — checkout preflight is what requires it (plan §17.1a, DEV-11).
+   */
+  shippingAddress?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    /**
+     * Optional.
+     */
+    company?: string | null;
+    line1?: string | null;
+    /**
+     * Optional. Apartment, suite, floor.
+     */
+    line2?: string | null;
+    city?: string | null;
+    /**
+     * Optional — many countries do not use one.
+     */
+    region?: string | null;
+    postalCode?: string | null;
+    /**
+     * ISO 3166-1 alpha-2 — GB, US, FR.
+     */
+    country?: string | null;
+    /**
+     * Optional. Used by carriers for delivery contact.
+     */
+    phone?: string | null;
+  };
+  /**
+   * Frozen at purchase. Defaults to the shipping address at checkout.
+   */
+  billingAddress?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    /**
+     * Optional.
+     */
+    company?: string | null;
+    line1?: string | null;
+    /**
+     * Optional. Apartment, suite, floor.
+     */
+    line2?: string | null;
+    city?: string | null;
+    /**
+     * Optional — many countries do not use one.
+     */
+    region?: string | null;
+    postalCode?: string | null;
+    /**
+     * ISO 3166-1 alpha-2 — GB, US, FR.
+     */
+    country?: string | null;
+    /**
+     * Optional. Used by carriers for delivery contact.
+     */
+    phone?: string | null;
+  };
+  /**
+   * Required in practice when marking shipped — plan §18.1c.
+   */
+  carrier?: string | null;
+  trackingNumber?: string | null;
+  /**
+   * The carrier's tracking page. Manually managed for the demo — structure §18 allows exactly this.
+   */
+  trackingUrl?: string | null;
+  shippedAt?: string | null;
+  deliveredAt?: string | null;
+  /**
+   * Set when the Checkout Session is created (Phase 17).
+   */
+  stripeCheckoutSessionId?: string | null;
+  /**
+   * Set from the verified webhook event (Phase 17).
+   */
+  stripePaymentIntentId?: string | null;
+  /**
+   * When the verified webhook confirmed payment. Distinct from createdAt, which is when the draft was made.
+   */
+  paidAt?: string | null;
+  /**
+   * The customer-facing reference. Opaque and non-sequential — decision D-17.
+   */
+  orderNumber: string;
+  updatedAt: string;
+  createdAt: string;
+  deletedAt?: string | null;
+}
+/**
+ * Frozen purchase lines. Never edited after the order is placed.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "order-items".
+ */
+export interface OrderItem {
+  id: number;
+  order: number | Order;
+  /**
+   * A link back, if the product still exists. The snapshot below is the record.
+   */
+  product?: (number | null) | Product;
+  /**
+   * Likewise — navigation, not data.
+   */
+  variant?: (number | null) | ProductVariant;
+  /**
+   * The SKU at the moment of purchase. Durable because SKUs are never reassigned — see ProductVariants.
+   */
+  sku: string;
+  /**
+   * The product name as it read on the day. Never updated.
+   */
+  productName: string;
+  /**
+   * Colour and size as they read on the day — "Bone / M".
+   */
+  variantLabel: string;
+  /**
+   * What one cost, then.
+   */
+  unitPriceMinor: number;
+  quantity: number;
+  /**
+   * What this line contributed to the subtotal. Stored, not recomputed.
+   */
+  lineTotalMinor: number;
+  updatedAt: string;
+  createdAt: string;
+  deletedAt?: string | null;
+}
+/**
+ * Discount codes. Every rule here is evaluated on the server, never in the browser.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "promotions".
+ */
+export interface Promotion {
+  id: number;
+  /**
+   * What the customer types. Stored upper-case and trimmed, so case and spacing cannot differ.
+   */
+  code: string;
+  /**
+   * Internal note. Never shown to the customer.
+   */
+  description?: string | null;
+  type: 'percentage' | 'fixed' | 'free_shipping';
+  /**
+   * 1–100. Plan §15.1c: a percentage discount may never exceed the eligible subtotal.
+   */
+  percentage?: number | null;
+  /**
+   * Minor units — 1999 is 19.99. Whole numbers only; no decimal point.
+   */
+  valueMinor?: number | null;
+  /**
+   * A fixed amount is only meaningful in one currency — plan §15.1a's "currency compatibility".
+   */
+  currency?: ('USD' | 'GBP' | 'EUR') | null;
+  /**
+   * Empty means active immediately.
+   */
+  startsAt?: string | null;
+  /**
+   * Empty means no expiry.
+   */
+  endsAt?: string | null;
+  /**
+   * Optional. Compared against the subtotal before shipping and tax.
+   */
+  minimumSubtotalMinor?: number | null;
+  /**
+   * Optional. Leave both eligibility lists empty to apply to the whole bag.
+   */
+  eligibleProducts?: (number | Product)[] | null;
+  /**
+   * Optional. Membership is resolved at validation time.
+   */
+  eligibleCollections?: (number | Collection)[] | null;
+  /**
+   * Total redemptions allowed. Empty means unlimited.
+   */
+  usageLimit?: number | null;
+  /**
+   * Counted from paid orders carrying this code, not from a stored tally.
+   */
+  perCustomerLimit?: number | null;
+  /**
+   * Incremented by Phase 17, in the transaction that finalises payment.
+   */
+  timesUsed: number;
+  /**
+   * Off by default — a half-written promotion must not be live. This is the switch; the dates are the schedule.
+   */
+  active: boolean;
+  /**
+   * Modelled but unused: this demo allows one code per order (DEV-08). Kept so the rule is explicit.
+   */
+  combinable?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Lines in a bag. No prices are stored — they are read live so that changes are visible.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "cart-items".
+ */
+export interface CartItem {
+  id: number;
+  cart: number | Cart;
+  product: number | Product;
+  /**
+   * The exact colour and size. This is what is actually being bought.
+   */
+  variant: number | ProductVariant;
+  /**
+   * Availability is checked against live stock on every mutation, not by this bound.
+   */
+  quantity: number;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Saved products. Guests keep their list on their own device until they sign in.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "wishlist-items".
+ */
+export interface WishlistItem {
+  id: number;
+  customer: number | Customer;
+  product: number | Product;
+  /**
+   * Optional. The colour they were looking at — remembered for the image, never treated as a chosen size.
+   */
+  variantPreference?: (number | null) | ProductVariant;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Pending until moderated. Only approved reviews are ever rendered publicly.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "reviews".
+ */
+export interface Review {
+  id: number;
+  product: number | Product;
+  /**
+   * Required — it is what makes the one-review-per-product rule enforceable and the verified badge possible.
+   */
+  customer: number | Customer;
+  /**
+   * The public byline. Deliberately separate from the account name.
+   */
+  displayName: string;
+  /**
+   * Whole stars, 1 to 5.
+   */
+  rating: number;
+  /**
+   * Optional headline.
+   */
+  title?: string | null;
+  /**
+   * Up to 2000 characters — plan §21.1c's "oversized text" case.
+   */
+  body: string;
+  /**
+   * Optional — plan §6.1j. Upload limits and mime validation are Phase 8's; the count bound is here because plan §21.1c names "huge image upload".
+   */
+  photos?:
+    | {
+        image: number | Media;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Pending by default, so nothing can reach the public site unmoderated by accident.
+   */
+  status: 'pending' | 'approved' | 'rejected';
+  /**
+   * Set at submission from order history (Phase 21). A fact about the past, so it is stored.
+   */
+  verifiedPurchase: boolean;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Email, consent, source, status. Deliberately nothing else — plan §6.1n.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "newsletter-subscribers".
+ */
+export interface NewsletterSubscriber {
+  id: number;
+  email: string;
+  /**
+   * When consent was given. The record that makes the sign-up defensible.
+   */
+  consentedAt: string;
+  /**
+   * Where consent was given. A closed list, because "other" answers nothing.
+   */
+  source: 'footer' | 'checkout' | 'editorial' | 'import';
+  /**
+   * Unsubscribing sets this. The row stays, so a later import cannot resurrect the address.
+   */
+  status: 'subscribed' | 'unsubscribed';
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Support answers, grouped by topic. Reached from the footer — never in the shopping flow.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "faqs".
+ */
+export interface Faq {
+  id: number;
+  /**
+   * Phrased the way a customer would ask it.
+   */
+  question: string;
+  /**
+   * Short, and allowed to link out to a policy page or a product.
+   */
+  answer: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  };
+  topic: 'orders' | 'shipping' | 'returns' | 'sizing' | 'care' | 'account';
+  /**
+   * Lower sorts first within the topic. The most-asked question goes at the top, not the oldest.
+   */
+  sortOrder: number;
+  status: 'draft' | 'published';
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Staff accounts for this admin panel. Shoppers are Customers, and cannot sign in here.
+ *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "users".
  */
@@ -141,38 +2019,6 @@ export interface User {
     | null;
   password?: string | null;
   collection: 'users';
-}
-/**
- * Phase 5 database fixture. Proves connectivity, CRUD and the migration workflow. Removed in Phase 6.
- *
- * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "schema-probes".
- */
-export interface SchemaProbe {
-  id: number;
-  /**
-   * Stable external key. Unique across the collection.
-   */
-  reference: string;
-  /**
-   * Human-readable name. Unique per owner, not globally — see the compound index.
-   */
-  label: string;
-  /**
-   * Editorial state. Distinct from soft deletion, which is `deletedAt`.
-   */
-  status: 'active' | 'archived';
-  /**
-   * Optional. Deliberately nullable.
-   */
-  note?: string | null;
-  /**
-   * Optional relationship. Set to null if the user is deleted, never cascaded.
-   */
-  owner?: (number | null) | User;
-  updatedAt: string;
-  createdAt: string;
-  deletedAt?: string | null;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -199,18 +2045,103 @@ export interface PayloadLockedDocument {
   id: number;
   document?:
     | ({
-        relationTo: 'users';
-        value: number | User;
+        relationTo: 'products';
+        value: number | Product;
       } | null)
     | ({
-        relationTo: 'schema-probes';
-        value: number | SchemaProbe;
+        relationTo: 'product-variants';
+        value: number | ProductVariant;
+      } | null)
+    | ({
+        relationTo: 'categories';
+        value: number | Category;
+      } | null)
+    | ({
+        relationTo: 'size-guides';
+        value: number | SizeGuide;
+      } | null)
+    | ({
+        relationTo: 'collections';
+        value: number | Collection;
+      } | null)
+    | ({
+        relationTo: 'edits';
+        value: number | Edit;
+      } | null)
+    | ({
+        relationTo: 'campaigns';
+        value: number | Campaign;
+      } | null)
+    | ({
+        relationTo: 'lookbooks';
+        value: number | Lookbook;
+      } | null)
+    | ({
+        relationTo: 'journal';
+        value: number | Journal;
+      } | null)
+    | ({
+        relationTo: 'carts';
+        value: number | Cart;
+      } | null)
+    | ({
+        relationTo: 'cart-items';
+        value: number | CartItem;
+      } | null)
+    | ({
+        relationTo: 'orders';
+        value: number | Order;
+      } | null)
+    | ({
+        relationTo: 'order-items';
+        value: number | OrderItem;
+      } | null)
+    | ({
+        relationTo: 'promotions';
+        value: number | Promotion;
+      } | null)
+    | ({
+        relationTo: 'customers';
+        value: number | Customer;
+      } | null)
+    | ({
+        relationTo: 'addresses';
+        value: number | Address;
+      } | null)
+    | ({
+        relationTo: 'wishlist-items';
+        value: number | WishlistItem;
+      } | null)
+    | ({
+        relationTo: 'reviews';
+        value: number | Review;
+      } | null)
+    | ({
+        relationTo: 'newsletter-subscribers';
+        value: number | NewsletterSubscriber;
+      } | null)
+    | ({
+        relationTo: 'faqs';
+        value: number | Faq;
+      } | null)
+    | ({
+        relationTo: 'media';
+        value: number | Media;
+      } | null)
+    | ({
+        relationTo: 'users';
+        value: number | User;
       } | null);
   globalSlug?: string | null;
-  user: {
-    relationTo: 'users';
-    value: number | User;
-  };
+  user:
+    | {
+        relationTo: 'customers';
+        value: number | Customer;
+      }
+    | {
+        relationTo: 'users';
+        value: number | User;
+      };
   updatedAt: string;
   createdAt: string;
 }
@@ -220,10 +2151,15 @@ export interface PayloadLockedDocument {
  */
 export interface PayloadPreference {
   id: number;
-  user: {
-    relationTo: 'users';
-    value: number | User;
-  };
+  user:
+    | {
+        relationTo: 'customers';
+        value: number | Customer;
+      }
+    | {
+        relationTo: 'users';
+        value: number | User;
+      };
   key?: string | null;
   value?:
     | {
@@ -250,6 +2186,697 @@ export interface PayloadMigration {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "products_select".
+ */
+export interface ProductsSelect<T extends boolean = true> {
+  name?: T;
+  shortDescription?: T;
+  description?: T;
+  editorialCopy?: T;
+  variants?: T;
+  gallery?:
+    | T
+    | {
+        image?: T;
+        id?: T;
+      };
+  video?: T;
+  materials?: T;
+  care?: T;
+  fit?: T;
+  fitNotes?: T;
+  sizeGuide?: T;
+  categories?: T;
+  collections?: T;
+  gender?: T;
+  tags?: T;
+  seo?:
+    | T
+    | {
+        title?: T;
+        description?: T;
+        image?: T;
+      };
+  slug?: T;
+  status?: T;
+  publishedAt?: T;
+  featured?: T;
+  isNew?: T;
+  isBestSeller?: T;
+  isLimitedEdition?: T;
+  sortOrder?: T;
+  derived?:
+    | T
+    | {
+        priceFromMinor?: T;
+        priceToMinor?: T;
+        compareAtFromMinor?: T;
+        inventoryTotal?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  deletedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "product-variants_select".
+ */
+export interface ProductVariantsSelect<T extends boolean = true> {
+  product?: T;
+  sku?: T;
+  color?: T;
+  colorHex?: T;
+  colorFamily?: T;
+  size?: T;
+  sizeSortOrder?: T;
+  priceMinor?: T;
+  compareAtPriceMinor?: T;
+  inventoryQuantity?: T;
+  active?: T;
+  image?: T;
+  weightGrams?: T;
+  lengthMm?: T;
+  widthMm?: T;
+  heightMm?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  deletedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "categories_select".
+ */
+export interface CategoriesSelect<T extends boolean = true> {
+  name?: T;
+  slug?: T;
+  parent?: T;
+  description?: T;
+  image?: T;
+  sortOrder?: T;
+  status?: T;
+  seo?:
+    | T
+    | {
+        title?: T;
+        description?: T;
+        image?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "size-guides_select".
+ */
+export interface SizeGuidesSelect<T extends boolean = true> {
+  title?: T;
+  slug?: T;
+  appliesTo?: T;
+  unit?: T;
+  rows?:
+    | T
+    | {
+        size?: T;
+        measurements?:
+          | T
+          | {
+              label?: T;
+              value?: T;
+              id?: T;
+            };
+        id?: T;
+      };
+  fitNotes?: T;
+  modelNote?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "collections_select".
+ */
+export interface CollectionsSelect<T extends boolean = true> {
+  title?: T;
+  description?: T;
+  heroMedia?: T;
+  introMedia?: T;
+  products?: T;
+  relatedCollections?: T;
+  body?:
+    | T
+    | {
+        figure?: T | FigureBlockSelect<T>;
+        splitFeature?: T | SplitFeatureBlockSelect<T>;
+        editorial?: T | EditorialBlockSelect<T>;
+        gallery?: T | GalleryBlockSelect<T>;
+        pullQuote?: T | PullQuoteBlockSelect<T>;
+        productGroup?: T | ProductGroupBlockSelect<T>;
+        shopTheLook?: T | ShopTheLookBlockSelect<T>;
+      };
+  seo?:
+    | T
+    | {
+        title?: T;
+        description?: T;
+        image?: T;
+      };
+  slug?: T;
+  status?: T;
+  publishedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "FigureBlock_select".
+ */
+export interface FigureBlockSelect<T extends boolean = true> {
+  image?: T;
+  mobileImage?: T;
+  treatment?: T;
+  caption?: T;
+  cta?:
+    | T
+    | {
+        label?: T;
+        kind?: T;
+        reference?: T;
+        href?: T;
+      };
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "SplitFeatureBlock_select".
+ */
+export interface SplitFeatureBlockSelect<T extends boolean = true> {
+  image?: T;
+  imageSide?: T;
+  eyebrow?: T;
+  heading?: T;
+  body?: T;
+  cta?:
+    | T
+    | {
+        label?: T;
+        kind?: T;
+        reference?: T;
+        href?: T;
+      };
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "EditorialBlock_select".
+ */
+export interface EditorialBlockSelect<T extends boolean = true> {
+  eyebrow?: T;
+  heading?: T;
+  body?: T;
+  width?: T;
+  cta?:
+    | T
+    | {
+        label?: T;
+        kind?: T;
+        reference?: T;
+        href?: T;
+      };
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "GalleryBlock_select".
+ */
+export interface GalleryBlockSelect<T extends boolean = true> {
+  images?:
+    | T
+    | {
+        image?: T;
+        caption?: T;
+        id?: T;
+      };
+  layout?: T;
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "PullQuoteBlock_select".
+ */
+export interface PullQuoteBlockSelect<T extends boolean = true> {
+  quote?: T;
+  attribution?: T;
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ProductGroupBlock_select".
+ */
+export interface ProductGroupBlockSelect<T extends boolean = true> {
+  heading?: T;
+  intro?: T;
+  products?: T;
+  layout?: T;
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ShopTheLookBlock_select".
+ */
+export interface ShopTheLookBlockSelect<T extends boolean = true> {
+  image?: T;
+  heading?: T;
+  hotspots?:
+    | T
+    | {
+        product?: T;
+        label?: T;
+        xDesktop?: T;
+        yDesktop?: T;
+        xMobile?: T;
+        yMobile?: T;
+        markerTone?: T;
+        id?: T;
+      };
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "edits_select".
+ */
+export interface EditsSelect<T extends boolean = true> {
+  title?: T;
+  intro?: T;
+  hero?: T;
+  productGroups?:
+    | T
+    | {
+        title?: T;
+        intro?: T;
+        products?: T;
+        id?: T;
+      };
+  lookbooks?: T;
+  body?:
+    | T
+    | {
+        figure?: T | FigureBlockSelect<T>;
+        splitFeature?: T | SplitFeatureBlockSelect<T>;
+        editorial?: T | EditorialBlockSelect<T>;
+        gallery?: T | GalleryBlockSelect<T>;
+        pullQuote?: T | PullQuoteBlockSelect<T>;
+        productGroup?: T | ProductGroupBlockSelect<T>;
+        shopTheLook?: T | ShopTheLookBlockSelect<T>;
+      };
+  seo?:
+    | T
+    | {
+        title?: T;
+        description?: T;
+        image?: T;
+      };
+  slug?: T;
+  status?: T;
+  publishedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "campaigns_select".
+ */
+export interface CampaignsSelect<T extends boolean = true> {
+  title?: T;
+  season?: T;
+  hero?: T;
+  mobileHero?: T;
+  story?: T;
+  cta?:
+    | T
+    | {
+        label?: T;
+        kind?: T;
+        reference?: T;
+        href?: T;
+      };
+  collection?: T;
+  products?: T;
+  seo?:
+    | T
+    | {
+        title?: T;
+        description?: T;
+        image?: T;
+      };
+  slug?: T;
+  status?: T;
+  publishedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "lookbooks_select".
+ */
+export interface LookbooksSelect<T extends boolean = true> {
+  title?: T;
+  season?: T;
+  coverImage?: T;
+  intro?: T;
+  chapters?:
+    | T
+    | {
+        title?: T;
+        heroImage?: T;
+        editorialText?: T;
+        gallery?:
+          | T
+          | {
+              image?: T;
+              caption?: T;
+              id?: T;
+            };
+        hotspots?:
+          | T
+          | {
+              product?: T;
+              label?: T;
+              xDesktop?: T;
+              yDesktop?: T;
+              xMobile?: T;
+              yMobile?: T;
+              markerTone?: T;
+              id?: T;
+            };
+        id?: T;
+      };
+  seo?:
+    | T
+    | {
+        title?: T;
+        description?: T;
+        image?: T;
+      };
+  slug?: T;
+  status?: T;
+  publishedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "journal_select".
+ */
+export interface JournalSelect<T extends boolean = true> {
+  title?: T;
+  excerpt?: T;
+  heroImage?: T;
+  body?: T;
+  relatedProducts?: T;
+  relatedCollections?: T;
+  relatedArticles?: T;
+  seo?:
+    | T
+    | {
+        title?: T;
+        description?: T;
+        image?: T;
+      };
+  slug?: T;
+  category?: T;
+  author?: T;
+  status?: T;
+  publishedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "carts_select".
+ */
+export interface CartsSelect<T extends boolean = true> {
+  token?: T;
+  customer?: T;
+  items?: T;
+  currency?: T;
+  status?: T;
+  promotion?: T;
+  expiresAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "cart-items_select".
+ */
+export interface CartItemsSelect<T extends boolean = true> {
+  cart?: T;
+  product?: T;
+  variant?: T;
+  quantity?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "orders_select".
+ */
+export interface OrdersSelect<T extends boolean = true> {
+  paymentStatus?: T;
+  fulfillmentStatus?: T;
+  items?: T;
+  customer?: T;
+  email?: T;
+  currency?: T;
+  subtotalMinor?: T;
+  discountMinor?: T;
+  shippingMinor?: T;
+  taxMinor?: T;
+  totalMinor?: T;
+  promotion?: T;
+  discountCode?: T;
+  shippingMethodCode?: T;
+  shippingMethodLabel?: T;
+  shippingAddress?:
+    | T
+    | {
+        firstName?: T;
+        lastName?: T;
+        company?: T;
+        line1?: T;
+        line2?: T;
+        city?: T;
+        region?: T;
+        postalCode?: T;
+        country?: T;
+        phone?: T;
+      };
+  billingAddress?:
+    | T
+    | {
+        firstName?: T;
+        lastName?: T;
+        company?: T;
+        line1?: T;
+        line2?: T;
+        city?: T;
+        region?: T;
+        postalCode?: T;
+        country?: T;
+        phone?: T;
+      };
+  carrier?: T;
+  trackingNumber?: T;
+  trackingUrl?: T;
+  shippedAt?: T;
+  deliveredAt?: T;
+  stripeCheckoutSessionId?: T;
+  stripePaymentIntentId?: T;
+  paidAt?: T;
+  orderNumber?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  deletedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "order-items_select".
+ */
+export interface OrderItemsSelect<T extends boolean = true> {
+  order?: T;
+  product?: T;
+  variant?: T;
+  sku?: T;
+  productName?: T;
+  variantLabel?: T;
+  unitPriceMinor?: T;
+  quantity?: T;
+  lineTotalMinor?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  deletedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "promotions_select".
+ */
+export interface PromotionsSelect<T extends boolean = true> {
+  code?: T;
+  description?: T;
+  type?: T;
+  percentage?: T;
+  valueMinor?: T;
+  currency?: T;
+  startsAt?: T;
+  endsAt?: T;
+  minimumSubtotalMinor?: T;
+  eligibleProducts?: T;
+  eligibleCollections?: T;
+  usageLimit?: T;
+  perCustomerLimit?: T;
+  timesUsed?: T;
+  active?: T;
+  combinable?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "customers_select".
+ */
+export interface CustomersSelect<T extends boolean = true> {
+  firstName?: T;
+  lastName?: T;
+  phone?: T;
+  stripeCustomerId?: T;
+  addresses?: T;
+  orders?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  deletedAt?: T;
+  email?: T;
+  resetPasswordToken?: T;
+  resetPasswordExpiration?: T;
+  salt?: T;
+  hash?: T;
+  loginAttempts?: T;
+  lockUntil?: T;
+  sessions?:
+    | T
+    | {
+        id?: T;
+        createdAt?: T;
+        expiresAt?: T;
+      };
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "addresses_select".
+ */
+export interface AddressesSelect<T extends boolean = true> {
+  customer?: T;
+  label?: T;
+  firstName?: T;
+  lastName?: T;
+  company?: T;
+  line1?: T;
+  line2?: T;
+  city?: T;
+  region?: T;
+  postalCode?: T;
+  country?: T;
+  phone?: T;
+  isDefaultShipping?: T;
+  isDefaultBilling?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "wishlist-items_select".
+ */
+export interface WishlistItemsSelect<T extends boolean = true> {
+  customer?: T;
+  product?: T;
+  variantPreference?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "reviews_select".
+ */
+export interface ReviewsSelect<T extends boolean = true> {
+  product?: T;
+  customer?: T;
+  displayName?: T;
+  rating?: T;
+  title?: T;
+  body?: T;
+  photos?:
+    | T
+    | {
+        image?: T;
+        id?: T;
+      };
+  status?: T;
+  verifiedPurchase?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "newsletter-subscribers_select".
+ */
+export interface NewsletterSubscribersSelect<T extends boolean = true> {
+  email?: T;
+  consentedAt?: T;
+  source?: T;
+  status?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "faqs_select".
+ */
+export interface FaqsSelect<T extends boolean = true> {
+  question?: T;
+  answer?: T;
+  topic?: T;
+  sortOrder?: T;
+  status?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "media_select".
+ */
+export interface MediaSelect<T extends boolean = true> {
+  alt?: T;
+  caption?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  url?: T;
+  thumbnailURL?: T;
+  filename?: T;
+  mimeType?: T;
+  filesize?: T;
+  width?: T;
+  height?: T;
+  focalX?: T;
+  focalY?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "users_select".
  */
 export interface UsersSelect<T extends boolean = true> {
@@ -269,20 +2896,6 @@ export interface UsersSelect<T extends boolean = true> {
         createdAt?: T;
         expiresAt?: T;
       };
-}
-/**
- * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "schema-probes_select".
- */
-export interface SchemaProbesSelect<T extends boolean = true> {
-  reference?: T;
-  label?: T;
-  status?: T;
-  note?: T;
-  owner?: T;
-  updatedAt?: T;
-  createdAt?: T;
-  deletedAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -323,6 +2936,449 @@ export interface PayloadMigrationsSelect<T extends boolean = true> {
   batch?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * Brand identity, commerce defaults and SEO fallbacks. Rendered from Phase 9 onward — see each field.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "site-settings".
+ */
+export interface SiteSetting {
+  id: number;
+  /**
+   * Used in the page title suffix and in transactional email.
+   */
+  siteName: string;
+  /**
+   * The header mark. Falls back to the wordmark when empty.
+   */
+  logo?: (number | null) | Media;
+  /**
+   * Optional. One line, used in metadata and the footer.
+   */
+  tagline?: string | null;
+  /**
+   * The address on the contact and support surfaces (Phase 23).
+   */
+  contactEmail?: string | null;
+  /**
+   * Optional. Customer support only — this is an online-only business with no retail location.
+   */
+  contactPhone?: string | null;
+  /**
+   * The currency catalogue prices are held in. Changing it does not convert anything, and does not touch existing orders.
+   */
+  defaultCurrency: 'USD' | 'GBP' | 'EUR';
+  /**
+   * A BCP 47 tag, used for date and number formatting. This build is single-locale; Payload localisation is not enabled.
+   */
+  defaultLocale: string;
+  /**
+   * The subtotal at which standard delivery is free. Drives the bag's shipping-progress message (plan §14.1e) and is re-evaluated server-side at checkout.
+   */
+  freeShippingThresholdMinor?: number | null;
+  /**
+   * At or below this many units, a variant reads as low stock rather than in stock.
+   */
+  lowStockThreshold: number;
+  /**
+   * The most units of a single variant one bag may hold. Enforced server-side.
+   */
+  maxQuantityPerLine: number;
+  /**
+   * The Shipping half of the PDP accordion, and the shipping support page.
+   */
+  shippingPolicy?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * The Returns half. Online-only: returns are initiated through the account or support flow, never in a store.
+   */
+  returnsPolicy?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * The title for pages that derive none of their own. Per-document SEO fields override it (Phase 24).
+   */
+  defaultSeoTitle?: string | null;
+  /**
+   * The fallback meta description.
+   */
+  defaultSeoDescription?: string | null;
+  /**
+   * The social card image used when a page supplies none. Roughly 1200 × 630.
+   */
+  defaultOgImage?: (number | null) | Media;
+  announcement?: {
+    /**
+     * Shows the bar above the header. Rendered by Phase 9.
+     */
+    enabled?: boolean | null;
+    /**
+     * One short line. The bar is quiet by design — visual guide §06.
+     */
+    message?: string | null;
+    /**
+     * Optional. A site path such as /collections/limited.
+     */
+    href?: string | null;
+  };
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * Header, mega menu, footer and social links. Rendered by Phase 9 — the shell exists but is not yet mounted.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "navigation".
+ */
+export interface Navigation {
+  id: number;
+  /**
+   * Six at most: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK, ABOUT. The limit is the rule, not a suggestion — see DEV-07.
+   */
+  primary?:
+    | {
+        /**
+         * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+         */
+        label: string;
+        kind: 'reference' | 'url';
+        /**
+         * The URL is derived from this document at render time, so renaming it cannot break the link.
+         */
+        reference?:
+          | ({
+              relationTo: 'products';
+              value: number | Product;
+            } | null)
+          | ({
+              relationTo: 'categories';
+              value: number | Category;
+            } | null)
+          | ({
+              relationTo: 'collections';
+              value: number | Collection;
+            } | null)
+          | ({
+              relationTo: 'edits';
+              value: number | Edit;
+            } | null)
+          | ({
+              relationTo: 'lookbooks';
+              value: number | Lookbook;
+            } | null)
+          | ({
+              relationTo: 'journal';
+              value: number | Journal;
+            } | null)
+          | ({
+              relationTo: 'campaigns';
+              value: number | Campaign;
+            } | null);
+        /**
+         * A site path such as /shop, or a full https:// address.
+         */
+        href?: string | null;
+        /**
+         * Leave empty for a plain link. One or more columns turns this item into a mega menu.
+         */
+        columns?:
+          | {
+              /**
+               * Optional column heading — "Clothing", "By collection".
+               */
+              heading?: string | null;
+              links?:
+                | {
+                    /**
+                     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+                     */
+                    label: string;
+                    kind: 'reference' | 'url';
+                    /**
+                     * The URL is derived from this document at render time, so renaming it cannot break the link.
+                     */
+                    reference?:
+                      | ({
+                          relationTo: 'products';
+                          value: number | Product;
+                        } | null)
+                      | ({
+                          relationTo: 'categories';
+                          value: number | Category;
+                        } | null)
+                      | ({
+                          relationTo: 'collections';
+                          value: number | Collection;
+                        } | null)
+                      | ({
+                          relationTo: 'edits';
+                          value: number | Edit;
+                        } | null)
+                      | ({
+                          relationTo: 'lookbooks';
+                          value: number | Lookbook;
+                        } | null)
+                      | ({
+                          relationTo: 'journal';
+                          value: number | Journal;
+                        } | null)
+                      | ({
+                          relationTo: 'campaigns';
+                          value: number | Campaign;
+                        } | null);
+                    /**
+                     * A site path such as /shop, or a full https:// address.
+                     */
+                    href?: string | null;
+                    id?: string | null;
+                  }[]
+                | null;
+              id?: string | null;
+            }[]
+          | null;
+        /**
+         * Optional image beside the columns. The mega menu is a merchandising surface, not a sitemap.
+         */
+        feature: {
+          image?: (number | null) | Media;
+          caption?: string | null;
+          /**
+           * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+           */
+          label?: string | null;
+          kind: 'reference' | 'url';
+          /**
+           * The URL is derived from this document at render time, so renaming it cannot break the link.
+           */
+          reference?:
+            | ({
+                relationTo: 'products';
+                value: number | Product;
+              } | null)
+            | ({
+                relationTo: 'categories';
+                value: number | Category;
+              } | null)
+            | ({
+                relationTo: 'collections';
+                value: number | Collection;
+              } | null)
+            | ({
+                relationTo: 'edits';
+                value: number | Edit;
+              } | null)
+            | ({
+                relationTo: 'lookbooks';
+                value: number | Lookbook;
+              } | null)
+            | ({
+                relationTo: 'journal';
+                value: number | Journal;
+              } | null)
+            | ({
+                relationTo: 'campaigns';
+                value: number | Campaign;
+              } | null);
+          /**
+           * A site path such as /shop, or a full https:// address.
+           */
+          href?: string | null;
+        };
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Structure §20: Shop, Help, About/editorial, and the legal links. The newsletter column is a form, not navigation — it is built in Phase 19 (DEV-25).
+   */
+  footer?:
+    | {
+        heading: string;
+        links?:
+          | {
+              /**
+               * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+               */
+              label: string;
+              kind: 'reference' | 'url';
+              /**
+               * The URL is derived from this document at render time, so renaming it cannot break the link.
+               */
+              reference?:
+                | ({
+                    relationTo: 'products';
+                    value: number | Product;
+                  } | null)
+                | ({
+                    relationTo: 'categories';
+                    value: number | Category;
+                  } | null)
+                | ({
+                    relationTo: 'collections';
+                    value: number | Collection;
+                  } | null)
+                | ({
+                    relationTo: 'edits';
+                    value: number | Edit;
+                  } | null)
+                | ({
+                    relationTo: 'lookbooks';
+                    value: number | Lookbook;
+                  } | null)
+                | ({
+                    relationTo: 'journal';
+                    value: number | Journal;
+                  } | null)
+                | ({
+                    relationTo: 'campaigns';
+                    value: number | Campaign;
+                  } | null);
+              /**
+               * A site path such as /shop, or a full https:// address.
+               */
+              href?: string | null;
+              id?: string | null;
+            }[]
+          | null;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Rendered as icons in the footer. Kept quiet — visual guide §06.
+   */
+  social?:
+    | {
+        platform: 'instagram' | 'tiktok' | 'pinterest' | 'youtube' | 'x' | 'linkedin';
+        /**
+         * The full https:// profile address.
+         */
+        url: string;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "site-settings_select".
+ */
+export interface SiteSettingsSelect<T extends boolean = true> {
+  siteName?: T;
+  logo?: T;
+  tagline?: T;
+  contactEmail?: T;
+  contactPhone?: T;
+  defaultCurrency?: T;
+  defaultLocale?: T;
+  freeShippingThresholdMinor?: T;
+  lowStockThreshold?: T;
+  maxQuantityPerLine?: T;
+  shippingPolicy?: T;
+  returnsPolicy?: T;
+  defaultSeoTitle?: T;
+  defaultSeoDescription?: T;
+  defaultOgImage?: T;
+  announcement?:
+    | T
+    | {
+        enabled?: T;
+        message?: T;
+        href?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "navigation_select".
+ */
+export interface NavigationSelect<T extends boolean = true> {
+  primary?:
+    | T
+    | {
+        label?: T;
+        kind?: T;
+        reference?: T;
+        href?: T;
+        columns?:
+          | T
+          | {
+              heading?: T;
+              links?:
+                | T
+                | {
+                    label?: T;
+                    kind?: T;
+                    reference?: T;
+                    href?: T;
+                    id?: T;
+                  };
+              id?: T;
+            };
+        feature?:
+          | T
+          | {
+              image?: T;
+              caption?: T;
+              label?: T;
+              kind?: T;
+              reference?: T;
+              href?: T;
+            };
+        id?: T;
+      };
+  footer?:
+    | T
+    | {
+        heading?: T;
+        links?:
+          | T
+          | {
+              label?: T;
+              kind?: T;
+              reference?: T;
+              href?: T;
+              id?: T;
+            };
+        id?: T;
+      };
+  social?:
+    | T
+    | {
+        platform?: T;
+        url?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
