@@ -160,7 +160,7 @@ assigned to the phase that first needs it.
 | # | Gap | First needed |
 |---|---|---|
 | G-01 | **Customer address** has routes (`/account/addresses`), access rules, and order snapshots — but appears in neither the plan's entity list §2.2 nor the Phase 6 schema. | ~~Phase 6~~ **Closed in Phase 6** — the `addresses` collection, plus a reusable field group used a second time as the frozen snapshot on an order. |
-| G-02 | **Size guide** is a feature with its own dialog, and Phase 6.1b defines a *"Size guide reference"* field pointing at a collection that is never defined. | Phase 6 |
+| G-02 | **Size guide** is a feature with its own dialog, and Phase 6.1b defines a *"Size guide reference"* field pointing at a collection that is never defined. | ~~Phase 6~~ **Closed in Phase 6** — the `size-guides` collection. Rows carry their own measurement labels rather than aligning to a header row by position, so a missing cell renders blank instead of shifting its neighbours. |
 | G-03 | **Gender** is an Algolia filterable attribute (plan §12.1a) and a facet drawn in the reference image, but no product or variant field stores it. | ~~Phase 6~~ **Closed in Phase 6** — `products.gender`, indexed. Women / Men / Unisex. |
 | G-04 | **Product display price.** Price is owned by the variant, yet listings and the PDP must show a product-level price. No document says how it is derived. | ~~Phase 6~~ **Closed in Phase 6** — `products.derived`, a hook-maintained aggregate over active variants. See **D-18**. |
 | G-05 | **Variant availability state** is in the domain model §2.1 but absent from the Phase 6.1c variant schema, and its values are never enumerated. | ~~Phase 6~~ **Closed in Phase 6** — enumerated as a *derivation*, not a column: discontinued / sold out / low stock / in stock, from `active`, `inventoryQuantity` and `siteSettings.lowStockThreshold`. A fourth stored state would be a fourth thing to keep in step. See `ProductVariants.ts`. |
@@ -665,7 +665,7 @@ requests unaffected. Details: notes §1.10.
 
 **Phase 6 — Payload data model: complete.**
 
-Twenty-two collections, two globals, seventy-four tables. Every entity plan §6.1a–6.1o names, plus the
+Twenty-two collections, two globals, seventy-three tables. Every entity plan §6.1a–6.1o names, plus the
 five gaps §3.2 assigned to this phase (**G-01**–**G-05**) and the additions **DEV-10** predicted. One
 dependency added — `@payloadcms/richtext-lexical` — for a phase that defines the whole domain model,
 because a data model is configuration rather than libraries.

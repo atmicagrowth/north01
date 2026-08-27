@@ -1,6 +1,7 @@
 import type { Block } from 'payload'
 
 import { hotspotFields } from '../fields/hotspot'
+import { validateRequiredUpload } from '../fields/required'
 import { linkGroup } from '../fields/link'
 
 /**
@@ -83,7 +84,7 @@ export const figureBlock: Block = {
       name: 'image',
       type: 'upload',
       relationTo: 'media',
-      required: true,
+      validate: validateRequiredUpload,
     },
     {
       name: 'mobileImage',
@@ -118,7 +119,7 @@ export const splitFeatureBlock: Block = {
       name: 'image',
       type: 'upload',
       relationTo: 'media',
-      required: true,
+      validate: validateRequiredUpload,
     },
     {
       name: 'imageSide',
@@ -153,7 +154,7 @@ export const galleryBlock: Block = {
           name: 'image',
           type: 'upload',
           relationTo: 'media',
-          required: true,
+          validate: validateRequiredUpload,
         },
         { name: 'caption', type: 'text' },
       ],
@@ -262,7 +263,7 @@ export const shopTheLookBlock: Block = {
       name: 'image',
       type: 'upload',
       relationTo: 'media',
-      required: true,
+      validate: validateRequiredUpload,
     },
     { name: 'heading', type: 'text' },
     {

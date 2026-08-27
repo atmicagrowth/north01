@@ -1,5 +1,7 @@
 import type { CollectionBeforeDeleteHook, CollectionSlug } from 'payload'
 
+import { DELETING_PRODUCT } from './syncProductDerived'
+
 /**
  * Removes the rows that cannot exist without the row being deleted.
  *
@@ -40,13 +42,34 @@ type Dependent = {
   collection: CollectionSlug
   /** The required relationship field on the dependent collection that points back at the parent. */
   on: string
-  /** Include already-trashed rows, for dependents that are themselves soft-deleted. */
+  /** Include already-trashed rows, for dependants that are themselves soft-deleted. */
   includeTrashed?: boolean
 }
 
+type CascadeOptions = {
+  /**
+   * Set by `products` only. Records which product is being deleted so that the variant hooks skip
+   * refreshing a cache belonging to a row that is about to disappear — see `DELETING_PRODUCT`.
+   */
+  marksProductDeleted?: boolean
+}
+
 export const cascadeDelete =
-  (dependents: Dependent[]): CollectionBeforeDeleteHook =>
+  (
+    dependents: Dependent[],
+    { marksProductDeleted = false }: CascadeOptions = {},
+  ): CollectionBeforeDeleteHook =>
   async ({ id, req }) => {
+    if (marksProductDeleted) {
+      /**
+       * Written straight onto the request rather than passed as `context` to each call below,
+       * because that is what Payload does with it anyway — and doing it once, visibly, is honest
+       * about the scope. It lasts for the rest of this operation, which is exactly as long as the
+       * product is being deleted.
+       */
+      req.context = { ...req.context, [DELETING_PRODUCT]: id }
+    }
+
     for (const { collection, on, includeTrashed } of dependents) {
       try {
         await req.payload.delete({
@@ -54,12 +77,6 @@ export const cascadeDelete =
           where: { [on]: { equals: id } },
           depth: 0,
           ...(includeTrashed ? { trash: true } : {}),
-          /**
-           * Suppresses the derived-price refresh that a variant delete would otherwise trigger
-           * against a product that is itself mid-delete. The work would be wasted at best and, on a
-           * cascade from `products`, is a write to a row about to disappear.
-           */
-          context: { skipDerivedSync: true },
           req,
         })
       } catch (error) {

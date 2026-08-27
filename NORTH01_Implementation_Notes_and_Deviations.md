@@ -1463,7 +1463,7 @@ Step 4 of the append rule.
 
 ## 1.11 Phase 6 — Payload data model
 
-Twenty-two collections, two globals, seventy-four tables, one new dependency. This is the phase the
+Twenty-two collections, two globals, seventy-three tables, one new dependency. This is the phase the
 first five were foundation for, and the phase every later one builds on: from here the schema is the
 thing that has to be right, because a column added in Phase 17 is a migration and a column *shaped*
 wrongly in Phase 6 is a rewrite.
@@ -1587,7 +1587,9 @@ ALTER TABLE "look" ADD CONSTRAINT "look_parent_id_fk"
 Saving that block on an *Edit* would have written a row pointing at an `edits` id through a key that
 says `collections`. A silent cross-collection corruption, traded for four characters. The function form
 — `dbName: ({ tableName }) => \`${tableName}_blocks_look\`` — receives the parent table name and keeps
-them separate. Longest generated identifier is now 58.
+them separate, and the longest name they generate is 58 characters. (The longest identifier in the
+schema as a whole is 59 — `wishlist_items_variant_preference_id_product_variants_id_fk` — which was
+never the one at risk.)
 
 **Required address sub-fields made a draft order impossible to save.** Plan §18.1a creates a pending
 order *before or at* checkout creation, which is before the customer has typed an address. The address
@@ -1800,6 +1802,115 @@ Step 4 of the append rule.
   and is not a script. If the cache is ever found wrong in bulk — after a direct SQL edit, say — a
   small script over `recalculateProductDerived` is the fix, and it is exported for that reason.
 
+### 1.11.10 Post-implementation audit, and what it found
+
+The committed phase was re-reviewed the way Phases 3 and 4 were: seven independent auditors over
+separate dimensions — the Payload API surface, the hooks, the generated SQL, corpus compliance,
+commerce correctness, the scripts, and whether the documents tell the truth about the code — with
+every claim then handed to a verifier instructed to *refute* it. **38 claims, 8 refuted, 30 survived**,
+of which several were the same defect seen from different angles. Eight distinct problems, all fixed
+here rather than noted.
+
+**The headline: `context` is not a per-call argument, and the whole schema's price cache depended on
+it being one.** `payload.update({ …, req, context })` reads as though `context` scopes to that call.
+It does not — `createLocalReq` assigns `req.context = { ...req.context, ...context }` onto **the same
+object it was handed** and nothing restores it. Proved by running it: the returned request is `===`
+the one passed in, and the caller's context carries the flag afterwards.
+
+Two consequences, both reachable from the admin panel this phase generates:
+
+- `cascadeDelete` set `skipDerivedSync` on every cascade. Because `product-variants` installs that
+  hook too, *any* permanent variant delete latched the flag onto the shared request, and the variant's
+  own `afterDelete` then skipped the recompute — leaving a product advertising the price and stock of
+  a variant that no longer existed, with nothing to correct it until an unrelated variant happened to
+  be saved.
+- `recalculateProductDerived` set the same flag on its own product update. A bulk variant edit shares
+  one request across every matched row, so the first variant refreshed its product and **every later
+  one silently did not**. Bulk-editing prices is an everyday merchandiser action.
+
+The fix is to stop using a boolean on a shared object as a per-call switch. The suppression now
+travels as the *id of the product being deleted* — a value that names its subject cannot suppress the
+wrong subject — and the redundant flag on the product update is gone entirely, because updating a
+product fires the product's hooks and products have no `afterChange`. There was never a cycle to
+break. Both scenarios are now covered by checks that fail if the leak returns.
+
+**The second real one: swallowing a hook error hid a transaction Payload had already rolled back.**
+`recalculateProductDerived` caught its own failure, logged it and continued, on the reasoning that a
+cache refresh must not fail the variant save that triggered it. The reasoning is sound and the
+mechanism made it false: every Payload operation ends `catch { await killTransaction(req); throw }`,
+and `killTransaction` rolls back the *caller's* transaction and deletes `req.transactionID`. By the
+time the catch block ran, the variant's own write was already gone — so the operation reported success
+for a save that did not happen. Silent data loss, which is strictly worse than a failed request. Both
+this hook and the default-address hook now rethrow.
+
+**Third: eleven media references and three hotspot references could never be deleted.** The
+`NOT NULL` + `ON DELETE SET NULL` contradiction this phase discovered has a second form that the
+`beforeDelete` cascade cannot reach. Where the dependant is an *array or block row inside another
+document* — a shop-the-look hotspot, a gallery image, a review photo — there is no collection to
+cascade from: those rows are not documents. A `required` column there made the referenced product or
+media asset permanently undeletable, failing with a foreign-key error naming an internal block table.
+
+Worse, the hotspot field's own comment asserted the opposite — that deleting a product would empty the
+reference — and cited the rule it was breaking.
+
+The column is now nullable and the requirement moved to `validate`, which Payload enforces on every
+write through every API. Authoring is unchanged: a hotspot still cannot be saved without a product.
+And the resulting behaviour is the one the plan already specified — §22.1b's *"hide the hotspot if the
+product reference is invalid"* and §8.1d's neutral media placeholder both describe a reference that
+has gone empty, a state a `NOT NULL` column could never produce. Verified: a product used by a hotspot
+now deletes, the hotspot row survives, and its reference is empty. 14 columns, one migration.
+
+**Fourth: a custom `validate` silently replaces Payload's built-in one, and with it `required`.**
+`sanitize.js` installs the default validator only `if (typeof field.validate === 'undefined')`. Two
+fields returned `true` for an absent value while being `required`: every money field, and
+`addresses.country`. Neither was enforced by Payload, so a missing price or country passed validation
+and failed on the `NOT NULL` column instead — a database error where a named field error belonged.
+Both now consult the `required` option, as `slugField` already did. The six other fields with custom
+validators were checked and all happen to reject empty values already.
+
+**And four smaller ones**, each real:
+
+- **A promotion could be saved with no value.** `admin.condition` decides what is *rendered*; it does
+  not tie `percentage` to `type: 'percentage'`. A code with a null discount would have reached Phase
+  15's calculation layer. Each value field now validates against its sibling type.
+- **Stock accepted fractional values.** `min` is a bound and `admin.step` is an input attribute;
+  neither makes a number an integer, and the `CHECK` only stops negatives — `0.5 >= 0` is true. A
+  count of garments is now validated as one.
+- **The seed's `upsert` could not see soft-deleted rows, but the UNIQUE index could.** A product an
+  editor had trashed was invisible to the lookup and still occupied its slug, so the second run tried
+  to *create* it and aborted. `find` now includes trashed rows and the update un-trashes them, which
+  also makes a re-seed restore the demo catalogue rather than colliding with its own ghosts.
+- **Both scripts guarded the wrong thing.** `appEnv !== 'local'` cannot see a connection string: it is
+  derived from `VERCEL_ENV`/`NODE_ENV`, none of which the Payload CLI sets, so it reads `local` on a
+  laptop pointed at production. The guard is now decision **D-10**'s — `DATABASE_PUSH_TARGET` must name
+  the database `DATABASE_URL` actually reaches. That check had to be lifted out of `schemaPush`, which
+  also requires `NODE_ENV === 'development'` and is therefore never satisfied under the CLI;
+  `developmentDatabase` in `lib/env.core.ts` is the identity comparison alone. `baseline-migrations`
+  additionally checks its arguments against the migration index, because a row naming no real
+  migration is invisible to `migrate` and breaks `migrate:down` for its whole batch.
+
+**Documentation errors, all found by checking claims against the code**, in the same class as the
+Phase 4 audit's: the table count was 74 and is 73; `products` accounts for four tables, not six;
+`docs/DATABASE.md` listed `reviews` as soft-deleted when it is not (and two cascades carried a
+matching `includeTrashed` that meant nothing); `G-02` was the one gap row left un-struck inside an
+otherwise uniform edit; `Products.ts` documented a derived field named `inStock` that the same file
+rejects 370 lines later; `OrderItems.ts` cited `Orders.afterDelete` for a cascade this very phase
+established can only work on `beforeDelete`; `ProductVariants.ts` cited a §8 heading this commit
+renamed from "five traps" to six; both the config and `STACK_VERSIONS.md` listed tables among
+Payload's default Lexical features, which they are not; §1.11.3's "longest identifier is 58" was true
+of the block tables it described and not of the schema, where it is 59; and `money.ts` put the
+safe-integer ceiling an order of magnitude too low.
+
+**What the audit did *not* find** is worth recording too. No online-only violation. No field from
+plan §6.1a–o missing. No place where an order's snapshot can change after the fact. No path by which
+the browser becomes authoritative for a price or a total. No secret anywhere it should not be. The
+eight refuted claims were mostly assertions about Payload's API that the installed source contradicts
+— which is why the verifier's instruction to check `node_modules` rather than memory is the part of
+this method that earns its cost.
+
+**Re-verified after the fixes**: 13 targeted checks against the live database, all passing, including
+both context-leak scenarios and the hotspot delete. The seed re-runs clean. `pnpm typecheck`,
+`pnpm lint --max-warnings 0` and `pnpm build` all pass.
 ---
 
 # 2. Deviations
@@ -2485,4 +2596,5 @@ correction to this entry, not a silent change to a column default.
 | Phase 4 — second audit | 2026-08-26 | Note **§1.9.9**: the round-one fixes re-audited on the committed code. 40 claims, 32 refuted, 8 confirmed. The headline: the ESLint rule fencing the unguarded `env.core.ts` **does not see `import()`** — core `no-restricted-imports` registers no `ImportExpression` visitor — so a client component doing `use(import('@/lib/env.core'))` passed typecheck, lint and build and put `PAYLOAD_SECRET` into prerendered HTML: §1.9.3's leak, reached through different syntax. Closed with a companion `no-restricted-syntax` rule; seven bypass spellings probed and all caught. Also fixed: an empty `?port=` arming push against a different server (`??` where pg uses truthiness), IPv6 targets that could never arm, an acceptance-table row crediting the superseded runtime tripwire, a wrong file reference in `payload.config.ts`, an undocumented `VERCEL`, and an undercounted docblock. **D-14 now distinguishes** what fails the build from what only fails lint. |
 | Phase 5 — Neon Postgres + Payload CMS foundation | 2026-08-26 | Notes **§1.10**: what the phase actually had left to do once Phases 2 and 4 had done §5.1a–b, the initial migration and the discipline around it, and the whole lifecycle proved against a **throwaway database created beside the development one** so the owner's branch and admin user were never at risk — apply, roll back, re-apply through `pnpm build:deploy`, rebuild with `migrate:fresh`, drop. CRUD proved three ways: Local API, REST through the running app, and the admin panel in a real browser. **§1.10.4 records the one real defect** — the adapter attaches an `error` listener to a single pool client, so any other idle connection dying emitted `error` on a listener-less pool and became `uncaughtException`; `next dev` hides it and a production server would not. Fixed with an `onInit` pool handler and re-measured. **§1.10.5**: the push-built and migration-built schemas were dumped and diffed and are **identical**, which is the migration-drift edge case answered rather than discussed. **§1.10.6** records four traps — `delete({trash:true})` is a *permanent* delete, a compound unique index over a nullable column does not constrain NULL rows, compound index names are not namespaced by table, and a generated migration does not compile under `noUnusedParameters`. New decisions **D-16** (migrations run in the build, not the server) and **D-17** (primary keys stay `serial`); new `docs/DATABASE.md`. Step 4 carried out as **§1.10.8** — **DEV-15 confirmed and closed**, DEV-17's withdrawal vindicated with one superseded code line noted. No deviations, no new dependencies. |
 | Phase 6 — Payload data model | 2026-08-27 | Notes **§1.11**: the five decisions that had to precede any field — money as integer minor units, publish state as a column rather than Payload drafts (whose `disableNotNull` strips `NOT NULL` from the *main* table), variants as their own collection, which side of a many-to-many owns the order, and shoppers as a second auth collection. **§1.11.2** answers the two questions Phase 5 left for this phase: the variant SKU needs no partial index because a *global* unique refuses a superset of what §6.1c asks, and `afterSchemaInit` is used once, for `CHECK (inventory_quantity >= 0)`, because Phase 17's atomic decrement will be raw SQL past every validator. **§1.11.3 records three defects that only running it would find** — a `dbName` string that collapsed one block into a table shared by two collections with the wrong parent foreign key; required address sub-fields that made §18.1a's draft order impossible to save; and delete cascades on `afterDelete` that can never run, because a `required` relationship is `NOT NULL` *and* `ON DELETE SET NULL`, so the violation fails the parent's own delete. **§1.11.4**: Drizzle emits `DROP TABLE … CASCADE` alongside explicit drops of constraints the cascade has already removed — twice, and 22 statements the second time — so every generated `DROP CONSTRAINT` now needs `IF EXISTS`; and `migrate:create` is not always non-interactive, which is why the fixture removal was generated as its own migration. **§1.11.5**: 24 behavioural checks against the live database, all passing, plus a signed-in browser pass over the admin panel. Deviations **DEV-27** (a review requires a customer), **DEV-28** (`media` is created here, not in Phase 8), **DEV-29** (SKUs are globally unique), **DEV-30** (currency and locale are this project's choice). New decisions **D-18** through **D-21** in `docs/ARCHITECTURE.md`; **G-01**–**G-05** closed. One dependency: `@payloadcms/richtext-lexical`. Step 4 carried out as **§1.11.8** — **DEV-10 discharged**, DEV-01, DEV-07 and DEV-08 now enforced by the schema rather than by convention. |
+| Phase 6 — post-implementation audit | 2026-08-27 | Note **§1.11.10**: the committed phase re-reviewed by seven independent auditors with adversarial verification — 38 claims, 8 refuted, 30 survived, 8 distinct defects fixed. The headline is that **`context` is not a per-call argument**: `createLocalReq` merges it onto the *same* request object it is handed, so `skipDerivedSync` latched — every permanent variant delete skipped its product's price/stock refresh, and in a bulk variant edit only the first product was refreshed. The suppression now travels as the id of the product being deleted. Second: swallowing a hook error hid a transaction Payload had **already rolled back** via `killTransaction`, so a variant save reported success for a write that no longer existed — both hooks now rethrow. Third: eleven media references and three hotspot references were `NOT NULL` + `ON DELETE SET NULL` inside array and block rows, where no cascade can reach them, making the referenced product or asset permanently undeletable — the columns are nullable and the requirement moved to `validate`, which is also what makes plan §22.1b's "hide the hotspot" and §8.1d's placeholder reachable at all. Fourth: a custom `validate` replaces Payload's built-in one and with it `required`, which money fields and `addresses.country` both relied on. Plus a promotion saveable with no discount value, fractional stock, a seed blind to trashed rows, and both scripts guarding on `appEnv` — which cannot see a connection string — instead of D-10's database identity, now exposed as `developmentDatabase`. Twelve documentation errors corrected, including a table count of 74 that is 73 and a comment asserting the opposite of what its own foreign key did. 13 targeted re-checks against the live database, all passing. |
 > **Append this table, and the sections above it, at the end of every phase.**

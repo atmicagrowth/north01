@@ -262,7 +262,7 @@ export interface Product {
    */
   gallery?:
     | {
-        image: number | Media;
+        image?: (number | null) | Media;
         id?: string | null;
       }[]
     | null;
@@ -704,7 +704,7 @@ export interface Collection {
  * via the `definition` "FigureBlock".
  */
 export interface FigureBlock {
-  image: number | Media;
+  image?: (number | null) | Media;
   /**
    * Optional. A portrait crop for narrow screens. Falls back to the image above when unset — visual guide §10, "image crops".
    */
@@ -927,7 +927,7 @@ export interface Lookbook {
         } | null;
         gallery?:
           | {
-              image: number | Media;
+              image?: (number | null) | Media;
               caption?: string | null;
               id?: string | null;
             }[]
@@ -938,9 +938,9 @@ export interface Lookbook {
         hotspots?:
           | {
               /**
-               * Tapping the hotspot opens a preview of this product.
+               * Required. Tapping the hotspot opens a preview of this product; if the product is later deleted the hotspot is hidden rather than shown empty.
                */
-              product: number | Product;
+              product?: (number | null) | Product;
               /**
                * Optional. Overrides the product name in the marker, for a styling note.
                */
@@ -993,7 +993,7 @@ export interface Lookbook {
  * via the `definition` "SplitFeatureBlock".
  */
 export interface SplitFeatureBlock {
-  image: number | Media;
+  image?: (number | null) | Media;
   imageSide?: ('left' | 'right') | null;
   /**
    * Optional. A short label above the heading — a season, a chapter number.
@@ -1353,7 +1353,7 @@ export interface EditorialBlock {
  */
 export interface GalleryBlock {
   images: {
-    image: number | Media;
+    image?: (number | null) | Media;
     caption?: string | null;
     id?: string | null;
   }[];
@@ -1400,13 +1400,13 @@ export interface ProductGroupBlock {
  * via the `definition` "ShopTheLookBlock".
  */
 export interface ShopTheLookBlock {
-  image: number | Media;
+  image?: (number | null) | Media;
   heading?: string | null;
   hotspots: {
     /**
-     * Tapping the hotspot opens a preview of this product.
+     * Required. Tapping the hotspot opens a preview of this product; if the product is later deleted the hotspot is hidden rather than shown empty.
      */
-    product: number | Product;
+    product?: (number | null) | Product;
     /**
      * Optional. Overrides the product name in the marker, for a styling note.
      */
@@ -1915,7 +1915,7 @@ export interface Review {
    */
   photos?:
     | {
-        image: number | Media;
+        image?: (number | null) | Media;
         id?: string | null;
       }[]
     | null;

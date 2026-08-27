@@ -25,19 +25,41 @@
  * exists, so running it twice changes nothing and running it after an edit re-seeds the demo values.
  * Nothing is deleted: content an editor added by hand survives a re-seed.
  *
- * **Local only.** Seeding is a development convenience, and seeding *over* a real catalogue would
- * overwrite an editor's work. The `appEnv` guard refuses anywhere else.
+ * **Local only, and aimed at one named database.** Seeding *over* a real catalogue would overwrite an
+ * editor's work, so this refuses to run unless the **D-10** push guard is satisfied — the same
+ * evidence that lets Drizzle rewrite the development schema, and the same evidence that goes away the
+ * moment `DATABASE_URL` is repointed. See `requireLocalDatabase` below.
  */
 
 import type { Payload, Where } from 'payload'
 
 import config from '../src/payload.config'
 
-import { appEnv } from '../src/lib/env.core'
+import { developmentDatabase } from '../src/lib/env.core'
 
-if (appEnv !== 'local') {
-  throw new Error(`seed refuses to run outside the local environment (APP_ENV is "${appEnv}").`)
+/**
+ * **The guard names the database, not the environment.** An `appEnv !== 'local'` check was the first
+ * version of this and it is not a guard at all: `appEnv` is derived from `VERCEL_ENV`/`VERCEL`/
+ * `NODE_ENV`, none of which are set when the Payload CLI runs on a laptop, so it resolves to `local`
+ * whatever `DATABASE_URL` happens to point at. Someone with a production connection string in `.env`
+ * would have passed it.
+ *
+ * `developmentDatabase` is the check that actually knows: decision **D-10** requires
+ * `DATABASE_PUSH_TARGET` to name the one database that may be modified, and this compares it against
+ * the database `DATABASE_URL` really addresses. A destructive local script is therefore armed by the
+ * same evidence as Drizzle's schema push, and disarmed by the same repointing — without borrowing
+ * push's `NODE_ENV === 'development'` requirement, which the Payload CLI never satisfies.
+ */
+const requireLocalDatabase = (script: string): void => {
+  if (!developmentDatabase.ok) {
+    throw new Error(
+      `${script} refuses to run: ${developmentDatabase.reason}. ` +
+        'It may only touch the development database that DATABASE_PUSH_TARGET names — see D-10.',
+    )
+  }
 }
+
+requireLocalDatabase('seed')
 
 const { getPayload } = await import('payload')
 
@@ -90,15 +112,26 @@ type Upsert = {
 
 /** Every primary key in this schema is `serial` — decision D-17 — so an id is a number. */
 const upsert = async ({ payload, collection, where, data }: Upsert): Promise<number> => {
-  const existing = await payload.find({ collection, where, limit: 1, depth: 0 })
+  /**
+   * `trash: true` means *include trashed rows*, not *delete them* — Payload's least intuitive option
+   * name, and here it is load-bearing. `find` excludes soft-deleted documents by default, but the
+   * UNIQUE index on `slug` and `sku` does not: a product an editor moved to the trash is invisible to
+   * the lookup and still occupies its slug, so without this the second run of the seed tries to
+   * *create* it and aborts on a constraint violation. Re-seeding also restores such a row rather than
+   * leaving a shadow behind.
+   */
+  const existing = await payload.find({ collection, where, limit: 1, depth: 0, trash: true })
   const found = existing.docs[0]
 
   if (found) {
     const updated = await payload.update({
       collection,
       id: found.id,
-      data: data as never,
+      // `deletedAt: null` un-trashes anything an editor had removed, so a re-seed restores the demo
+      // catalogue rather than colliding with its own ghosts.
+      data: { ...data, deletedAt: null } as never,
       depth: 0,
+      trash: true,
     })
 
     return updated.id as number
@@ -295,7 +328,8 @@ try {
     materials: string[]
     care: string[]
     tags: string[]
-    sizeGuide: number
+    /** Optional: a ONE SIZE accessory has nothing to measure. */
+    sizeGuide?: number
     priceMinor: number
     compareAtPriceMinor?: number
     colors: { name: string; hex: string; family: string; stock: number[] }[]
@@ -504,7 +538,6 @@ try {
       materials: ['100% cashmere'],
       care: ['Dry clean. Store folded, not hung.'],
       tags: ['accessory', 'gift'],
-      sizeGuide: topsGuideId,
       priceMinor: 21000,
       colors: [
         { name: 'Oat', hex: '#D6CFC0', family: 'bone', stock: [7] },
@@ -528,7 +561,6 @@ try {
       materials: ['Vegetable-tanned calf leather'],
       care: ['Wipe with a dry cloth. It will darken. That is the point.'],
       tags: ['accessory', 'gift', 'leather'],
-      sizeGuide: topsGuideId,
       priceMinor: 9500,
       colors: [{ name: 'Espresso', hex: '#43302B', family: 'brown', stock: [11] }],
       sizes: [{ size: 'ONE SIZE', sizeSortOrder: 10 }],
@@ -555,7 +587,7 @@ try {
         materials: spec.materials,
         care: rich(...spec.care),
         tags: spec.tags,
-        sizeGuide: spec.sizeGuide,
+        ...(spec.sizeGuide ? { sizeGuide: spec.sizeGuide } : {}),
         sortOrder: spec.sortOrder,
         status: 'published',
         featured: spec.flags?.featured ?? false,

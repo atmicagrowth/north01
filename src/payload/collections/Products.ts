@@ -3,6 +3,7 @@ import type { CollectionConfig } from 'payload'
 import { minorUnits } from '../fields/money'
 import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
+import { validateRequiredUpload } from '../fields/required'
 import { cascadeDelete } from '../hooks/cascadeDelete'
 
 /**
@@ -48,7 +49,7 @@ import { cascadeDelete } from '../hooks/cascadeDelete'
  * |---|---|
  * | `priceFromMinor` / `priceToMinor` | the price on every card (feature matrix §4); price sorting (plan §11.1a) |
  * | `compareAtFromMinor` | the **Sale** card state (plan §11.1b.5) |
- * | `inStock` | the **Sold out** card state (plan §11.1b.7) |
+ * | `inventoryTotal` | the **Sold out** and **Low stock** card states (plan §11.1b.6–7) |
  *
  * **What is deliberately *not* cached here: review aggregates.** Feature matrix §5 offers a rating
  * sort "where enough real review data exists" and plan §13.1f wants an average and a distribution —
@@ -83,19 +84,30 @@ export const Products: CollectionConfig = {
     /**
      * Four dependants carry a **required** reference to a product, which Postgres stores as
      * `NOT NULL` with `ON DELETE SET NULL` — a combination that makes the delete fail rather than
-     * cascade. They are removed first, deepest first: variants go before bag lines because deleting
-     * a variant cascades to bag lines of its own. See `hooks/cascadeDelete.ts`.
+     * cascade. All four are removed first. See `hooks/cascadeDelete.ts`.
+     *
+     * The order among them does not matter, and an earlier version of this comment wrongly said it
+     * did: each is a direct dependant of this product and each is removed by its own `where` clause.
+     * Deleting the variants does cascade to bag lines of its own, but by then every bag line pointing
+     * at the product has already gone, so that nested cascade finds nothing either way.
+     *
+     * `marksProductDeleted` records *which* product is going, so the variant hooks skip refreshing a
+     * cache that is about to be deleted — without suppressing the refresh for any other product that
+     * happens to share the request.
      *
      * Reached only by a permanent delete from the trash view; `trash: true` above means the ordinary
      * admin delete is an update.
      */
     beforeDelete: [
-      cascadeDelete([
-        { collection: 'cart-items', on: 'product' },
-        { collection: 'product-variants', on: 'product', includeTrashed: true },
-        { collection: 'wishlist-items', on: 'product' },
-        { collection: 'reviews', on: 'product', includeTrashed: true },
-      ]),
+      cascadeDelete(
+        [
+          { collection: 'cart-items', on: 'product' },
+          { collection: 'product-variants', on: 'product', includeTrashed: true },
+          { collection: 'wishlist-items', on: 'product' },
+          { collection: 'reviews', on: 'product' },
+        ],
+        { marksProductDeleted: true },
+      ),
     ],
   },
 
@@ -183,7 +195,7 @@ export const Products: CollectionConfig = {
                   name: 'image',
                   type: 'upload',
                   relationTo: 'media',
-                  required: true,
+                  validate: validateRequiredUpload,
                 },
               ],
             },

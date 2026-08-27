@@ -134,9 +134,11 @@ export default buildConfig({
   globals: [SiteSettings, Navigation],
 
   /**
-   * **A restricted feature set, chosen rather than inherited.** Payload's `defaultFeatures` include
-   * alignment, indentation, subscript, superscript, strikethrough, inline code, checklists,
-   * horizontal rules, tables and an upload node. Most of those are *styling* controls, and visual
+   * **A restricted feature set, chosen rather than inherited.** Payload's `defaultEditorFeatures` is
+   * twenty long, and includes alignment, indentation, underline, strikethrough, subscript,
+   * superscript, inline code, checklists, a horizontal rule, a relationship node and an upload node.
+   * (Tables are not among them; the only table export is experimental and opt-in.) Most of those are
+   * *styling* controls, and visual
    * guide §11 and decision **D-11** both say the same thing: the design system is enforced by the
    * compiler, not by what an editor chose in a toolbar. An editorial paragraph that can be
    * centre-aligned and indented is an editorial paragraph that will be, and the page stops being

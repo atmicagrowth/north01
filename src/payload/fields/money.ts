@@ -1,8 +1,16 @@
 import type { NumberField, NumberFieldSingleValidation } from 'payload'
 
-const validateMinorUnits: NumberFieldSingleValidation = (value) => {
+/**
+ * **This validator is also responsible for `required`, and that is not obvious.** Payload installs its
+ * built-in validator only when a field declares none — `sanitize.js`: `if (typeof field.validate ===
+ * 'undefined')` — so supplying one replaces `validations.number` wholesale, and with it the checks
+ * that enforce `required`, `min` and `max`. A money field that returned `true` for an absent value
+ * would let a required price through Payload and fail later on the `NOT NULL` column, reporting a
+ * database error instead of naming the field.
+ */
+const validateMinorUnits: NumberFieldSingleValidation = (value, { req: { t }, required }) => {
   if (value === null || value === undefined) {
-    return true
+    return required ? t('validation:required') : true
   }
 
   if (!Number.isInteger(value)) {
@@ -21,6 +29,19 @@ const validateMinorUnits: NumberFieldSingleValidation = (value) => {
 }
 
 /**
+ * `NumberField` is a union over `hasMany`, so `Omit` keeps only the keys both branches share —
+ * which is exactly the single-value half, and exactly what a money column may be. `hasMany` money
+ * is not a thing, and this makes writing it a type error rather than a code review.
+ */
+type MinorUnitsOverrides = Omit<
+  NumberField,
+  'hasMany' | 'maxRows' | 'minRows' | 'type' | 'validate'
+> & {
+  name: string
+  validate?: NumberFieldSingleValidation
+}
+
+/**
  * Money, everywhere in this schema, is an integer count of the currency's minor unit.
  *
  * **Why not a decimal.** Payload's `type: 'number'` compiles to Postgres `numeric` — arbitrary
@@ -30,9 +51,9 @@ const validateMinorUnits: NumberFieldSingleValidation = (value) => {
  * would be right and every total computed from it would be a rounding argument.
  *
  * Integers avoid it completely. `1999` survives the round trip through `numeric` and through
- * `Number` unchanged — JavaScript is exact for integers to 2^53, which is nine trillion pounds — so
- * a subtotal is integer addition and a percentage discount is one deliberate rounding at one known
- * place rather than an accumulating drift at every one.
+ * `Number` unchanged — JavaScript is exact for integers below 2^53, which at two decimal places is
+ * ninety trillion in the major unit — so a subtotal is integer addition and a percentage discount is
+ * one deliberate rounding at one known place rather than an accumulating drift at every one.
  *
  * It is also what the payment authority speaks. Stripe's amounts are minor units; an order total
  * that is already `1999` is sent as `1999`, and the number that reaches Stripe is the number that
@@ -47,19 +68,6 @@ const validateMinorUnits: NumberFieldSingleValidation = (value) => {
  * Formatting for display belongs to the presentation layer, with the cart's or order's own
  * `currency` code — never to the schema.
  */
-/**
- * `NumberField` is a union over `hasMany`, so `Omit` keeps only the keys both branches share —
- * which is exactly the single-value half, and exactly what a money column may be. `hasMany` money
- * is not a thing, and this makes writing it a type error rather than a code review.
- */
-type MinorUnitsOverrides = Omit<
-  NumberField,
-  'hasMany' | 'maxRows' | 'minRows' | 'type' | 'validate'
-> & {
-  name: string
-  validate?: NumberFieldSingleValidation
-}
-
 export const minorUnits = (overrides: MinorUnitsOverrides): NumberField => ({
   type: 'number',
   min: 0,
@@ -75,10 +83,11 @@ export const minorUnits = (overrides: MinorUnitsOverrides): NumberField => ({
   },
 
   /**
-   * `min: 0` and `step: 1` are both admin-side conveniences: `min` is enforced by Payload's own
-   * number validation, but `step` governs the input widget alone and nothing stops a REST client
-   * sending `19.99`. `numeric` would then store `19.99` happily and every downstream integer
-   * assumption would quietly be wrong. So the integer rule is a real validator.
+   * `min: 0` and `step: 1` are both admin-side conveniences, and neither is enforced by Payload once
+   * this field supplies its own `validate` — see the note on `validateMinorUnits`. `step` governs the
+   * input widget alone and nothing stops a REST client sending `19.99`; `numeric` would then store
+   * `19.99` happily and every downstream integer assumption would quietly be wrong. So the integer
+   * rule, the lower bound and the required check are all real validators below.
    *
    * An explicit `validate` in `overrides` wins — a field with a tighter rule of its own should not
    * have to restate this one, and none currently does.

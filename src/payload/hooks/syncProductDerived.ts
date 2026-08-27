@@ -24,14 +24,20 @@ import type {
  *    causes commit or roll back together; omitting it would open a second connection that cannot see
  *    the uncommitted variant, and would happily cache the state from *before* the save.
  *
- * 3. **It cannot recurse.** Updating a product fires the product's own hooks, not the variant's, and
- *    products have no hook that writes variants. The `context` flag is still set, because it costs
- *    nothing and the day someone adds a product hook that touches variants is the day this matters.
+ * 3. **It cannot recurse, and it must not try to prove that with a `context` flag.** Updating a
+ *    product fires the *product's* hooks, and products have no `afterChange` — so there is no cycle.
+ *    A defensive flag would be worse than useless: Payload's `createLocalReq` mutates the request it
+ *    is handed rather than cloning it, so any `context` passed to a nested call is latched onto the
+ *    caller's request permanently. See the note at the `payload.update` below.
  *
- * 4. **It never fails the write that triggered it.** A variant save that succeeded must not be
- *    reported as failed because a cache refresh did not — the variants are the source of truth and
- *    the cache is reconstructible. The error is logged with the product ID so it can be rebuilt.
- *    (`payload.logger` rather than `console`, which this project's ESLint config restricts.)
+ * 4. **It rethrows, and the first version of it did not.** The intent was that a variant save which
+ *    succeeded should not be reported as failed because a cache refresh did not — the variants are
+ *    the source of truth and the cache is reconstructible. That reasoning is sound and the mechanism
+ *    made it false: every Payload operation ends `catch (error) { await killTransaction(req); throw }`,
+ *    and `killTransaction` rolls the *caller's* transaction back and deletes `req.transactionID`. By
+ *    the time this catch block runs the variant's own write is already gone, so swallowing the error
+ *    reported success for a save that did not happen — silent data loss, which is strictly worse than
+ *    a failed request. The error is logged for the product ID and then rethrown.
  *
  * **What counts as active.** `active === true` and not in the trash. Payload's `find` already
  * excludes trashed documents unless asked, so soft-deleting a variant removes it from the aggregate
@@ -121,19 +127,31 @@ export const recalculateProductDerived = async ({
       }
     }
 
+    /**
+     * **No `context` flag here, deliberately.** Passing one would be the obvious defensive move and
+     * it is the bug: `createLocalReq` does not build an isolated request, it *mutates* the one it is
+     * given — `req.context = { ...req.context, ...context }` on the same object, verified by running
+     * it. A flag set here would therefore latch onto the caller's request for the rest of the
+     * operation, and a bulk variant edit shares one request across every matched row: the first
+     * variant would refresh its product and every later one would skip.
+     *
+     * Nothing needs suppressing anyway. Updating a product fires the *product's* hooks, and products
+     * have no `afterChange` — the only hook they carry is `beforeDelete`. There is no cycle to break.
+     */
     await payload.update({
       collection: 'products',
       id: productId,
       data: { derived },
       depth: 0,
-      context: { skipDerivedSync: true },
       req,
     })
   } catch (error) {
     payload.logger.error({
       err: error,
-      msg: `Could not refresh derived price/stock for product ${String(productId)}. The variants are unaffected and remain authoritative; re-save any variant to rebuild.`,
+      msg: `Could not refresh derived price/stock for product ${String(productId)}. Payload has already rolled the enclosing transaction back, so the write that triggered this did not happen either.`,
     })
+
+    throw error
   }
 }
 
@@ -155,16 +173,23 @@ const relationshipId = (value: unknown): number | string | undefined => {
   return undefined
 }
 
+/**
+ * The key `Products.beforeDelete` sets while cascading, holding the id of the product being deleted.
+ *
+ * It is an **id rather than a boolean** because of the same `createLocalReq` mutation: whatever is
+ * put on `context` stays on the shared request for the rest of the operation, so a boolean set while
+ * deleting product 7 would go on to suppress the recompute for an unrelated product 9 later in the
+ * same bulk delete. Comparing against the id makes the suppression say what it means — *skip the
+ * refresh for the row that is disappearing* — and leaves every other product's refresh intact.
+ */
+export const DELETING_PRODUCT = 'deletingProductId'
+
 export const syncProductDerivedAfterChange: CollectionAfterChangeHook = async ({
   context,
   doc,
   previousDoc,
   req,
 }) => {
-  if (context?.skipDerivedSync) {
-    return doc
-  }
-
   const ids = new Set<number | string>()
   const current = relationshipId((doc as { product?: unknown }).product)
   const previous = relationshipId((previousDoc as { product?: unknown } | undefined)?.product)
@@ -178,6 +203,12 @@ export const syncProductDerivedAfterChange: CollectionAfterChangeHook = async ({
   }
 
   for (const id of ids) {
+    // Same rule as the delete hook: a product that is itself being removed needs no refresh. This
+    // path is reached when a cascade trashes a variant on the way to deleting its product.
+    if (String(context?.[DELETING_PRODUCT] ?? '') === String(id)) {
+      continue
+    }
+
     await recalculateProductDerived({ payload: req.payload, productId: id, req })
   }
 
@@ -189,19 +220,19 @@ export const syncProductDerivedAfterDelete: CollectionAfterDeleteHook = async ({
   doc,
   req,
 }) => {
-  /**
-   * Set by `cascadeDelete` when the product itself is being deleted. Refreshing the cache of a row
-   * that is about to disappear is wasted work at best.
-   */
-  if (context?.skipDerivedSync) {
+  const id = relationshipId((doc as { product?: unknown }).product)
+
+  if (id === undefined) {
     return doc
   }
 
-  const id = relationshipId((doc as { product?: unknown }).product)
-
-  if (id !== undefined) {
-    await recalculateProductDerived({ payload: req.payload, productId: id, req })
+  // The product this variant belonged to is itself being deleted; refreshing a row that is about to
+  // disappear is wasted work, and on a cascade it is a write to a row inside its own delete.
+  if (String(context?.[DELETING_PRODUCT] ?? '') === String(id)) {
+    return doc
   }
+
+  await recalculateProductDerived({ payload: req.payload, productId: id, req })
 
   return doc
 }

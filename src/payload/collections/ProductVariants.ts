@@ -1,4 +1,4 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionConfig, NumberFieldSingleValidation } from 'payload'
 
 import { minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
@@ -23,7 +23,7 @@ import {
  * Read literally that is a *partial, compound* unique index — `UNIQUE (product_id, sku) WHERE
  * active` — which Payload's collection `indexes` API cannot express: its type is `{ fields, unique }`
  * with no `where` (verified in `node_modules/payload/dist/collections/config/types.d.ts`). Phase 5
- * found this and left the decision here on purpose (`docs/DATABASE.md` §8, "five traps"), with three
+ * found this and left the decision here on purpose (`docs/DATABASE.md` §8, "six traps"), with three
  * spellings on the table: the partial index through the adapter's `afterSchemaInit` hook, a hand-
  * written migration, or a stricter constraint Payload *can* express.
  *
@@ -57,6 +57,27 @@ import {
  * because Postgres treats NULLs as distinct. All three columns are therefore `required`, which is
  * what makes the constraint mean what it says.
  */
+/**
+ * Stock is a count of garments, so it is a whole number. Neither `min` nor `admin.step` makes it one:
+ * `step` is an input-widget attribute, and the column is Postgres `numeric` with no precision, which
+ * stores `4.5` without complaint. The `CHECK` added in `payload.config.ts` stops it going *negative*
+ * and says nothing about being an integer — `0.5 >= 0` is true.
+ *
+ * A fractional count would survive into Phase 17's atomic decrement and into every "only 2 left"
+ * message, so it is refused here.
+ */
+const validateStock: NumberFieldSingleValidation = (value, { req: { t }, required }) => {
+  if (value === null || value === undefined) {
+    return required ? t('validation:required') : true
+  }
+
+  if (!Number.isInteger(value) || value < 0) {
+    return 'A whole number of units, zero or more.'
+  }
+
+  return true
+}
+
 export const ProductVariants: CollectionConfig = {
   slug: 'product-variants',
 
@@ -277,6 +298,7 @@ export const ProductVariants: CollectionConfig = {
       min: 0,
       index: true,
       label: 'Stock',
+      validate: validateStock,
       admin: {
         step: 1,
         description:

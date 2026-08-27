@@ -40,7 +40,7 @@ export const OrderItems: CollectionConfig = {
 
   /**
    * Soft-deleted for the same reason as the order it belongs to: it is part of a financial record.
-   * The cascade in `Orders.afterDelete` passes `trash: true` so that permanently deleting an order
+   * The cascade in `Orders.beforeDelete` passes `trash: true` so that permanently deleting an order
    * takes its trashed lines with it rather than leaving them behind.
    */
   trash: true,

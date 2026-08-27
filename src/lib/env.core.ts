@@ -410,6 +410,49 @@ function resolveSchemaPush(env: ServerEnv, current: AppEnv): SchemaPushDecision 
 export const schemaPush: SchemaPushDecision = resolveSchemaPush(serverEnv, appEnv)
 
 /**
+ * **The database-identity half of D-10, on its own.**
+ *
+ * `schemaPush` answers "may Drizzle rewrite this schema", and it is deliberately narrower than the
+ * identity question: it also requires `NODE_ENV === 'development'`, which `next dev` sets and the
+ * `payload` CLI does not. That is right for push — a CLI run should never push — and wrong as a guard
+ * for a *script*, which is run from the CLI on purpose and still needs to know it is talking to the
+ * development database.
+ *
+ * So this exposes the comparison alone: does `DATABASE_URL` address the database that
+ * `DATABASE_PUSH_TARGET` names? It is the check `scripts/` uses before doing anything destructive —
+ * seeding over a catalogue, writing migration ledger rows — because the alternative, testing
+ * `appEnv`, cannot see the connection string at all and reads `local` on a laptop pointed at
+ * production.
+ *
+ * Fail-closed like everything else here: unset, unparseable or mismatched all mean no.
+ */
+export function resolveDevelopmentDatabase(): { ok: boolean; reason: string } {
+  if (!serverEnv.DATABASE_PUSH_TARGET) {
+    return {
+      ok: false,
+      reason: 'DATABASE_PUSH_TARGET is not set, so no database is nominated as the development one',
+    }
+  }
+
+  const permitted = normalisePushTarget(serverEnv.DATABASE_PUSH_TARGET)
+  if (!permitted.ok) return { ok: false, reason: permitted.reason }
+
+  const actual = databaseIdentity(serverEnv.DATABASE_URL)
+  if (!actual.ok) return { ok: false, reason: actual.reason }
+
+  if (actual.id !== permitted.id) {
+    return {
+      ok: false,
+      reason: `DATABASE_URL names "${actual.id}" and DATABASE_PUSH_TARGET nominates "${permitted.id}"`,
+    }
+  }
+
+  return { ok: true, reason: `DATABASE_URL matches DATABASE_PUSH_TARGET ("${actual.id}")` }
+}
+
+export const developmentDatabase = resolveDevelopmentDatabase()
+
+/**
  * Optional integrations, as groups (plan §4.1b).
  *
  * A group is all-or-nothing: a Cloudinary cloud name with no API secret is not a working Cloudinary,

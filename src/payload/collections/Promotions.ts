@@ -1,4 +1,4 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionConfig, NumberFieldSingleValidation } from 'payload'
 
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { normaliseCode } from '../fields/slug'
@@ -38,6 +38,27 @@ import { normaliseCode } from '../fields/slug'
  * discount"*; the column exists so the rule is visible rather than implicit, and the cart carries a
  * single `promotion` relationship which makes stacking unrepresentable regardless.
  */
+/**
+ * A promotion's value lives in a different column depending on its type, and nothing in Payload ties
+ * the two together: `admin.condition` decides whether a field is *rendered* and whether its value is
+ * kept on save, but a percentage promotion with no percentage is still a valid document as far as the
+ * field configs are concerned. Phase 15's calculation layer would then be handed a code whose discount
+ * is `null` — plan §15.1a's *"server-side validation is mandatory"* applied to the promotion's own
+ * shape rather than to the customer's use of it.
+ *
+ * So each value field validates against its sibling `type`. The pairing is checked on every save,
+ * through every API, and a promotion that cannot compute a discount cannot be stored.
+ */
+const requiredForType =
+  (type: string, message: string): NumberFieldSingleValidation =>
+  (value, { siblingData }) => {
+    if ((siblingData as { type?: unknown })?.type !== type) {
+      return true
+    }
+
+    return value === null || value === undefined ? message : true
+  }
+
 export const Promotions: CollectionConfig = {
   slug: 'promotions',
 
@@ -101,6 +122,10 @@ export const Promotions: CollectionConfig = {
           type: 'number',
           min: 1,
           max: 100,
+          validate: requiredForType(
+            'percentage',
+            'A percentage discount needs a percentage between 1 and 100.',
+          ),
           admin: {
             width: '50%',
             step: 1,
@@ -118,6 +143,7 @@ export const Promotions: CollectionConfig = {
         minorUnits({
           name: 'valueMinor',
           label: 'Amount off',
+          validate: requiredForType('fixed', 'A fixed discount needs an amount, in minor units.'),
           admin: {
             width: '50%',
             condition: (_data, siblingData: { type?: unknown }) => siblingData?.type === 'fixed',

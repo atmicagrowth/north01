@@ -140,7 +140,7 @@ export const Customers: CollectionConfig = {
       cascadeDelete([
         { collection: 'addresses', on: 'customer' },
         { collection: 'wishlist-items', on: 'customer' },
-        { collection: 'reviews', on: 'customer', includeTrashed: true },
+        { collection: 'reviews', on: 'customer' },
       ]),
     ],
 

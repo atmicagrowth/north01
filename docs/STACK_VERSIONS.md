@@ -98,8 +98,11 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
    See `docs/ARCHITECTURE.md` → "Decision D-03" for the resolution.
 
 3. **A restricted Lexical feature set is a deliberate pin of its own.** `lexicalEditor()` defaults to
-   a large feature list — alignment, indentation, subscript, strikethrough, checklists, horizontal
-   rules, tables, an upload node. `src/payload.config.ts` replaces it with nine features. That is a
+   twenty features — counted in `dist/lexical/config/server/default.js` — including alignment,
+   indentation, underline, strikethrough, subscript, superscript, inline code, checklists, a
+   horizontal rule, a relationship node and an upload node. (Tables are *not* among them: the only
+   table export is `EXPERIMENTAL_TableFeature`, which is opt-in.) `src/payload.config.ts` replaces
+   the list with nine features. That is a
    design decision (visual guide §11 and **D-11**: the design system is enforced by the compiler, not
    by an editor's toolbar), and it is recorded here because the *upgrade* consequence lands on this
    page: a Payload minor release that adds a default feature will not silently add it to this project,

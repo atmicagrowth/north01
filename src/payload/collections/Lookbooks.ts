@@ -3,6 +3,7 @@ import type { CollectionConfig } from 'payload'
 import { hotspotFields } from '../fields/hotspot'
 import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
+import { validateRequiredUpload } from '../fields/required'
 
 /**
  * The lookbook. Plan §6.1h defines it in two levels — a lookbook of chapters, each chapter a title,
@@ -110,7 +111,7 @@ export const Lookbooks: CollectionConfig = {
                       name: 'image',
                       type: 'upload',
                       relationTo: 'media',
-                      required: true,
+                      validate: validateRequiredUpload,
                     },
                     { name: 'caption', type: 'text' },
                   ],

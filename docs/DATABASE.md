@@ -33,7 +33,7 @@ the project owner's job, not this repository's. Nothing in the workflow below as
 
 ### The tables today
 
-**Seventy-four.** Nine belong to Payload's own machinery — `users`, `users_sessions`,
+**Seventy-three.** Nine belong to Payload's own machinery — `users`, `users_sessions`,
 `customers_sessions`, `payload_preferences`, `payload_preferences_rels`, `payload_locked_documents`,
 `payload_locked_documents_rels`, `payload_migrations`, `payload_kv` — and the rest are Phase 6's data
 model: twenty-two collections, two globals, and the array, block and relationship tables beneath them.
@@ -42,11 +42,12 @@ Phase 5's fixture, `schema_probes`, is gone. Removing it was this project's firs
 migration, deliberately rehearsed on something worthless before the same shape of migration is ever
 pointed at an order table.
 
-The count is worth knowing because a Payload collection is rarely one table. `products` is six —
-itself, `products_gallery`, `products_texts` (the `hasMany` text fields), `products_rels` (the
-`hasMany` relationships), and the locked-document and preference rows that reference it. An `array`
-field is a table; a `blocks` field is one table per block type; a `hasMany` relationship is a shared
-`_rels` table. This is why field names have to be watched for identifier length — §8.
+The count is worth knowing because a Payload collection is rarely one table. `products` is four —
+itself, `products_gallery` (the array), `products_texts` (the `hasMany` text fields) and
+`products_rels` (the `hasMany` relationships). An `array` field is a table; a `blocks` field is one
+table per block type; a `hasMany` relationship is a per-collection `_rels` table. The two shared
+`payload_*_rels` tables gain a `products_id` *column* rather than a table of their own, and are
+already counted among the nine. This is why field names have to be watched for identifier length — §8.
 
 ---
 
@@ -255,8 +256,10 @@ admin user.
 
 ## 8. Schema conventions
 
-Plan §5.1d asks for each of these to be deliberate. They are worked examples in
-`src/payload/collections/SchemaProbes.ts` and visible as SQL in the initial migration.
+Plan §5.1d asks for each of these to be deliberate. The worked examples were
+`src/payload/collections/SchemaProbes.ts` until Phase 6 removed it; the SQL is still readable in
+`src/payload/migrations/20260827_022341_initial.ts`, and every convention is now live configuration
+throughout `src/payload/collections/`.
 
 | Concern | Convention |
 |---|---|
@@ -267,7 +270,7 @@ Plan §5.1d asks for each of these to be deliberate. They are worked examples in
 | **Foreign key** | A single non-polymorphic `relationship` writes a real `REFERENCES` column with **`ON DELETE SET NULL`** |
 | **Required vs nullable** | `required` means the row cannot be read meaningfully without it. A statement about the domain, never about the form |
 | **Timestamps** | `timestamps: true` on every collection |
-| **Soft delete** | `trash: true` where a delete must be recoverable: `orders`, `order_items`, `customers`, `products`, `product_variants`, `reviews`. Sets `deleted_at`; reads exclude trashed rows unless they ask for them |
+| **Soft delete** | `trash: true` where a delete must be recoverable: `orders`, `order_items`, `customers`, `products`, `product_variants`. Sets `deleted_at`; reads exclude trashed rows unless they ask for them. Reviews are **not** among them — moderation already has a `rejected` state, so deleting one is deliberate |
 | **Archive** | A `status` field. An *editorial* state, and deliberately not the same column as `deleted_at` |
 | **Publish state** | `status` (`draft` \| `published`) plus `publishedAt`, **not** Payload's `versions: { drafts: true }` — see "Drafts are not used" below |
 | **Money** | An integer count of minor units, in a column whose name ends `Minor`. `src/payload/fields/money.ts` |
@@ -350,13 +353,25 @@ invisible to the snapshot chain, so nothing would ever maintain it.
 undeletable.** The two are set independently and their combination is a contradiction that only
 appears at delete time — Postgres tries to null a column that may not be null and raises
 `null value in column "variant_id" violates not-null constraint`, failing the *parent's* delete.
-Every dependant with a required back-reference therefore needs a `beforeDelete` cascade:
-`carts`→lines, `orders`→lines, `products`→variants/lines/wishlist/reviews, `product_variants`→lines,
-`customers`→addresses/wishlist/reviews. `src/payload/hooks/cascadeDelete.ts`.
 
-`beforeDelete`, not `afterDelete`: the violation happens *during* the parent's delete statement, so a
-cleanup scheduled afterwards never runs — the transaction has already rolled back. Nullable references
-are deliberately left to `SET NULL`, which is why deleting a customer keeps their orders.
+Two remedies, and which one applies depends on whether the dependant is a document.
+
+*Where it is a collection*, a `beforeDelete` cascade removes the children first: `carts`→lines,
+`orders`→lines, `products`→variants/lines/wishlist/reviews, `product_variants`→lines,
+`customers`→addresses/wishlist/reviews. `src/payload/hooks/cascadeDelete.ts`. `beforeDelete`, not
+`afterDelete`: the violation happens *during* the parent's delete statement, so a cleanup scheduled
+afterwards never runs — the transaction has already rolled back.
+
+*Where it is an array or block row inside another document* — a shop-the-look hotspot, a gallery
+image, a review photo — no cascade is possible, because those rows are not documents and cannot be
+deleted independently of the page that contains them. There the **column is nullable and the
+requirement moves to `validate`** (`src/payload/fields/required.ts`), which Payload enforces on every
+write. That also makes two rules the plan had already written reachable: §22.1b's *"hide the hotspot
+if the product reference is invalid"* and §8.1d's neutral media placeholder both describe a reference
+that has gone empty, which a `NOT NULL` column could never produce.
+
+Nullable references are otherwise left to `SET NULL`, which is why deleting a customer keeps their
+orders.
 
 **`payload.delete({ trash: true })` is not a soft delete.** It means *permanently delete, trashed
 documents included* — the opposite of what it reads like. A soft delete is an **update** that sets

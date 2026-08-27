@@ -1,4 +1,4 @@
-import type { Field } from 'payload'
+import type { Field, TextFieldSingleValidation } from 'payload'
 
 /**
  * A postal address, defined once and used in two structurally different ways.
@@ -132,16 +132,20 @@ export const addressFields = ({ required }: AddressOptions): Field[] => [
           ],
         },
         /**
-         * Empty passes when the field is optional — Payload's own `required` check handles
-         * emptiness, and duplicating it here would refuse the empty order snapshot that a draft
-         * order legitimately has.
+         * Empty is accepted only when the field is optional — an order snapshot on a draft order
+         * legitimately has none. When it is required, this has to say so itself: supplying a custom
+         * `validate` replaces Payload's built-in one, which is what would otherwise enforce
+         * `required`, `minLength` and `maxLength`. Without this branch a saved address could pass
+         * validation with no country and fail on the `NOT NULL` column instead.
          */
-        validate: (value: unknown) =>
+        validate: ((value, { req: { t } }) =>
           value === null || value === undefined || value === ''
-            ? true
+            ? required
+              ? t('validation:required')
+              : true
             : typeof value === 'string' && /^[A-Z]{2}$/.test(value)
               ? true
-              : 'Two-letter ISO country code — GB, US, FR.',
+              : 'Two-letter ISO country code — GB, US, FR.') satisfies TextFieldSingleValidation,
       },
     ],
   },

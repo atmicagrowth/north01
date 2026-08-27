@@ -134,14 +134,18 @@ export const Addresses: CollectionConfig = {
           })
         } catch (error) {
           /**
-           * Same rule as the derived-price sync: a bookkeeping failure must not fail the write that
-           * caused it. The customer saved an address successfully; the worst outcome here is two
-           * rows flagged default, which the account UI resolves by choosing one.
+           * Rethrown, for the same reason as the derived-price sync. "A bookkeeping failure must not
+           * fail the write that caused it" is the right instinct and it is not available here:
+           * Payload's operations end by calling `killTransaction(req)`, which has already rolled the
+           * caller's transaction back by the time this runs. Swallowing would report a saved address
+           * that was not saved.
            */
           req.payload.logger.error({
             err: error,
-            msg: `Could not clear the previous default address for customer ${String(customerId)}.`,
+            msg: `Could not clear the previous default address for customer ${String(customerId)}. The enclosing transaction has been rolled back.`,
           })
+
+          throw error
         }
 
         return doc

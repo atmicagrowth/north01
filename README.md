@@ -104,7 +104,7 @@ push-built development schema compared against the migration-built one and found
 workflow: [`docs/DATABASE.md`](docs/DATABASE.md).
 
 **Phase 6 — Payload data model: complete.** The domain model the rest of the build stands on:
-twenty-two collections and two globals across seventy-four tables — products and variants, the
+twenty-two collections and two globals across seventy-three tables — products and variants, the
 taxonomy and size guides, collections, Edits, campaigns, lookbooks with shoppable hotspots and the
 Journal, carts and orders with frozen purchase snapshots, promotions, customers, addresses, wishlist,
 reviews, FAQs and site settings.

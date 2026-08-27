@@ -1,5 +1,7 @@
 import type { Field, NumberFieldSingleValidation } from 'payload'
 
+import { validateRequiredRelationship } from './required'
+
 /**
  * A Shop-the-Look hotspot: a point on an editorial image that resolves to a product.
  *
@@ -13,12 +15,17 @@ import type { Field, NumberFieldSingleValidation } from 'payload'
  * every crop ratio and every `srcset` variant, which is what plan §22.1b's "responsive anchor" means
  * in practice. `0,0` is the top-left corner.
  *
- * `product` is required. A hotspot with nothing behind it is a dot that does nothing when tapped —
- * plan §0.1.17's fake UI — so it cannot be saved. The *other* failure, a product that is deleted
- * after the hotspot was authored, cannot be prevented at the schema level: `ON DELETE SET NULL`
- * empties the reference (`docs/DATABASE.md` §8), and plan §22.1b already says what to do about it —
- * *"if the product reference is invalid: hide the hotspot; do not break the entire image"*. That is
- * the renderer's rule, and it is Phase 22's to implement.
+ * **`product` is required to author and nullable in the database**, which is not a compromise but the
+ * only shape that makes both of the plan's rules reachable. A hotspot with nothing behind it is a dot
+ * that does nothing when tapped — plan §0.1.17's fake UI — so `validate` refuses to save one. But a
+ * `required` *column* would be `NOT NULL` with `ON DELETE SET NULL`, and because a hotspot is an array
+ * row inside another document rather than a collection, no cascade can clear it: the product would
+ * simply become undeletable, failing with a foreign-key error naming an internal block table.
+ *
+ * A nullable column deletes cleanly and empties the reference, which is exactly the state plan §22.1b
+ * describes and hands to the renderer — *"if the product reference is invalid: hide the hotspot; do
+ * not break the entire image"*. That rule was unreachable while the delete could not happen. See
+ * `fields/required.ts`.
  */
 const validatePercentage: NumberFieldSingleValidation = (value, { req: { t }, required }) => {
   if (value === null || value === undefined) {
@@ -44,9 +51,10 @@ export const hotspotFields = (): Field[] => [
     name: 'product',
     type: 'relationship',
     relationTo: 'products',
-    required: true,
+    validate: validateRequiredRelationship,
     admin: {
-      description: 'Tapping the hotspot opens a preview of this product.',
+      description:
+        'Required. Tapping the hotspot opens a preview of this product; if the product is later deleted the hotspot is hidden rather than shown empty.',
     },
   },
   {

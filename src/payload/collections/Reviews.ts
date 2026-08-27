@@ -1,5 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
+import { validateRequiredUpload } from '../fields/required'
+
 /**
  * Product reviews. Plan §6.1j lists the fields and states the rule the schema has to make
  * structurally true:
@@ -134,7 +136,7 @@ export const Reviews: CollectionConfig = {
           name: 'image',
           type: 'upload',
           relationTo: 'media',
-          required: true,
+          validate: validateRequiredUpload,
         },
       ],
     },
