@@ -124,6 +124,39 @@ const ServerEnvSchema = PublicEnvSchema.extend({
   CLOUDINARY_API_KEY: z.string().min(1).optional(),
   CLOUDINARY_API_SECRET: z.string().min(1).optional(),
 
+  /**
+   * **Three variables this project does not use, refused rather than ignored.**
+   *
+   * The `cloudinary` SDK reads `CLOUDINARY_URL`, `CLOUDINARY_ACCOUNT_URL` and `CLOUDINARY_API_PROXY`
+   * straight out of `process.env` on its first `config()` call, merging them *underneath* whatever
+   * the caller passes. `CLOUDINARY_URL` is the interesting one: it is a single string of the form
+   * `cloudinary://<key>:<secret>@<cloud>`, so its presence silently supplies a write credential
+   * behind this module's deliberate three-variable scheme — and a malformed one throws inside the SDK
+   * at boot, far from anything that names it.
+   *
+   * Refusing them is the only control that works, because an allowlist here cannot stop a library
+   * reading `process.env` directly. Anyone who sets one gets an error naming the variable and the
+   * three that replace it, at startup, instead of a mystery.
+   */
+  CLOUDINARY_URL: z
+    .undefined({
+      error:
+        'CLOUDINARY_URL is refused. The Cloudinary SDK reads it directly and it carries an API secret, ' +
+        "which would bypass this project's NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / " +
+        'CLOUDINARY_API_SECRET scheme. Set those three instead — see docs/ENVIRONMENT.md.',
+    })
+    .optional(),
+  CLOUDINARY_ACCOUNT_URL: z
+    .undefined({
+      error: 'CLOUDINARY_ACCOUNT_URL is refused — this project configures Cloudinary explicitly.',
+    })
+    .optional(),
+  CLOUDINARY_API_PROXY: z
+    .undefined({
+      error: 'CLOUDINARY_API_PROXY is refused — this project configures Cloudinary explicitly.',
+    })
+    .optional(),
+
   /** Phase 12 — Algolia write key. Never exposed to the browser. *(named here — DEV-26)* */
   ALGOLIA_ADMIN_API_KEY: z.string().min(1).optional(),
 
@@ -628,5 +661,29 @@ export function reportEnvironment(): void {
           'It will be treated as unavailable. See docs/ENVIRONMENT.md.',
       )
     }
+  }
+
+  /**
+   * **The one integration whose absence is no longer "its phase has not arrived".**
+   *
+   * Silence on an unconfigured group is right while the phase that consumes it is still ahead. Phase
+   * 8 is where that stops being true for Cloudinary, and the failure it hides is not graceful: with
+   * no cloud configured Payload keeps local-disk storage, and a serverless filesystem is ephemeral
+   * and usually read-only — so the first upload on a deployed environment fails, and every file
+   * written before a restart disappears. Locally the same state is entirely correct and needs no
+   * comment, which is why this warns on `appEnv` rather than on configuration alone.
+   *
+   * It warns rather than throws. Refusing to boot would take a storefront offline over a feature
+   * nobody may be using that day, and `docs/ARCHITECTURE.md` §2 is explicit that an unavailable
+   * optional service must degrade rather than stop the shop.
+   */
+  if (appEnv !== 'local' && integrationStatus('cloudinary') === 'unconfigured') {
+    console.warn(
+      `\n[env] Cloudinary is not configured, and this is the ${appEnv} environment.\n` +
+        '      Media uploads will fall back to the local filesystem, which on a serverless platform is\n' +
+        '      ephemeral and often read-only: uploads will fail or silently vanish between requests.\n' +
+        '      Set NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET.\n' +
+        '      The storefront renders without them — every image falls back to its placeholder.\n',
+    )
   }
 }

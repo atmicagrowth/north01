@@ -45,7 +45,7 @@ pointed for generated types.
 | `src/app/(frontend)/` | storefront routes, layouts, pages | Phase 2 |
 | `src/app/(payload)/` | Payload admin + REST API routes | Phase 2 |
 | `src/payload.config.ts` | the Payload config, aliased as `@payload-config` | Phase 2 |
-| `src/payload/` | collections, globals, blocks, reusable fields, hooks, migrations, **access rules, email** | Phase 2; filled out in Phase 6; `access/` and `email/` in Phase 7 |
+| `src/payload/` | collections, globals, blocks, reusable fields, hooks, migrations, access rules, email, **storage adapters** | Phase 2; filled out in Phase 6; `access/` and `email/` in Phase 7; `storage/` in Phase 8 |
 | `src/components/` | reusable presentation and interaction components | Phase 3 |
 | `src/lib/` | integrations, infrastructure, helpers, **server-only** modules | Phase 3 (`cn.ts`); `env.public.ts` / `env.server.ts` / `env.core.ts` from Phase 4 |
 | `src/instrumentation.ts` | Next's startup hook — environment validation | Phase 4 |
@@ -236,7 +236,14 @@ Rejected: `payload-cloudinary`, `payload-storage-cloudinary`, `@jhb.software/pay
 community packages with no compatibility guarantee against Payload 3.88. Revisit if Payload ships an
 official adapter.
 
-*Confirmed in Phase 8.*
+***Confirmed in Phase 8, by measurement rather than by recollection.*** `@payloadcms/storage-cloudinary`
+still returns a hard 404 on the registry, while `storage-s3`, `storage-vercel-blob`, `storage-azure`,
+`storage-gcs` and `storage-uploadthing` all publish at exactly `3.88.0` — official adapters do ship at
+our version, and Cloudinary is simply not one of them. The premise holds and the "revisit" clause has
+not triggered. The adapter is `src/payload/storage/cloudinary.ts`.
+
+*(This line previously read "Confirmed in Phase 8" while Phase 8 had not yet run — a forward-tense
+marker that claimed a check nobody had made. It is now true.)*
 
 ### D-04 — Algolia's scope, and what happens when it is down
 
@@ -614,6 +621,85 @@ password. The token, the one-hour expiry, the single use, the session handling a
 reset route are all real and all tested. Only the transport is missing, it says so at `error` level on
 every send outside local development, and Phase 19 replaces the adapter without touching the flow.
 
+### D-26 — Cloudinary transforms at delivery; Payload generates no image sizes
+
+The tech stack assigns Cloudinary *"Product/editorial image delivery **and transformations**"*, and the
+feature matrix says *"Cloudinary is media delivery; Payload stores media metadata/relationships."* Taken
+literally, that settles an architecture: Payload stores **one** original per asset and every responsive
+variant is a Cloudinary URL built at render time.
+
+The alternative — Payload's `imageSizes`, which is how every official storage adapter works — was
+rejected on measurement. Each declared size costs six columns and a b-tree index on the `media` table,
+and each is a **separate upload**, so eight delivery contexts would mean 48 columns and nine uploads per
+asset of work Cloudinary does natively for nothing. It also freezes the breakpoints into stored rows:
+changing one would mean re-uploading the library.
+
+What makes the chosen side cheap is a property of Cloudinary rather than a convenience: a delivery URL
+is **pure string concatenation**, verified both in the SDK's own `generate_transformation_string` and
+against the live CDN with no credentials. So `src/lib/media/cloudinary-url.ts` has no imports, needs no
+secret, and can run anywhere — which is also how Phase 8's prompt, *"Never expose Cloudinary server
+secrets to the browser"*, is satisfied by shape rather than by discipline.
+
+The one thing this architecture must get right, and the thing a naive version gets wrong, is that
+**every requested width has to be clamped against the stored dimensions**. `c_fill` will happily
+upscale, and `c_lfill` — the documented "fill but do not enlarge" mode — silently abandons the aspect
+ratio when the request exceeds the source, which is the layout shift §8.1d forbids arriving through the
+option that looks safest. Both were measured; the clamp is in the builder.
+
+### D-27 — `sharp` is not installed, and the crop tool is switched off
+
+`DEV-28` and `docs/STACK_VERSIONS.md` both predicted Phase 8 would install `sharp`. It does not, and
+both are corrected. A prediction is not a requirement; this project has withdrawn one before (DEV-17).
+
+Under **D-26** nothing in the delivery path calls it. Dimensions do not need it — Payload falls back to
+a header-only byte probe covering every format this project accepts. `adminThumbnail` as a *function*
+needs neither `sharp` nor `imageSizes`. Focal point is stored regardless and is consumed by our own URL
+builder as a Cloudinary gravity.
+
+The deciding argument is the opposite of the expected one. Without `sharp`, Payload's crop UI **renders
+and silently discards the crop** — the *"UI that looks functional but silently does nothing"* this
+project forbids. Installing `sharp` would fix the silence and leave the tool wrong anyway, because every
+delivered variant is re-derived from the original through Cloudinary, so a Payload-side crop would be
+ignored by the thing that actually produces the image. `crop: false` is therefore not a concession to
+the missing dependency; it is the only honest setting once D-26 is taken, and with the tool gone the
+dependency has nothing left to do.
+
+### D-28 — Media bytes are public, and the storage plugin is always registered
+
+Two settings on `@payloadcms/plugin-cloud-storage`, both load-bearing and neither obvious.
+
+**`disablePayloadAccessControl: true`.** The adapter's `generateURL` is called from exactly one place in
+the plugin, and only when this flag is set. Without it, Payload keeps its own `/api/media/file/…` in the
+`url` column and proxies every byte through the Next server — Cloudinary demoted to origin storage
+behind a Node process. The consequence is that media bytes are public to anyone holding the URL, which
+is true of every CDN-delivered asset and is why nothing private may be uploaded to this collection. It
+also forces `skipSafeFetch: true`, disabling Payload's SSRF filter on the paste-from-URL ingest path —
+so that path is closed independently with `pasteURL: false`.
+
+**Registered unconditionally, switched by `enabled`.** Registering the plugin only when credentials
+exist produces two different schemas from one committed migration: it injects a `prefix` column, and
+with the plugin absent that column never appears. `alwaysInsertFields: true` pins the schema on both
+sides, and the folder is a module constant rather than a setting because it becomes that column's SQL
+`DEFAULT`. Verified: with Cloudinary unconfigured the generated migration still carries
+`prefix varchar DEFAULT 'north01'`.
+
+### D-29 — Images are `<picture>`/`<img>`, not `next/image`
+
+Three reasons, and the first is decisive: **Next's optimizer requires `sharp` on the server**, which
+D-27 removes. Beyond that it would re-encode an image Cloudinary has already encoded, at a cost per
+image; and it renders a single `<img>`, so it cannot express art direction — visual guide §10's
+*"intentional mobile crops instead of simply squeezing desktop images into a smaller box"* is a change of
+**aspect ratio** across a breakpoint, which is `<picture>` and nothing else.
+
+What `next/image` would have provided is now native HTML: `loading`, `decoding` and `fetchpriority` are
+attributes. `src/components/media/media-image.tsx` therefore ships **no client JavaScript**, and needs no
+`images.remotePatterns` entry, because Next never fetches the image.
+
+The layout-shift guarantee §8.1d and §30.1b both ask for comes from one idea: **the box is a property of
+the page, not of the picture.** The delivery context supplies the aspect ratio, so the rectangle is known
+before it is known whether an asset exists, whether its bytes arrive, or whether the CDN 404s. Measured
+in a browser across all those states: **CLS 0.0000**.
+
 ## 5. Current position
 
 **Phase 1 — Workspace, repository and baseline: complete.** Repository initialized on `main`, baseline
@@ -774,7 +860,38 @@ nothing; it now names the errors it will accept.
 Accessibility: **0 axe-core violations** across all five new routes, at WCAG 2.0/2.1/2.2 A and AA,
 against the production build. Details and evidence: notes §1.12.
 
-**Next: Phase 8 — media and Cloudinary.**
+**Phase 8 — Media and Cloudinary: complete.**
+
+Two dependencies added — `@payloadcms/plugin-cloud-storage@3.88.0` and `cloudinary@2.10.1` — and one
+**removed from the plan**: `sharp`, which D-27 explains.
+
+| Phase 8 requirement | Status |
+|---|---|
+| Payload metadata + Cloudinary delivery (§8.1a) | **pass** — a first-party adapter on Payload's own storage interface; **D-03 confirmed against the registry** |
+| Asset ID, public identifier, alt, caption, focal point, media role, dimensions (§8.1a) | **pass** — six columns; `role` is a real consumer-facing default, not a label nothing reads |
+| Transformation metadata where useful (§8.1a) | **as code, not columns** — the eight contexts in `lib/media/cloudinary-url.ts`; stored derivative rows were rejected with D-26 |
+| Allowed mime types, max dimensions, max file size, reasonable formats (§8.1b) | **pass** — and setting `mimeTypes` is what switches Payload from trusting the *browser's* claim to sniffing the bytes |
+| Do not accept arbitrary executable files (§8.1b) | **pass** — proven against a shell script, an `MZ` executable, an XML-prefixed SVG, an HTML document and a **GIF/executable polyglot**, all refused |
+| Responsive variants for six contexts (§8.1c) | **pass** — eight, including the OG card `fields/seo.ts` already promised and the uncropped zoom the PDP needs |
+| Neutral placeholder, preserved dimensions, no broken-image shift (§8.1d) | **pass** — measured in a browser at **CLS 0.0000** across all four states |
+| Never expose Cloudinary secrets to the browser (§8 prompt) | **pass** — the SDK is imported by exactly one server file; the URL builder has no imports at all |
+
+**Three defects were found by measuring rather than reading**, and all three would have shipped:
+`c_lfill` silently abandons the aspect ratio when a request exceeds the source; clamping to the source
+*width* is insufficient once a crop changes the ratio, because the binding constraint moves to the
+height; and `fl_relative` makes Cloudinary's `x_`/`y_` **multiply** the source dimensions, so the first
+focal-point implementation asked for a 345,600 × 432,000 image and got a 400. A fourth was found in a
+browser: the art-directed *placeholder* did not change shape at the breakpoint, which mattered because
+with no assets in the catalogue the placeholder is the only path that renders.
+
+**Cloudinary credentials do not exist**, at the project owner's direction, so the phase is committed on
+the degraded path: uploads fall back to local disk, the storefront renders every image as its
+placeholder, and `lib/env.core.ts` now warns at startup if that state is ever reached outside local
+development. `pnpm verify:media` proves 48 assertions today and runs a live upload/derive/delete round
+trip — including the account-level *Strict transformations* check that cannot be predicted from here —
+the moment credentials are set.
+
+**Next: Phase 9 — storefront shell.**
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 

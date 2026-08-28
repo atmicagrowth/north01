@@ -2272,6 +2272,342 @@ Step 4 of the append rule.
 
 ---
 
+## 1.13 Phase 8 — media and Cloudinary
+
+Payload holds the metadata, Cloudinary holds the bytes and performs every transformation, and the
+storefront gets one component. Two dependencies added — `@payloadcms/plugin-cloud-storage@3.88.0` and
+`cloudinary@2.10.1` — and one **removed from the plan**: `sharp`, which two committed documents said
+this phase would install.
+
+**The phase is committed with no Cloudinary credentials**, at the project owner's direction, so the
+degraded path is not a footnote here — it is the state everything below was verified in.
+
+### 1.13.1 D-03 confirmed, in the phase that was told to confirm it
+
+**DEV-05** ends *"To be confirmed in Phase 8"* and `docs/ARCHITECTURE.md`'s D-03 already read
+*"Confirmed in Phase 8"* — a forward-tense marker asserting a check nobody had made. Both are now
+honest, and the check was made against the registry rather than from memory:
+
+| Package | Result |
+|---|---|
+| `@payloadcms/storage-cloudinary` | **`ERR_PNPM_FETCH_404`** |
+| `@payloadcms/storage-s3`, `-vercel-blob`, `-azure`, `-gcs`, `-uploadthing` | all publish **3.88.0** |
+| `@payloadcms/plugin-cloud-storage@3.88.0` | exists; peer `payload: "3.88.0"` **exact** |
+
+Official adapters do ship at our exact version and Cloudinary simply is not one of them. The premise
+holds, the "revisit if Payload ships an official adapter" clause has not triggered, and DEV-05 moves
+from pending to confirmed.
+
+### 1.13.2 The architecture, and the measurement that chose it
+
+Two readings of §8.1a were available. Payload's `imageSizes` — how every official storage adapter works
+— has `sharp` generate N derivatives at upload and the adapter upload each one. Or Cloudinary derives
+every variant from one stored original, at delivery, from a URL.
+
+The corpus points hard at the second: tech stack §3 gives Cloudinary *"delivery **and
+transformations**"*, and the feature matrix says *"Cloudinary is media delivery; Payload stores media
+metadata/relationships."* The measurements agree, and they are what made it cheap rather than merely
+correct:
+
+- **A delivery URL is pure string concatenation.** Verified in the SDK's own
+  `generate_transformation_string` (`key + '_' + value`, sorted, joined) *and* against the live CDN with
+  no credentials: every transformation this project needs returns 200 unsigned. So the browser-facing
+  layer needs no SDK, no secret and no server round trip, and §8's *"Never expose Cloudinary server
+  secrets to the browser"* becomes a property of the file's shape rather than a rule to keep obeying.
+- **`f_auto` genuinely negotiates.** With a browser `Accept` header the CDN returned AVIF at 19.1 KB
+  against 26.5 KB of JPEG for the same image.
+- **The `imageSizes` route is expensive in schema, not just in uploads.** Each declared size costs six
+  columns *and* a b-tree index (the size group inherits `index: true` through an object spread), and
+  index names are silently truncated at **60 characters** — `media_sizes_<n>_sizes_<n>_filename_idx`
+  overflows once a size name passes fourteen snake-cased characters. Eight contexts would have been 48
+  columns, eight indexes and nine uploads per asset, all to reproduce something Cloudinary does for
+  nothing. And it freezes the breakpoints into stored rows.
+
+Recorded as **D-26**. The `media` table still has no `sizes_*` columns and now never will.
+
+### 1.13.3 Three defects found by measuring, all of which would have shipped
+
+Every one of these was written, believed, and then contradicted by a real HTTP response.
+
+**1. `c_lfill` silently abandons the aspect ratio.** It is Cloudinary's documented "fill but do not
+enlarge" mode and it looks like exactly the safe option. From an 864 × 576 source:
+
+| asked for | delivered |
+|---|---|
+| `c_fill,ar_4:5,w_400` | 400 × 500 — correct |
+| `c_fill,ar_4:5,w_2000` | **2000 × 2500** — upscaled, 302 KB of soft pixels |
+| `c_lfill,ar_4:5,w_2000` | **864 × 576** — *the ratio is gone* |
+
+A box reserved at 4:5 receiving a 3:2 image is precisely the layout shift §8.1d and §30.1b forbid,
+arriving through the option chosen to prevent it. Neither mode is used blind; the width is clamped in
+our code and plain `c_fill` then always holds its contract.
+
+**2. Clamping to the source width is not enough.** The first clamp did that and a delivered image
+caught it: the same landscape asked for the 4:5 mobile hero at its own width returned **864 × 1080** —
+inside the width budget and nearly double the source *height*. When a crop changes the ratio the
+binding constraint moves. `c_fill` cuts the largest region of ratio `R` that fits and then scales it, so
+the largest output width that never enlarges anything is `min(W, H·R)` — 460 for that source at 4:5, not
+864. The test that missed it only asserted the width; it now asserts both axes.
+
+**3. `fl_relative` multiplies rather than addresses.** Payload stores a focal point as two 0–100
+percentages and Cloudinary's `x_`/`y_` want pixels, so the obvious bridge is the flag that says
+"relative". It is not a bridge. `c_fill,ar_4:5,w_400,g_xy_center,x_0.2,y_0.8,fl_relative` returns
+`400 Maximum image width/height is 65500. Requested 345600x432000` — the values multiply the source
+dimensions. `fl_region_relative` fails identically. Plain pixel coordinates, converted here against the
+stored dimensions, return 200.
+
+**And a fourth, found in a browser rather than over HTTP.** The art-directed *placeholder* did not
+change shape at the breakpoint: `<picture>` correctly served the 4:5 crop below 768px while the reserved
+frame stayed 16:9, so the mobile hero was letterboxed into a landscape hole. It mattered more than it
+looks — with no assets in the catalogue the placeholder is the *only* path that renders, so the bug was
+in the one state the site is actually in. The ratio now travels as a custom property switched by a
+`max-md:` utility, which is also why the breakpoint is a literal rather than a prop: Tailwind can only
+generate a class it can see.
+
+### 1.13.4 `sharp` is not installed — and this reverses two committed documents
+
+`DEV-28` and `docs/STACK_VERSIONS.md` (in three places) both said Phase 8 would install it. A prediction
+is not a requirement, and this project has withdrawn one before — DEV-17.
+
+What was expected to need it does not:
+
+- **Dimensions.** `getImageSize` falls back to a header-only byte probe (`image-dimensions` plus
+  hand-rolled BMP/ICO/SVG/TIFF/JXL parsers) covering every format this collection accepts. §8.1a's
+  "dimensions" and §8.1d's reserved box are both satisfied without it.
+- **Admin thumbnails.** `adminThumbnail` as a *function* short-circuits before Payload looks for a
+  stored derivative, so it needs neither `sharp` nor `imageSizes`.
+- **Focal point.** Stored as `focalX`/`focalY` regardless, and consumed by our own URL builder as a
+  Cloudinary gravity.
+
+**The deciding argument runs the opposite way to the expected one.** Without `sharp`, Payload's crop UI
+*renders and silently discards the crop* — the "UI that looks functional but silently does nothing" this
+project forbids outright, and one of only two things `sharp` would have fixed. But installing it would
+fix the silence and leave the tool wrong anyway: every delivered variant is re-derived from the
+**original** through Cloudinary, so a crop stored in Payload is ignored by the thing that actually makes
+the image. `crop: false` is therefore not a concession to a missing dependency — it is the only honest
+setting once D-26 is taken, and with the tool switched off the dependency has nothing left to do.
+
+Recorded as **D-27**. Worth noting for accuracy: `sharp@0.35.3` — the exact pin the docs named — is
+*already* in the lockfile as an optional dependency of `next@16.3.2`, so this decision saves no download.
+It saves a dependency the running code does not use, which is what §2.1b is about.
+
+### 1.13.5 §8.1b, and the security finding that drives all of it
+
+`checkFileRestrictions` has **two mutually exclusive branches**, and which one runs depends entirely on
+whether `mimeTypes` is set.
+
+- **Without it** — the state this collection was in since Phase 6 — there is *no content inspection at
+  all*: a case-insensitive `endsWith` against a list of dangerous extensions, plus an equality test on
+  the MIME type **the browser claimed**. Renaming a file defeats both.
+- **With it**, `file-type` sniffs the buffer — and the restricted-executable list is skipped entirely.
+
+So setting `mimeTypes` is the whole of §8.1b's *"Do not accept arbitrary executable files"*. Two
+exclusions carry the rest, and both are about specific, known bypasses:
+
+**SVG is excluded** because Payload's `validateSvg` has a hole. A file opening with an `<?xml …?>`
+declaration is sniffed as `application/xml`, **relabelled** to `image/svg+xml`, and then skips validation
+— the relabelling happens inside the branch the validator guards. Keeping SVG out of the allowlist is
+what actually stops it: the relabelled type fails the allowlist test instead. Confirmed by running it —
+the refusal reads `Invalid MIME type: application/xml`.
+
+**GIF is excluded** because `file-type` reads magic bytes at **offset 0 only**. `GIF89a` followed by an
+entire executable is detected as `image/gif` and would pass. Confirmed by building exactly that file:
+the refusal reads `Invalid MIME type: image/gif`. Nothing in the corpus asks for GIF and motion has a
+field of its own in `products.video`.
+
+Two more findings shaped the rest:
+
+- **A file-size limit without `abortOnLimit` is worse than none.** Busboy truncates the stream and
+  carries on — the first N bytes are kept, a `truncated` flag is set, and Payload never reads it. The
+  result would be a corrupt asset stored with a 201. Both are set, plus `responseOnLimit` so the editor
+  gets a sentence rather than a status code. It is a root-config option, so it caps every upload
+  collection this project will ever have.
+- **There is no built-in maximum-dimension option at all.** `resizeOptions` only downscales, and only
+  with `sharp`. §8.1b's "maximum dimensions" is therefore a `beforeValidate` hook, which works because
+  `generateFileData` populates `width`/`height` earlier in the same operation. The cap is a
+  decompression-bomb guard rather than a taste rule: a 30,000² PNG is a few hundred kilobytes on disk
+  and ~3.6 GB of RGBA in memory.
+
+`pasteURL` is switched **off**. It defaults to on, makes the browser fetch an arbitrary URL, and nothing
+in the corpus asks for ingest-by-URL. It also closes a door that `disablePayloadAccessControl: true`
+opens: that flag forces `skipSafeFetch: true` and is not overridable, so Payload's SSRF filter is
+disabled on a path that no longer exists.
+
+### 1.13.6 The numbers §8.1c does not give, and the one the repository already had
+
+A sweep of all six documents for image dimensions and aspect ratios returns **nothing** — the only
+numbers in the corpus are the type scale, the spacing scale and a 1px divider. Every ratio is this
+project's decision.
+
+The **widths** are not, and an earlier draft got that wrong by inventing those too. Plan §30.1a names the
+breakpoints this design is built and tested at — 320, 375, 430, 768, 1024, 1280, 1440, 1920 — and every
+width is one of those or a DPR multiple of one. A `srcset` whose candidates line up with the layout's own
+breakpoints is the difference between a browser picking the intended file and one 40% too large.
+
+Three corpus rules constrain the shape of the answer, and only three: §30.1b's *"Fixed/known image
+aspect ratios"* (listed under **Layout shift prevention** — the same requirement §8.1d states from the
+other end), visual guide §10's *"intentional mobile crops"*, and §07's *"Consistent product photography"*
+beside *"Strong crop"*. Visual guide §08 and §09 sound relevant and are **not** used: each is scoped by
+its own preamble to *"the photography language"* and *"composition only"*, and neither names a ratio, a
+crop or a width. An adversarial pass caught exactly that over-reach in a draft.
+
+Eight contexts, not §8.1c's six, and the two additions are both owed to something already written:
+
+- **`productZoom`**, uncropped — §13.1a gives the PDP a zoom and a full-screen viewer, and zooming into
+  the cropped gallery frame would magnify the crop rather than reveal what it removed.
+- **`socialCard`**, 1200 × 630 — **the one image dimension the repository had already committed to**.
+  `fields/seo.ts`, written in Phase 6, tells editors *"Social share card. Landscape, roughly 1200 ×
+  630"*, so Phase 8 either honours it or makes a Phase 6 field description a lie. It delivers `f_jpg`
+  rather than `f_auto`: a crawler sends no meaningful `Accept` header and several will not render AVIF.
+
+**`editorial` crops nothing, and that is structural rather than aesthetic.** Phase 6 put shop-the-look
+hotspots on lookbook images and recorded that their positions are *"percentages, so they survive every
+crop and breakpoint"* (`Lookbooks.ts`). That guarantee holds only while the delivered image has the
+framing the editor placed the hotspots on — a `c_fill` would move every hotspot off its garment.
+
+### 1.13.7 "Media role" — a specification gap, and the reading that makes it a real column
+
+The string *"Media role"* appears **once** in all six documents (plan §8.1a's bullet list) and nothing
+anywhere says what a role is, enumerates values, or names a consumer. It is a gap of the same kind as
+**G-01**–**G-14** and is recorded as one.
+
+The reading taken is the only one that makes it worth a column: **a role names the delivery context an
+asset defaults to.** An editor marks a campaign frame `campaign` and every consumer that does not care
+gets hero framing; a consumer that does care passes a context and wins. `MediaImage` reads it on every
+render.
+
+The rejected reading is the more obvious one — a taxonomy label for organising the library. Nothing
+would ever read it, and a column that exists only to be filled in is §0.1.17's fake functionality in
+database form. If browsing by kind is wanted later it is a filter over this same column.
+
+### 1.13.8 §8.1a's "transformation metadata where useful" — decided, not skipped
+
+The bullet is hedged (*"where useful"*), and under D-26 the useful form is **not** stored derivative
+rows. It is the eight context definitions in `lib/media/cloudinary-url.ts`: ratio, crop mode and width
+ladder per context, in code, changeable without a migration and without re-uploading anything. Storing
+them as data would be storing a decision that belongs to the layout, in a place the layout cannot see.
+
+What *is* stored is what only Cloudinary knows and a URL cannot re-derive: the public id, the asset id,
+the version and the resource type.
+
+### 1.13.9 The degraded path, which is the committed state
+
+`.env` has no Cloudinary keys, so `integrationStatus('cloudinary')` is `unconfigured` and this is what
+was actually verified.
+
+- **Uploads land on local disk** and Payload serves them from `/api/media/file/<filename>`. The plugin
+  sets `disableLocalStorage: true` only when enabled, so nothing is switched off.
+- **The storefront renders every image as its placeholder**, because the seeded catalogue has no assets
+  — `scripts/seed.ts` deliberately creates none. §8.1d's placeholder is therefore not an edge case in
+  this build; it is the normal path, which is why the specimen sheet leads with it.
+- **The schema is identical either way.** This was the sharpest risk in the design and it needed a
+  specific mechanism: the storage plugin injects a `prefix` column, and registering it conditionally
+  would produce two schemas from one committed migration — the failure `docs/DATABASE.md` §6 has no
+  recovery for. So the plugin is registered *unconditionally* with `enabled` carrying the distinction
+  and `alwaysInsertFields: true` pinning the fields, and the folder is a module constant because it
+  becomes that column's SQL `DEFAULT`. Verified: with Cloudinary unconfigured, the generated migration
+  still emits `prefix varchar DEFAULT 'north01'`.
+- **It is only correct locally, and now says so.** A serverless filesystem is ephemeral and often
+  read-only, so a deployed environment with no Cloudinary loses every upload. §4.1b asks for a clear
+  server-side warning on optional integrations and `reportEnvironment` previously warned only on
+  `partial`. Phase 8 is where "its phase has not arrived" stops being true for Cloudinary, so it now
+  warns whenever `appEnv` is not `local` and the group is unconfigured. It warns rather than throws:
+  `ARCHITECTURE.md` §2 requires an unavailable optional service to degrade rather than stop the shop.
+
+### 1.13.10 Guarding the SDK's hidden inputs
+
+The `cloudinary` SDK reads `CLOUDINARY_URL`, `CLOUDINARY_ACCOUNT_URL` and `CLOUDINARY_API_PROXY`
+straight out of `process.env` on its first `config()` call, merging them *underneath* explicit
+configuration. `CLOUDINARY_URL` is the dangerous one — a single `cloudinary://<key>:<secret>@<cloud>`
+string that supplies a write credential behind this project's deliberate three-variable scheme, and
+throws inside the SDK at boot if malformed.
+
+An allowlist cannot stop a library reading `process.env` directly, so `env.core.ts` **refuses all
+three**: setting any one fails validation at startup with a message naming the three variables that
+replace it. Two smaller SDK traps are handled at the call site: `analytics: false`, because the SDK
+appends a `?_a=<token>` tracking parameter to every URL it builds and those would follow our assets into
+every `img` tag; and `secure: true`, because its default is `http` and a mixed-content image is a
+blocked image.
+
+### 1.13.11 What was verified, and how
+
+- **`pnpm verify:media` — 48/48.** The hostile-upload set (shell script named `.jpg`, `MZ` executable
+  named `.png`, XML-prefixed SVG, HTML document, GIF/executable polyglot — all refused, each by the
+  mechanism intended), the dimension cap, the mime allowlist's two exclusions, public-id derivation and
+  hardening (traversal, comma injection, empty name), the clamp in every context, the reserved box in
+  every context, and the degraded path. **Its fixtures are generated, not committed** — real PNGs
+  written with Node's own `zlib` — for the reason `seed.ts` gives about placeholder binaries, plus one
+  more: a repository should not carry several files that are executables wearing picture extensions.
+- **Browser, against the specimen sheet — 15/15, and CLS 0.0000.** Layout shift measured with a
+  `PerformanceObserver` rather than asserted. All three missing-image states occupy an identical box;
+  the product-card frame is 4:5 to three decimals; art direction genuinely changes shape at 768px
+  (1.778 → 0.800); no horizontal overflow at 320px; **0 axe-core violations** at WCAG 2.0/2.1/2.2 A+AA.
+- **The URL builder against the live CDN — 25/25.** Every context, the clamp on both axes, the focal
+  point, `f_auto` negotiating AVIF, the 120-byte LQIP, the social card, the video namespace, and the
+  public-id hardening — all against `res.cloudinary.com/demo`, which needs no account.
+- **The migration** applied, rolled back and re-applied on a throwaway database created beside the
+  development one, then dumped and diffed against the pushed development schema: **identical**.
+
+Playwright and axe-core were used as **tools, not dependencies**, from the scratchpad — the same
+treatment as Phases 3 and 7 (§1.8.7), because both are Phase 27 packages.
+
+### 1.13.12 What is now owed
+
+- **The live Cloudinary round trip.** `pnpm verify:media` runs it automatically once the three variables
+  are set. It is the only way to check one thing that cannot be predicted from here: whether the account
+  has **Strict transformations** enabled, which refuses any derived URL not registered in advance and
+  would make every dynamically built URL in this project return 400.
+- **Assets uploaded before credentials arrive do not migrate themselves.** Any file on local disk keeps
+  its `/api/media/file/…` URL and gains no `cloudinaryPublicId`. There are none today and the seed
+  creates none, so the practical exposure is zero — but if any exist when Cloudinary is switched on they
+  must be re-uploaded. No phase has claimed a backfill.
+- **A Cloudinary/`media` reconciliation sweep.** The storage plugin's `afterDelete` swallows errors, so a
+  failed remote delete orphans the asset silently. That is the right trade — a delete already shown to a
+  user should not be blocked by a third party being down — but the orphan is real and nothing reaps it.
+- **Review photo uploads.** `Reviews.ts` defers *"upload limits and mime restrictions"* to Phase 8, and
+  those now exist. What Phase 8 does **not** answer is who may create a media record: `create` is
+  staff-only, so a review author cannot attach a photo. That is **Phase 21**'s to decide along with the
+  moderation flow, and it is sharpened by **D-28** — media bytes are public the moment they are
+  uploaded, so an unmoderated review photo would be publicly fetchable before anyone had seen it.
+- **A Content-Security-Policy naming `res.cloudinary.com` as an image source.** There is no CSP in the
+  repository at all; **Phase 26** owns it.
+- **`next.config.mjs` still has no `images` block**, and correctly so — **D-29** means Next never fetches
+  an image, so `remotePatterns` would configure a code path that does not run. The file's own comment
+  nominating "the phases that introduce them" is satisfied by *not* adding it.
+
+### 1.13.13 Confirmation sweep of earlier deviations
+
+Step 4 of the append rule.
+
+- **DEV-05 — the Cloudinary adapter path. CONFIRMED and closed.** Checked against the registry in the
+  phase that was told to check it; see §1.13.1. `docs/ARCHITECTURE.md` D-03's premature *"Confirmed in
+  Phase 8"* marker is corrected to say what was actually done.
+- **DEV-28 — `media` created in Phase 6, not Phase 8. Confirmed, and its sharp clause withdrawn.** The
+  early collection was exactly right: twenty-three upload fields across nine collections, five blocks and
+  two globals needed a target, and Phase 8 filled the skeleton in without touching a foreign key. The
+  entry's closing promise that *"`sharp` … Phase 8"* is superseded by **D-27**.
+- **DEV-29 — SKUs are globally unique. Untouched, and relied upon indirectly:** Payload's `filename`
+  uniqueness is what makes a derived Cloudinary `public_id` unique, so no upload silently overwrites
+  another.
+- **DEV-30 — currency and locale are this project's choice. Untouched.** No media decision depends on it.
+- **DEV-24 — Motion deferred to Phase 10. Confirmed and now slightly load-bearing:** the LQIP fades in
+  under the photograph with CSS alone, and visual guide §08's motion rules were explicitly ruled *out* of
+  scope for delivery mechanics by an adversarial pass — they are photography art direction.
+- **DEV-16 — route-group topology. Untouched.** Phase 8 added no route.
+- **DEV-14 — substantial work uses feature branches. Confirmed.** Phase 8 ran on
+  `phase-8-media-cloudinary`.
+- **D-14 — the environment trust boundary. Respected, and tested by this phase.** `Media.ts` needed the
+  cloud name and reached it through `env.public`, the browser-safe tier, rather than widening the ESLint
+  fence around `env.core`. The API key and secret are read only in `payload.config.ts` and handed to the
+  adapter as arguments — the same pattern Phase 7 used for the session cookie's `Secure` flag.
+- **D-11 — the design system is enforced by the compiler. Confirmed:** the placeholder is built from
+  `bg-surface` and `ring-border`, and Tailwind's default palette remains cleared, so there was no
+  `bg-neutral-800` available to reach for.
+- **D-19 — Phase 6 defines the entities the corpus names, and no more. Confirmed by absence:** no
+  derivative table, no transformation log, no media-usage index. Six columns on one existing table.
+
+---
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -2989,6 +3325,91 @@ so at `error` level on every send outside local development rather than degradin
 its `?token=` parameter must not change.*
 
 ---
+### DEV-33 — `sharp` is not installed, reversing DEV-28's closing clause and three lines of the stack document
+
+**Two committed documents say:** `sharp` arrives in Phase 8. `DEV-28`'s final paragraph — *"`sharp` is
+deliberately not installed … installing it now would be installing a later phase's dependency"* — and
+`docs/STACK_VERSIONS.md` in three separate places.
+
+**We do:** not install it. `crop: false` on the `media` collection, and `focalPoint: true` instead.
+
+**Why:** under **D-26** Cloudinary performs every transformation at delivery, so nothing in the serving
+path calls it. Dimensions come from Payload's header-only byte probe; `adminThumbnail` as a function
+needs neither `sharp` nor `imageSizes`; focal point is stored regardless and consumed by our own URL
+builder as a Cloudinary gravity.
+
+The deciding argument is the one that at first looks like an argument *for* installing it: without
+`sharp`, Payload's crop UI renders and silently discards the crop, which is exactly the *"UI that looks
+functional but silently does nothing"* §0.1.17 forbids. But installing `sharp` fixes the silence and
+leaves the tool wrong — every delivered variant is re-derived from the **original** through Cloudinary,
+so a Payload-side crop is discarded by the thing that actually produces the image. Switching the tool
+off is the honest fix, and it leaves the dependency with nothing to do.
+
+**What this is not:** a saving of install cost. `sharp@0.35.3` — the exact pin the documents name — is
+already resolved in `pnpm-lock.yaml` as an optional dependency of `next@16.3.2`. What is avoided is a
+direct dependency the running code does not use, which is what plan §2.1b is about.
+
+**Reversible.** A later phase that genuinely needs server-side image processing — a generated OG card
+composited from text, say — adds `sharp` and passes it to `buildConfig`. Nothing here depends on its
+absence except the crop tool, and that would need re-examining anyway.
+
+*Supersedes DEV-28's sharp clause. Affects Phase 8. Recorded as **D-27**.*
+
+---
+
+### DEV-34 — Eight delivery contexts, not §8.1c's six
+
+**Plan §8.1c says:** use responsive variants/crops appropriate for desktop hero, mobile hero, product
+card, product PDP gallery, editorial image, thumbnail — **six**, with no dimension, ratio or crop mode
+given for any of them.
+
+**We do:** define eight. The six, plus `productZoom` and `socialCard`.
+
+**Why:** each addition is owed to something already written down.
+
+- **`productZoom`** — plan §13.1a gives the PDP a zoom and a full-screen viewer. Zooming into the
+  cropped gallery frame would magnify the crop rather than reveal the parts of the garment it removed,
+  so the zoom must be a separate, uncropped variant. §8.1c's "PDP gallery" cannot be both.
+- **`socialCard`** — `src/payload/fields/seo.ts`, written in Phase 6, already tells editors *"Social
+  share card. Landscape, roughly 1200 × 630."* That is the only image dimension anywhere in the
+  repository, and Phase 8 either honours it or makes a shipped field description a lie.
+
+**Also recorded:** every ratio in all eight is this project's invention, because a sweep of all six
+specification documents for image dimensions and aspect ratios returns nothing. The **widths** are not
+invented — they are plan §30.1a's breakpoints (320 / 375 / 430 / 768 / 1024 / 1280 / 1440 / 1920) and
+DPR multiples of them.
+
+*Affects Phase 8, and Phases 10, 11, 13, 22, 23 and 24, which consume these contexts.*
+
+---
+
+### DEV-35 — SVG and GIF are refused on upload
+
+**Plan §8.1b says:** validate *"Allowed mime types"* and *"Reasonable image formats"*, and *"Do not
+accept arbitrary executable files."* It names no formats.
+
+**We do:** accept JPEG, PNG, WebP, AVIF, MP4 and WebM. Refuse **SVG** and **GIF**.
+
+**Why:** both are specific, verified bypasses of the only content check Payload has.
+
+- **SVG** is a script-execution context that renders as a picture, and Payload's own `validateSvg` can
+  be stepped around: a file opening with an `<?xml …?>` declaration is sniffed as `application/xml`,
+  **relabelled** to `image/svg+xml`, and then skips validation because the relabelling happens inside
+  the branch the validator guards. Excluding it from the allowlist is what actually stops it — the
+  relabelled type then fails the allowlist test. Verified: the refusal reads
+  `Invalid MIME type: application/xml`.
+- **GIF** because `file-type` reads magic bytes at **offset 0 only**, so `GIF89a` followed by an entire
+  executable is detected as `image/gif`. Verified by building exactly that file; the refusal reads
+  `Invalid MIME type: image/gif`.
+
+**What this costs:** an editor cannot upload a vector logo or an animated GIF. Neither is asked for
+anywhere in the corpus — a logo ships as PNG, and motion has a field of its own in `products.video`
+(§6.1b), which is why MP4 and WebM *are* accepted.
+
+**Revisit** only with a real requirement, and then with a sanitiser (SVG) or an offset-aware scan (GIF)
+rather than by widening the list.
+
+*Affects Phase 8 and any later phase that wants a vector asset.*
 
 # 3. Append log
 
@@ -3008,4 +3429,5 @@ its `?token=` parameter must not change.*
 | Phase 6 — Payload data model | 2026-08-27 | Notes **§1.11**: the five decisions that had to precede any field — money as integer minor units, publish state as a column rather than Payload drafts (whose `disableNotNull` strips `NOT NULL` from the *main* table), variants as their own collection, which side of a many-to-many owns the order, and shoppers as a second auth collection. **§1.11.2** answers the two questions Phase 5 left for this phase: the variant SKU needs no partial index because a *global* unique refuses a superset of what §6.1c asks, and `afterSchemaInit` is used once, for `CHECK (inventory_quantity >= 0)`, because Phase 17's atomic decrement will be raw SQL past every validator. **§1.11.3 records three defects that only running it would find** — a `dbName` string that collapsed one block into a table shared by two collections with the wrong parent foreign key; required address sub-fields that made §18.1a's draft order impossible to save; and delete cascades on `afterDelete` that can never run, because a `required` relationship is `NOT NULL` *and* `ON DELETE SET NULL`, so the violation fails the parent's own delete. **§1.11.4**: Drizzle emits `DROP TABLE … CASCADE` alongside explicit drops of constraints the cascade has already removed — twice, and 22 statements the second time — so every generated `DROP CONSTRAINT` now needs `IF EXISTS`; and `migrate:create` is not always non-interactive, which is why the fixture removal was generated as its own migration. **§1.11.5**: 24 behavioural checks against the live database, all passing, plus a signed-in browser pass over the admin panel. Deviations **DEV-27** (a review requires a customer), **DEV-28** (`media` is created here, not in Phase 8), **DEV-29** (SKUs are globally unique), **DEV-30** (currency and locale are this project's choice). New decisions **D-18** through **D-21** in `docs/ARCHITECTURE.md`; **G-01**–**G-05** closed. One dependency: `@payloadcms/richtext-lexical`. Step 4 carried out as **§1.11.8** — **DEV-10 discharged**, DEV-01, DEV-07 and DEV-08 now enforced by the schema rather than by convention. |
 | Phase 6 — post-implementation audit | 2026-08-27 | Note **§1.11.10**: the committed phase re-reviewed by seven independent auditors with adversarial verification — 38 claims, 8 refuted, 30 survived, 8 distinct defects fixed. The headline is that **`context` is not a per-call argument**: `createLocalReq` merges it onto the *same* request object it is handed, so `skipDerivedSync` latched — every permanent variant delete skipped its product's price/stock refresh, and in a bulk variant edit only the first product was refreshed. The suppression now travels as the id of the product being deleted. Second: swallowing a hook error hid a transaction Payload had **already rolled back** via `killTransaction`, so a variant save reported success for a write that no longer existed — both hooks now rethrow. Third: eleven media references and three hotspot references were `NOT NULL` + `ON DELETE SET NULL` inside array and block rows, where no cascade can reach them, making the referenced product or asset permanently undeletable — the columns are nullable and the requirement moved to `validate`, which is also what makes plan §22.1b's "hide the hotspot" and §8.1d's placeholder reachable at all. Fourth: a custom `validate` replaces Payload's built-in one and with it `required`, which money fields and `addresses.country` both relied on. Plus a promotion saveable with no discount value, fractional stock, a seed blind to trashed rows, and both scripts guarding on `appEnv` — which cannot see a connection string — instead of D-10's database identity, now exposed as `developmentDatabase`. Twelve documentation errors corrected, including a table count of 74 that is 73 and a comment asserting the opposite of what its own foreign key did. 13 targeted re-checks against the live database, all passing. |
 | Phase 7 — access control and authentication | 2026-08-27 | Notes **§1.12**: route protection is **three** layers and only two are checks — the Next 16 `proxy.ts` (renamed from `middleware.ts`) is an optimistic cookie-presence redirect that cannot verify anything, and the real route check lives in the *pages* rather than `account/layout.tsx`, because a layout does not re-render on navigation within its own segment. **§1.12.2**: the role bootstrap needed two answers — a hook forcing the first account on an empty database to `admin`, and a data statement in the migration backfilling existing staff, because `editor` would not have preserved their permissions, it would have removed them from all of them at once with no admin left to grant them back. **§1.12.3**: ownership rules return a `Where`, so a cross-account read is *empty* rather than *forbidden*; and two things a rule cannot do — say whose a new row is (`enforceCustomerOwnership` forces it) and protect one field of a permitted write (field access does). The variant/product publication join `publishedOn('product.status')` was measured both ways, because getting it wrong would have published every unreleased SKU, price and stock count. **§1.12.4–5**: why the reset link's origin comes from `SITE_URL` and never the `Host` header, why the token is not validated on page load, why a reset does not sign you in, and a password policy of twelve characters with no composition rules against Payload's built-in floor of **three**. **§1.12.7 records two defects found by running it**: React **resets** an uncontrolled form once its action resolves, so a rejected sign-in emptied the email field — fixed with echoed `defaultValue`s, password excluded; and the first `verify-access.ts` counted *any* thrown error as a passing access check, so a fixture typo would have reported a clean run while proving nothing. Deviations **DEV-31** (registration names a duplicate email), **DEV-32** (the reset flow exists before email does). New decisions **D-22**–**D-25**. New script `pnpm verify:access` — 43 checks, all passing; 42 further browser checks across dev, production and the admin panel; **0 axe-core violations** on six routes. No dependency added. Step 4 carried out as **§1.12.11**. |
+| Phase 8 — media and Cloudinary | 2026-08-28 | Notes **§1.13**: **D-03/DEV-05 confirmed against the registry** in the phase told to confirm it (`@payloadcms/storage-cloudinary` still 404s; five sibling adapters publish at 3.88.0), and ARCHITECTURE.md's premature *"Confirmed in Phase 8"* marker corrected. **§1.13.2**: Cloudinary transforms at *delivery* and Payload declares **no `imageSizes`** — a delivery URL is pure string concatenation (verified in the SDK source and against the live CDN unsigned), while the `imageSizes` route would have cost 48 columns, 8 indexes and 9 uploads per asset to reproduce it, and would freeze the breakpoints into stored rows. **§1.13.3 records three defects found by measuring rather than reading, all of which would have shipped**: `c_lfill` — the documented "fill but do not enlarge" mode — *silently abandons the aspect ratio* when a request exceeds the source, which is the layout shift §8.1d forbids arriving through the safe-looking option; clamping to the source **width** is insufficient once a crop changes the ratio, because the binding constraint moves to the height (an 864×576 source asked for the 4:5 hero returned 864×**1080**); and `fl_relative` makes Cloudinary's `x_`/`y_` **multiply** the source dimensions, so the first focal-point implementation requested a 345,600 × 432,000 image and got a 400. A fourth was caught in a browser — the art-directed *placeholder* did not change shape at the breakpoint, which mattered because with an empty catalogue the placeholder is the only path that renders. **§1.13.5**: `checkFileRestrictions` has two mutually exclusive branches and without `mimeTypes` there is **no content inspection at all**; setting it is the whole of §8.1b, and SVG and GIF are excluded as verified bypasses (an `<?xml`-prefixed SVG skips `validateSvg`; `file-type` reads offset 0 only, so a `GIF89a`+`MZ` polyglot passes as an image). A size limit without `abortOnLimit` is **worse than none** — Busboy truncates and Payload never reads the flag. **§1.13.9**: the phase is committed with **no Cloudinary credentials**, so the degraded path is what was verified — and the storage plugin is registered *unconditionally* with `alwaysInsertFields: true` because conditional registration would emit two different schemas from one committed migration. Deviations **DEV-33** (no `sharp` — reverses DEV-28's closing clause and three lines of STACK_VERSIONS), **DEV-34** (eight contexts, not six), **DEV-35** (SVG and GIF refused). New decisions **D-26**–**D-29**. New script `pnpm verify:media` — 48 checks, plus a live round trip that arms itself when credentials appear. 15 browser checks at **CLS 0.0000** and 0 axe violations; 25 URL-builder checks against the live CDN; the migration applied, rolled back, re-applied and diffed **identical** against the pushed schema. Two dependencies added, one removed from the plan. Step 4 carried out as **§1.13.13**. |
 > **Append this table, and the sections above it, at the end of every phase.**

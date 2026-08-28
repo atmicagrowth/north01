@@ -27,13 +27,16 @@
     "generate:types": "payload generate:types",
     "generate:importmap": "payload generate:importmap",
     "seed": "payload run scripts/seed.ts",
-    "verify:access": "payload run scripts/verify-access.ts"
+    "verify:access": "payload run scripts/verify-access.ts",
+    "verify:media": "payload run scripts/verify-media.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",
     "@payloadcms/next": "3.88.0",
+    "@payloadcms/plugin-cloud-storage": "3.88.0",
     "@payloadcms/richtext-lexical": "3.88.0",
     "class-variance-authority": "0.7.1",
+    "cloudinary": "2.10.1",
     "clsx": "2.1.1",
     "graphql": "16.14.2",
     "lucide-react": "1.33.0",

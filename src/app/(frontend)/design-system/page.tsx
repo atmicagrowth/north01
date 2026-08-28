@@ -10,6 +10,7 @@ import {
   TabsSpecimen,
   ToastSpecimen,
 } from './_components/overlay-specimens'
+import { MediaSpecimens } from './_components/media-specimens'
 import { Cell, Matrix, Specimen, SpecimenGroup } from './_components/specimen'
 import { EditorialBlock } from '@/components/layout/editorial-block'
 import { PageContainer } from '@/components/layout/page-container'
@@ -978,6 +979,17 @@ export default function DesignSystemPage() {
                 the mobile navigation and the cart become.
               </p>
             </Specimen>
+          </SpecimenGroup>
+
+          <SpecimenGroup
+            id="media"
+            title="Media"
+            description="Phase 8. Cloudinary performs every crop and resize at delivery; Payload holds
+                         only the metadata. Nothing below has an asset behind it, because the seeded
+                         catalogue deliberately has none — so this is also the proof that the
+                         storefront renders correctly before a single image exists."
+          >
+            <MediaSpecimens />
           </SpecimenGroup>
         </PageContainer>
       </main>

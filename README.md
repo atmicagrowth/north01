@@ -153,9 +153,31 @@ can create an account, sign in, sign out and recover a forgotten password.
 disabled accounts, the password policy — against the live rules.
 
 The account area is a protected shell showing a profile and a sign-out; order history, wishlist and
-the address book arrive with the account screens in Phase 20. No storefront *feature* is built yet:
-the shell components exist and are proved, but they are mounted in Phase 9, alongside the search
-overlay and cart drawer that make their controls do something.
+the address book arrive with the account screens in Phase 20.
+
+**Phase 8 — Media and Cloudinary: complete.** Payload holds the metadata; Cloudinary holds the bytes
+and performs every crop and resize — at delivery, from a URL, rather than as derivatives frozen in at
+upload time.
+
+- **One stored original, eight delivery contexts.** A hero, a mobile hero, a product card, a gallery
+  frame, an uncropped zoom, an editorial image, a thumbnail and a social card, composed as Cloudinary
+  URL transformations. Changing a breakpoint is a code change, not a re-upload of the library.
+- **Nothing shifts, ever.** The box an image occupies comes from the page, not from the picture, so it
+  is reserved before it is known whether an asset exists, whether its bytes arrive, or whether the CDN
+  returns a 404. Measured in a browser across all of those: **CLS 0.0000**.
+- **Uploads are inspected, not trusted.** The bytes are sniffed rather than the filename believed. A
+  shell script named `.jpg`, an executable named `.png`, an SVG carrying a `<script>` and a
+  GIF/executable polyglot are each refused — and each refusal is proved against a real hostile file.
+- **No secret reaches the browser.** A Cloudinary delivery URL is pure string concatenation, so the
+  code that builds them has no imports at all and the SDK is confined to one server file.
+
+**It runs with no Cloudinary account.** Uploads fall back to local disk and every image renders as its
+deliberate placeholder — which, with a catalogue that has no assets yet, is what the whole storefront
+does today. `pnpm verify:media` proves 48 assertions now and adds a live upload/derive/delete round
+trip the moment credentials are set.
+
+No storefront *feature* is built yet: the shell components exist and are proved, but they are mounted
+in Phase 9, alongside the search overlay and cart drawer that make their controls do something.
 
 Local setup: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 

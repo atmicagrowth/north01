@@ -20,7 +20,8 @@ import {
 import type { CollectionConfig } from 'payload'
 import { buildConfig } from 'payload'
 
-import { appEnv, schemaPush, serverEnv, siteUrl } from './lib/env.core'
+import { appEnv, integrationStatus, schemaPush, serverEnv, siteUrl } from './lib/env.core'
+import { MAX_UPLOAD_BYTES, UPLOAD_LIMIT_MESSAGE } from './lib/media/limits'
 import { Addresses } from './payload/collections/Addresses'
 import { Campaigns } from './payload/collections/Campaigns'
 import { CartItems } from './payload/collections/CartItems'
@@ -44,6 +45,7 @@ import { SizeGuides } from './payload/collections/SizeGuides'
 import { Users } from './payload/collections/Users'
 import { WishlistItems } from './payload/collections/WishlistItems'
 import { logEmailAdapter } from './payload/email/logEmailAdapter'
+import { cloudinaryStorage } from './payload/storage/cloudinary'
 import { Navigation } from './payload/globals/Navigation'
 import { SiteSettings } from './payload/globals/SiteSettings'
 
@@ -121,6 +123,47 @@ export default buildConfig({
    * development. See `payload/email/logEmailAdapter.ts`.
    */
   email: logEmailAdapter({ isLocal: appEnv === 'local' }),
+
+  /**
+   * **The file-size limit of plan §8.1b, and the flag without which it is worse than nothing.**
+   *
+   * This lives at the config root rather than on the `media` collection because it is a Busboy
+   * setting — there is no per-collection equivalent, and it therefore caps every upload collection
+   * this project will ever have.
+   *
+   * `abortOnLimit` is the load-bearing half. Busboy's behaviour on exceeding a limit is to *truncate
+   * the stream and carry on*: the first N bytes are kept, a `truncated` flag is set, and the upload
+   * completes normally — and Payload never reads that flag. So a limit on its own converts an
+   * oversized upload from an honest failure into a silently corrupt asset stored with a 201.
+   * `responseOnLimit` supplies the sentence the editor reads, in place of a bare status code.
+   */
+  upload: {
+    limits: { fileSize: MAX_UPLOAD_BYTES },
+    abortOnLimit: true,
+    responseOnLimit: UPLOAD_LIMIT_MESSAGE,
+  },
+
+  /**
+   * **Media storage — Phase 8, decision D-03 / DEV-05.**
+   *
+   * Registered unconditionally and switched by `enabled`, which is not the same as registering it
+   * conditionally: the plugin injects a `prefix` column, and a config that only sometimes injects it
+   * produces two different schemas from one committed migration. See `payload/storage/cloudinary.ts`
+   * for the full reasoning and for why the folder is a constant rather than a setting.
+   *
+   * The credentials are read here, in the one module allowed to touch `env.core` (**D-14**), and
+   * handed down. `integrationStatus` returning anything but `configured` — including the
+   * half-configured case — leaves Payload on local-disk storage rather than starting an integration
+   * that cannot complete a request.
+   */
+  plugins: [
+    cloudinaryStorage({
+      enabled: integrationStatus('cloudinary') === 'configured',
+      cloudName: serverEnv.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ?? '',
+      apiKey: serverEnv.CLOUDINARY_API_KEY ?? '',
+      apiSecret: serverEnv.CLOUDINARY_API_SECRET ?? '',
+    }),
+  ],
 
   admin: {
     user: Users.slug,

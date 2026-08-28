@@ -33,7 +33,7 @@
 | `@payloadcms/db-postgres` | 3.88.0 | Exact peer `payload: "3.88.0"`. Drizzle + node-postgres under the hood. |
 | `@payloadcms/richtext-lexical` | 3.88.0 | **Phase 6 — installed.** Exact peer on `payload`, plus `@faceless-ui/modal@3.0.0` and `@faceless-ui/scroll-info@2.0.0`, both of which `@payloadcms/ui` already pulled in — so the install resolved clean with no peer warnings. Brings `lexical@0.41.0` and its `@lexical/*` siblings. |
 | `graphql` | 16.14.2 | **Unavoidable peer dependency of `payload` itself** (`^16.8.1`). See note in §5. |
-| `sharp` | 0.35.3 | Required by Payload image resizing. Added only when media handling begins (Phase 8). |
+| ~~`sharp`~~ | ~~0.35.3~~ | **Not installed. Phase 8 decided against it — see §8 and D-27.** It remains resolved in the lockfile as an optional dependency of `next@16.3.2`, which is where Next's own image optimizer would find it. |
 
 **Every `@payloadcms/*` package must move in lockstep at the identical version.** They declare exact
 peers on `payload`, so a mixed set will not resolve.
@@ -75,7 +75,8 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
 | `algoliasearch` | 5.57.0 | Phase 12 |
 | `stripe` | 22.5.0 | Phase 17 |
 | `resend` + `react-email` + `@react-email/components` | 6.22.0 / 6.9.2 / 1.0.12 | Phase 19 |
-| `cloudinary` | 2.10.1 | Phase 8 |
+| `cloudinary` | 2.10.1 | **Phase 8 — installed.** Server-only, imported by exactly one file (`payload/storage/cloudinary.ts`). Delivery URLs are built without it — see D-26 |
+| `@payloadcms/plugin-cloud-storage` | 3.88.0 | **Phase 8 — installed.** Exact peer on `payload@3.88.0`; its only new transitive deps are `range-parser` and `find-node-modules` |
 | `posthog-js` | 1.418.10 | Phase 25 |
 | `@sentry/nextjs` | 10.70.0 | Phase 25 |
 | `@vercel/speed-insights` | 2.0.0 | Phase 25 |
@@ -155,8 +156,9 @@ Plan §2.1b: *"Do not install the entire final dependency list on day one."* Six
 describe the Node that actually runs the code.
 
 **Deliberately not installed yet:** ~~`@payloadcms/richtext-lexical` (Phase 6 — no rich-text field
-exists)~~ **installed in Phase 6, §8 below**; `sharp` (Phase 8 — image processing, and the reason the
-Phase 6 `media` collection declares no `imageSizes`); and everything in §4. See **DEV-18**.
+exists)~~ **installed in Phase 6, §8 below**; ~~`sharp` (Phase 8 — image processing, and the reason the
+Phase 6 `media` collection declares no `imageSizes`)~~ **withdrawn — Phase 8 decided against `sharp`
+entirely, see D-27**; and everything in §4. See **DEV-18**.
 
 ### pnpm 11 build-script gating
 
@@ -301,6 +303,6 @@ siblings, `@payloadcms/ui`, and the Markdown/JSX plumbing behind the converters.
 `@faceless-ui/modal@3.0.0` and `@faceless-ui/scroll-info@2.0.0`, were already in the store as
 dependencies of `@payloadcms/ui`, so nothing new had to be satisfied by hand.
 
-**Still not installed, and still deliberate:** `sharp`. Uploads work without it; `imageSizes`,
+**Still not installed, and now permanently so:** `sharp`. Phase 8 examined the question and decided against it — **D-27**. Uploads work without it; `imageSizes`,
 `focalPoint` and `crop` are silently inert, which is why the `media` collection declares none of them
 until Phase 8 brings the media layer and its dependency together.

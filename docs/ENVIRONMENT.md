@@ -299,9 +299,25 @@ Every one of these is blocked on the project owner, and every one has a free or 
 
 | Variable | Tier | Phase | Source |
 |---|---|---|---|
-| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | **public** | 8 | Cloudinary → Dashboard → Product Environment Credentials |
-| `CLOUDINARY_API_KEY` | server | 8 | same |
-| `CLOUDINARY_API_SECRET` | server | 8 | same. Separate environments by folder or preset |
+| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | **public** | **8 — read now** | Cloudinary → Dashboard → Product Environment Credentials. Public by construction: it is a path segment of every delivery URL |
+| `CLOUDINARY_API_KEY` | server | **8 — read now** | same |
+| `CLOUDINARY_API_SECRET` | server | **8 — read now** | same. Read by exactly one file, `payload/storage/cloudinary.ts`, which the client graph cannot reach |
+
+**Three Cloudinary variables are refused outright**, and the schema throws if any is set:
+`CLOUDINARY_URL`, `CLOUDINARY_ACCOUNT_URL` and `CLOUDINARY_API_PROXY`. The `cloudinary` SDK reads all
+three straight from `process.env` on its first `config()` call, merging them *underneath* whatever the
+caller passes. `CLOUDINARY_URL` is the dangerous one: it is a single string of the form
+`cloudinary://<key>:<secret>@<cloud>`, so its presence supplies a write credential behind this
+project's deliberate three-variable scheme — and a malformed one throws inside the SDK at boot, far
+from anything that names it. An allowlist cannot stop a library reading `process.env` directly, so
+refusal is the only control that works.
+
+**Phase 8 leaves Cloudinary optional, and says so loudly when that is wrong.** With the group
+unconfigured, Payload keeps local-disk storage and the storefront renders every image as its
+placeholder — correct for development, and *broken* on a serverless platform whose filesystem is
+ephemeral and often read-only. `reportEnvironment` therefore warns whenever `appEnv` is not `local` and
+the group is unconfigured. It warns rather than throws: `ARCHITECTURE.md` §2 requires an unavailable
+optional service to degrade rather than stop the shop.
 | `NEXT_PUBLIC_ALGOLIA_APP_ID` | **public** | 12 | Algolia → API Keys |
 | `NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY` **†** | **public** | 12 | Algolia → **Search-Only** key. Never the admin key |
 | `ALGOLIA_ADMIN_API_KEY` **†** | server | 12 | Algolia → Admin API Key. Development index only |

@@ -97,6 +97,7 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm generate:importmap` | Regenerate the admin import map. **Required after adding a rich-text feature or any custom admin component** — the Lexical editor's field, cell and feature components are all resolved through it |
 | `pnpm seed` | Representative demo content — catalogue, editorial, globals. Idempotent, local only, and deliberately creates no customers, orders or media. See `scripts/seed.ts` |
 | `pnpm payload run scripts/baseline-migrations.ts <name…>` | Put a push-built development database onto the migration chain without destroying it. [`DATABASE.md`](DATABASE.md) §10 |
+| `pnpm verify:media` | The Phase 8 media rules — the mime allowlist and magic-byte sniffing, the hostile-upload set, the dimension cap, the delivery-URL grammar and the reserved-box geometry. Adds a live Cloudinary round trip when credentials exist. Generates its own fixtures; local database only |
 | `pnpm verify:access` | The Phase 7 access-control matrix, run against the live rules — cross-customer reads, role escalation, ownership forcing, the disabled account, the password policy. Creates and removes its own fixtures; local database only. Phase 27 lifts these assertions into Vitest |
 | `pnpm test` | Vitest unit/component tests *(pending — Phase 27)* |
 | `pnpm test:e2e` | Playwright *(pending — Phase 27)* |
@@ -140,7 +141,8 @@ src/
 ├─ components/
 │  ├─ ui/                primitives (button, input, dialog, drawer, …)
 │  ├─ layout/            global shell (header, nav, footer, containers)
-│  └─ auth/              the auth forms and their shared field/status pieces (Phase 7)
+│  ├─ auth/              the auth forms and their shared field/status pieces (Phase 7)
+│  └─ media/             MediaImage — the one way an image reaches a page (Phase 8)
 ├─ instrumentation.ts    startup environment validation (Phase 4)
 ├─ proxy.ts              Next 16's renamed `middleware` — the /account redirect (Phase 7)
 ├─ lib/
@@ -148,6 +150,7 @@ src/
 │  ├─ payload.ts         the Local API handle (Phase 7)
 │  ├─ password-policy.ts the password rule, shared by the forms and the collection (Phase 7)
 │  ├─ auth/              session DAL, server actions, Zod schemas, form state (Phase 7)
+│  ├─ media/             delivery contexts, the Cloudinary URL builder, upload limits (Phase 8)
 │  ├─ env.public.ts      browser-safe environment — importable anywhere
 │  ├─ env.server.ts      server-only environment — what application code imports
 │  └─ env.core.ts        the same without the `server-only` guard; config and instrumentation only
@@ -160,9 +163,10 @@ src/
    ├─ fields/            reusable field builders — money, slug, seo, address, link, hotspot
    ├─ globals/           site settings and navigation
    ├─ hooks/             collection hooks — derived-price sync, cascades, ownership
+   ├─ storage/           the Cloudinary adapter — the only file importing the SDK (Phase 8)
    └─ migrations/        generated, committed, applied in order (Phase 5)
 
-scripts/                 one-off local administration — seed, migration baseline, access checks
+scripts/                 one-off local administration — seed, migration baseline, access + media checks
 ```
 
 **`scripts/` is the one place outside `src/` that may import `lib/env.core`.** It runs under the
@@ -274,6 +278,63 @@ catalogue and the editorial collections, and does not get staff accounts, deleti
 the Commerce tab of Site Settings.
 
 To check the whole matrix at once: `pnpm verify:access`.
+
+## Media
+
+Payload holds the metadata. **Cloudinary holds the bytes and performs every crop and resize**, at
+delivery, from a URL — not at upload into stored derivatives. `docs/ARCHITECTURE.md` **D-26** is the
+reasoning; the practical consequences are these.
+
+### It works with no Cloudinary account, and that is the state the repository is in
+
+Leave the three `CLOUDINARY*` variables blank and everything runs: uploads land on local disk under
+`<repo>/media`, Payload serves them from `/api/media/file/<filename>`, and the storefront renders each
+image inside its reserved box. Nothing is broken and nothing pretends otherwise.
+
+What you lose without credentials is the responsive `srcset`, the crop, and modern-format delivery —
+all three are Cloudinary's. What you keep is the **geometry**, because the box comes from the delivery
+context rather than from the asset. Turning Cloudinary on later changes what fills each box and never
+the box itself.
+
+**It is only correct locally.** A serverless filesystem is ephemeral and usually read-only, so a
+deployed environment with no Cloudinary loses every upload. The app warns about exactly that at startup
+rather than letting it be discovered later.
+
+### The eight delivery contexts
+
+`src/lib/media/cloudinary-url.ts` defines them and `MediaImage` consumes them:
+
+```tsx
+<MediaImage
+  media={product.gallery?.[0]?.image}
+  context="productCard"
+  sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
+/>
+```
+
+`sizes` is required and deliberately not defaulted — a `srcset` with `w` descriptors and no `sizes`
+falls back to `100vw`, so a thumbnail in a four-column grid would download the full-viewport candidate.
+
+Omit `context` and the asset's own `role` picks one. Pass `mobileContext` to art-direct: below 768px
+the component renders a different **crop**, not a smaller copy, which is what visual guide §10 asks for.
+
+**Every requested width is clamped against the stored dimensions.** `c_fill` upscales happily and
+`c_lfill` — the mode that sounds safe — silently abandons the aspect ratio when the request exceeds the
+source. Both were measured against the live CDN. Do not bypass the builder.
+
+### `sharp` is not installed, and the crop tool is off
+
+Not an omission — **D-27**. Nothing in the delivery path needs it, dimensions come from a byte probe,
+and Payload's crop UI without `sharp` renders and silently discards the crop. A Payload-side crop would
+be discarded by Cloudinary anyway, since every variant is re-derived from the original. Framing is
+expressed through the **focal point**, which the delivery layer genuinely reads.
+
+### Uploads
+
+Accepted: JPEG, PNG, WebP, AVIF, MP4, WebM. **Not** SVG (a script-execution context, and Payload's own
+`validateSvg` can be stepped around with an `<?xml` prefix) and **not** GIF (`file-type` reads magic
+bytes at offset 0 only, so `GIF89a` followed by an executable is detected as an image). 25 MB, 12,000
+pixels on a side. `pnpm verify:media` proves each of those refusals against a real hostile file.
 
 ## Browser and accessibility checks
 

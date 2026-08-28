@@ -457,7 +457,7 @@ export interface ProductVariant {
   deletedAt?: string | null;
 }
 /**
- * Images and video. Cloudinary delivery and responsive variants arrive in Phase 8.
+ * Images and video. Payload holds the metadata; Cloudinary delivers the bytes and performs every crop and resize.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "media".
@@ -472,6 +472,27 @@ export interface Media {
    * Optional. Rendered beside editorial imagery where the layout calls for it.
    */
   caption?: string | null;
+  /**
+   * How this asset is framed by default. Any page may override it; this is what it does when nobody says otherwise.
+   */
+  role: 'product' | 'campaign' | 'editorial' | 'logo';
+  /**
+   * Set by Cloudinary at upload. Every delivery URL is built from this.
+   */
+  cloudinaryPublicId?: string | null;
+  /**
+   * Cloudinary’s own identifier. Survives a rename or a move; the public id does not.
+   */
+  cloudinaryAssetId?: string | null;
+  /**
+   * image or video, as Cloudinary stored it. Decides which delivery path a URL uses.
+   */
+  cloudinaryResourceType?: string | null;
+  /**
+   * Set by Cloudinary at upload. Cache-busts every derived variant when an asset is replaced.
+   */
+  cloudinaryVersion?: number | null;
+  prefix?: string | null;
   updatedAt: string;
   createdAt: string;
   url?: string | null;
@@ -2872,6 +2893,12 @@ export interface FaqsSelect<T extends boolean = true> {
 export interface MediaSelect<T extends boolean = true> {
   alt?: T;
   caption?: T;
+  role?: T;
+  cloudinaryPublicId?: T;
+  cloudinaryAssetId?: T;
+  cloudinaryResourceType?: T;
+  cloudinaryVersion?: T;
+  prefix?: T;
   updatedAt?: T;
   createdAt?: T;
   url?: T;

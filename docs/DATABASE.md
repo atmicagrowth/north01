@@ -52,6 +52,22 @@ pointed at an order table.
 Customer is not a value in `users.role`: shoppers are their own auth collection, which is decision
 **D-21** and is what makes "a customer cannot reach the CMS" a property of the topology.
 
+**Phase 8 added no tables and six columns**, all on `media`:
+
+| Column | Type | What it is |
+|---|---|---|
+| `role` | `enum_media_role` — `product` \| `campaign` \| `editorial` \| `logo` | §8.1a's "media role", read on every render as the asset's default delivery context — **D-26** |
+| `cloudinary_public_id` | `varchar`, indexed | §8.1a's "Public identifier". Every delivery URL is built from it |
+| `cloudinary_asset_id` | `varchar` | §8.1a's "Asset ID" — a separate bullet because it is a separate thing: it survives a rename or a move between folders, and the public id does not |
+| `cloudinary_resource_type` | `varchar` | `image` or `video`. **Not derivable from `mimeType`**, which is the browser's unvalidated claim; a wrong value is a 404 on every rendering of that asset |
+| `cloudinary_version` | `numeric` | Cache-busts every derived variant when an asset is replaced |
+| `prefix` | `varchar DEFAULT 'north01'` | Added by the storage plugin. Present **whether or not Cloudinary is configured**, which is the whole point — see **D-28** |
+
+There are still **no `sizes_*` columns**, and there never will be: Cloudinary derives every variant at
+delivery (**D-26**). Each `imageSizes` entry would have cost six columns plus an index, and index names
+are silently truncated at 60 characters — `media_sizes_<name>_sizes_<name>_filename_idx` exceeds that
+once a size name passes fourteen snake-cased characters.
+
 The count is worth knowing because a Payload collection is rarely one table. `products` is four —
 itself, `products_gallery` (the array), `products_texts` (the `hasMany` text fields) and
 `products_rels` (the `hasMany` relationships). An `array` field is a table; a `blocks` field is one
