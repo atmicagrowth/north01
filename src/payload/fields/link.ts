@@ -1,5 +1,7 @@
 import type { Field, TextFieldSingleValidation } from 'payload'
 
+import { isSameSitePath } from '../../lib/same-site-path'
+
 /**
  * Every navigation item, call to action and editorial link in this schema is one of two things: a
  * pointer at a document this CMS owns, or a path/URL typed by hand.
@@ -21,6 +23,12 @@ import type { Field, TextFieldSingleValidation } from 'payload'
  * The validator accepts a site-relative path or an absolute `http(s)` URL and nothing else. A bare
  * `shop`, a `javascript:` scheme or a protocol-relative `//host` are all refused — the first is a
  * mistake, and the other two are how a CMS field becomes an open redirect or a script injection.
+ *
+ * The path half is `lib/same-site-path.ts` rather than a `startsWith` written out here. The version
+ * that *was* written out here accepted `/\t/evil.example`, so an editor could put a link in the site
+ * header that reads as an internal path in the admin panel and navigates to another domain — the
+ * exact failure the paragraph above claims to prevent. Phase 9's audit found it; that module carries
+ * the measurement.
  */
 const validateHref: TextFieldSingleValidation = (value, { req: { t }, required, siblingData }) => {
   if ((siblingData as { kind?: unknown })?.kind !== 'url') {
@@ -31,7 +39,7 @@ const validateHref: TextFieldSingleValidation = (value, { req: { t }, required, 
     return required ? t('validation:required') : true
   }
 
-  if (value.startsWith('/') && !value.startsWith('//')) {
+  if (isSameSitePath(value)) {
     return true
   }
 

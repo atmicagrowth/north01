@@ -2,7 +2,11 @@
 
 import { Search } from 'lucide-react'
 
-import { useShellOverlay } from '@/components/shell/overlay-context'
+import {
+  OVERLAY_PANEL_ID,
+  overlayTriggerProps,
+  useShellOverlay,
+} from '@/components/shell/overlay-context'
 import { Dialog, DialogContent, DialogClose } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { Link, NewTabHint } from '@/components/ui/link'
@@ -40,6 +44,7 @@ export function SearchOverlay({ items }: { items: ShellNavItem[] }) {
   return (
     <Dialog open={isOpen('search')} onOpenChange={(next) => setOpen('search', next)}>
       <DialogContent
+        id={OVERLAY_PANEL_ID.search}
         title="Search"
         onCloseAutoFocus={handleCloseAutoFocus}
         /*
@@ -66,8 +71,8 @@ function SearchPanel({ items }: { items: ShellNavItem[] }) {
       {items.length > 0 ? (
         <nav aria-label="Browse">
           <ul className="flex flex-col">
-            {items.map((item) => (
-              <li key={item.href} className="border-t border-border last:border-b">
+            {items.map((item, index) => (
+              <li key={index} className="border-t border-border last:border-b">
                 <DialogClose asChild>
                   <Link
                     href={item.href}
@@ -95,13 +100,14 @@ function SearchPanel({ items }: { items: ShellNavItem[] }) {
 
 /** The header control. Separate so the bar can place it without knowing what it opens. */
 export function SearchTrigger({ className }: { className?: string }) {
-  const { registerTrigger, setOpen } = useShellOverlay()
+  const { isOpen, registerTrigger, setOpen } = useShellOverlay()
 
   return (
     <IconButton
       label="Search"
       size="sm"
       className={className}
+      {...overlayTriggerProps('search', isOpen('search'))}
       onClick={(event) => {
         registerTrigger(event.currentTarget)
         setOpen('search', true)

@@ -115,12 +115,23 @@ export function DesktopNav({ items, className }: { items: ShellNavItem[]; classN
       className={className}
     >
       <NavigationMenu.List className="flex items-center gap-l">
-        {items.map((item) => {
+        {items.map((item, index) => {
           const current = isCurrentPath(pathname, item.href)
           const hasPanel = item.columns.length > 0 || item.feature !== null
 
           return (
-            <NavigationMenu.Item key={item.href} value={item.href} className="flex">
+            /*
+             * Keyed and valued by **position**, not by href.
+             *
+             * Nothing stops an editor pointing two primary items at the same URL — "Shop" and
+             * "Store" both at `/shop` is a perfectly ordinary thing to do — and the href was doing
+             * two jobs it could not guarantee: React's reconciliation key, and Radix's identity for
+             * which panel is open. Duplicate hrefs meant duplicate keys *and* two items sharing one
+             * open state, so hovering either opened both. The list is a fixed CMS array with no
+             * client-side insertion or reordering, which is exactly the case an index key is correct
+             * for.
+             */
+            <NavigationMenu.Item key={index} value={String(index)} className="flex">
               {hasPanel ? (
                 <>
                   <NavigationMenu.Trigger
@@ -212,8 +223,8 @@ function MegaMenu({ item, pathname }: { item: ShellNavItem; pathname: string }) 
            * whether an editor writes one column or four.
            */
           <div className="flex flex-wrap gap-l">
-            {item.columns.map((column, index) => (
-              <div key={column.heading ?? index} className="flex w-48 shrink-0 flex-col gap-s">
+            {item.columns.map((column, columnIndex) => (
+              <div key={columnIndex} className="flex w-48 shrink-0 flex-col gap-s">
                 {column.heading ? (
                   <p className="font-sans text-micro uppercase text-foreground-muted">
                     {column.heading}
@@ -221,8 +232,8 @@ function MegaMenu({ item, pathname }: { item: ShellNavItem; pathname: string }) 
                 ) : null}
 
                 <ul className="flex flex-col gap-s">
-                  {column.links.map((link) => (
-                    <li key={link.href}>
+                  {column.links.map((link, linkIndex) => (
+                    <li key={linkIndex}>
                       <NavigationMenu.Link asChild active={isCurrentPath(pathname, link.href)}>
                         <Link
                           href={link.href}

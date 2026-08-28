@@ -2986,6 +2986,140 @@ reported a clean run while proving nothing"* — in a second form: **a fixture t
 script thinks it is must fail loudly.** A harness that only works against a database someone has
 already used is a harness that will mislead the first person to clone the repository.
 
+
+### 1.14.13 Post-implementation audit
+
+The committed shell re-read adversarially, with every claim tested against the running application
+rather than against the comment describing it. Phases 3, 4 and 6 each did this and each found defects
+that had passed every gate; this one found **four**, and the first is a security defect that was
+demonstrated end to end.
+
+#### Finding 1 — an open redirect in the sign-in flow
+
+**One rule, copied into four files, wrong in all four.**
+
+```ts
+value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\')
+```
+
+That refuses an absolute URL and the protocol-relative `//host`, which is what it was written for. It
+does not survive a control character: the WHATWG URL parser **removes** tab, line feed and carriage
+return before parsing, so `"/\t/evil.example"` starts with a single slash in JavaScript and is
+`//evil.example` by the time a browser resolves it. Measured in Chromium:
+
+```
+new URL('/\t/evil.example', 'https://north01.example/page')  →  https://evil.example/
+```
+
+The worst of the four sites was `safeReturnPath` in `lib/auth/session.ts` — **Phase 7 code** — which
+guards the `?next=` parameter the login flow returns you to. Demonstrated against the running
+application with a real customer and a real password:
+
+```
+/login?next=/%09/evil.example  →  sign in  →  http://evil.example/
+```
+
+A phishing link on the shop's own domain that hands the visitor to an attacker in the moment right
+after they type their password, which is the exact failure `safeReturnPath`'s own docblock claimed to
+prevent. The other three were `isInternalHref` (the shell), the CMS `href` validator, and the
+announcement bar's — so an editor could also have put a header link on any domain, reading as an
+internal path in the admin panel.
+
+**Fixed** by `lib/same-site-path.ts`: one rule, no imports, reachable both by the `@/` alias and by a
+relative path from a collection loaded outside Next — the same shape as `lib/password-policy.ts`, and
+for the same reason. It **refuses** control characters rather than stripping them: a raw tab never
+appears in a legitimate path, and stripping-then-rechecking would be one specification revision away
+from being wrong again. Re-tested end to end — the same request now lands on `/account`.
+
+The duplication is the actual lesson. Four copies of one security rule, three of them fixed and one
+forgotten, is the failure the module now makes impossible.
+
+#### Finding 2 — the route map answered for things that are not routes
+
+`DOCUMENT_ROUTES` was an object literal, and `documentHref` takes a `string`, so the lookup walked
+`Object.prototype`:
+
+| `collection` | returned |
+|---|---|
+| `'toString'` | `'[object Undefined]'` — a string, so the link **rendered** |
+| `'constructor'` | the slug, as a **relative** href resolved against the current page |
+| `'isPrototypeOf'` | `false` — a boolean, from a function typed `string \| null` |
+| `'__proto__'` | **threw** — and `getShell` catches, so the whole shell silently degrades |
+
+Not reachable through the CMS today, because Payload constrains `relationTo`. It is still a function
+whose contract is *"a path, or nothing"* returning three other things, and it is exported for Phases
+11 and 13 to call with values from route params. **Fixed** with a `Map`, which has no prototype chain.
+
+The same read found that a slug was interpolated into a path **unencoded**, so a stored
+`../../admin` produced `/product/../../admin` — which a browser resolves to `/admin`. `slugField`'s
+pattern makes that unreachable through the admin panel, and `encodeURIComponent` leaves every
+conforming slug byte-identical, so the fix costs nothing and closes the path that never went through
+that validator.
+
+#### Finding 3 — the search and bag triggers announced nothing
+
+Measured, against the mega menu as a control:
+
+```
+Search: aria-expanded=null   aria-haspopup=null    ← ours
+Bag:    aria-expanded=null   aria-haspopup=null    ← ours
+Shop:   aria-expanded=false                        ← Radix's NavigationMenu.Trigger
+```
+
+**This is the same root cause as the focus defect fixed during the phase itself** (§1.14.3), and only
+half of it was fixed at the time. Bypassing `Dialog.Trigger` — because these triggers are in the
+header and their dialogs are beside the footer — loses *both* the focus restoration *and* the trigger
+ARIA. Having found the first, the phase did not go looking for the second.
+
+A screen-reader user tabbing the header heard "Search, button" and "Bag, button": no indication that
+either opens a dialog, no indication of state. **Two clean axe-core sweeps had already passed over this
+markup** — `aria-haspopup` is an enhancement, not a violation.
+
+**Fixed** with `overlayTriggerProps`, which supplies what `Dialog.Trigger` would have.
+`aria-controls` is emitted **only while the panel is open**, because Radix unmounts the content on
+close and a dangling `aria-controls` is itself an axe violation — a worse outcome than the omission.
+
+#### Finding 4 — two navigation items at one URL shared a panel
+
+`key={item.href}` and `value={item.href}` gave the href two jobs it cannot guarantee: React's
+reconciliation key and Radix's identity for which panel is open. Nothing stops an editor pointing two
+primary items at the same URL — "Shop" and "Store" both at `/shop` is ordinary — and the result was
+duplicate keys **and** one shared open state, so hovering either opened both. The same collision
+existed for columns sharing a heading, links sharing an href, and social entries sharing a URL.
+
+**Fixed** with positional keys and values, which is the correct choice for a fixed CMS array with no
+client-side insertion or reordering. Verified behaviourally rather than by inspection: two items were
+written to the live `navigation` global through the REST API, and the result was
+`SHOP=open STORE=closed` with only the first panel's content visible.
+
+#### What was verified rather than assumed
+
+Two claims this phase had *written down* and never tested:
+
+**Editor saves reach the storefront.** An admin signed in through the REST API, changed the site
+tagline, and the storefront was polled: read #1 served the old value, read #2 the new one. That is
+exactly `revalidateTag(tag, 'max')`'s stale-while-revalidate contract, so the behaviour is correct —
+but the README said *"on the next request"*, which is one request early. Corrected.
+
+**The degraded shell.** `fallback.ts` and `getShell`'s catch had never run. Against an unreachable
+database, all four failure modes were measured, and they layer:
+
+| Scenario | Result |
+|---|---|
+| A statically prerendered route (`/`) | **200**, real CMS content, database never contacted — the prerender is a stronger guarantee than the fallback |
+| A dynamic route rendering the shell (dev `/`) | **200**, fallback navigation, and the `[shell] Falling back…` line in the log |
+| A dynamic route with its own data access (`/login`, `/account`) | **500** — correctly: the page has nothing true to show |
+| `pnpm build` | **exit 1**, stopping on `/account` — a deploy against a broken database fails loudly rather than silently baking a fallback site |
+
+The middle row is the one that had never been exercised, and it behaves as D-32 describes.
+
+#### Coverage
+
+`pnpm verify:shell` is **100 checks**, up from 83: the open-redirect vectors against both the shared
+guard and the wired-up CMS validator, and the prototype-chain and slug-encoding cases, are permanent
+regression tests. `verify:access` 45/45 and `verify:media` 61/61 unchanged, 49/49 browser checks,
+**0 axe-core violations**.
+
 ### 1.14.10 Confirmation sweep of earlier deviations
 
 Step 4 of the append rule.
@@ -3949,6 +4083,7 @@ rather than by widening the list.
 | Phase 7 — access control and authentication | 2026-08-27 | Notes **§1.12**: route protection is **three** layers and only two are checks — the Next 16 `proxy.ts` (renamed from `middleware.ts`) is an optimistic cookie-presence redirect that cannot verify anything, and the real route check lives in the *pages* rather than `account/layout.tsx`, because a layout does not re-render on navigation within its own segment. **§1.12.2**: the role bootstrap needed two answers — a hook forcing the first account on an empty database to `admin`, and a data statement in the migration backfilling existing staff, because `editor` would not have preserved their permissions, it would have removed them from all of them at once with no admin left to grant them back. **§1.12.3**: ownership rules return a `Where`, so a cross-account read is *empty* rather than *forbidden*; and two things a rule cannot do — say whose a new row is (`enforceCustomerOwnership` forces it) and protect one field of a permitted write (field access does). The variant/product publication join `publishedOn('product.status')` was measured both ways, because getting it wrong would have published every unreleased SKU, price and stock count. **§1.12.4–5**: why the reset link's origin comes from `SITE_URL` and never the `Host` header, why the token is not validated on page load, why a reset does not sign you in, and a password policy of twelve characters with no composition rules against Payload's built-in floor of **three**. **§1.12.7 records two defects found by running it**: React **resets** an uncontrolled form once its action resolves, so a rejected sign-in emptied the email field — fixed with echoed `defaultValue`s, password excluded; and the first `verify-access.ts` counted *any* thrown error as a passing access check, so a fixture typo would have reported a clean run while proving nothing. Deviations **DEV-31** (registration names a duplicate email), **DEV-32** (the reset flow exists before email does). New decisions **D-22**–**D-25**. New script `pnpm verify:access` — 43 checks, all passing; 42 further browser checks across dev, production and the admin panel; **0 axe-core violations** on six routes. No dependency added. Step 4 carried out as **§1.12.11**. |
 | Phase 8 — media and Cloudinary | 2026-08-28 | Notes **§1.13**: **D-03/DEV-05 confirmed against the registry** in the phase told to confirm it (`@payloadcms/storage-cloudinary` still 404s; five sibling adapters publish at 3.88.0), and ARCHITECTURE.md's premature *"Confirmed in Phase 8"* marker corrected. **§1.13.2**: Cloudinary transforms at *delivery* and Payload declares **no `imageSizes`** — a delivery URL is pure string concatenation (verified in the SDK source and against the live CDN unsigned), while the `imageSizes` route would have cost 48 columns, 8 indexes and 9 uploads per asset to reproduce it, and would freeze the breakpoints into stored rows. **§1.13.3 records three defects found by measuring rather than reading, all of which would have shipped**: `c_lfill` — the documented "fill but do not enlarge" mode — *silently abandons the aspect ratio* when a request exceeds the source, which is the layout shift §8.1d forbids arriving through the safe-looking option; clamping to the source **width** is insufficient once a crop changes the ratio, because the binding constraint moves to the height (an 864×576 source asked for the 4:5 hero returned 864×**1080**); and `fl_relative` makes Cloudinary's `x_`/`y_` **multiply** the source dimensions, so the first focal-point implementation requested a 345,600 × 432,000 image and got a 400. A fourth was caught in a browser — the art-directed *placeholder* did not change shape at the breakpoint, which mattered because with an empty catalogue the placeholder is the only path that renders. **§1.13.5**: `checkFileRestrictions` has two mutually exclusive branches and without `mimeTypes` there is **no content inspection at all**; setting it is the whole of §8.1b, and SVG and GIF are excluded as verified bypasses (an `<?xml`-prefixed SVG skips `validateSvg`; `file-type` reads offset 0 only, so a `GIF89a`+`MZ` polyglot passes as an image). A size limit without `abortOnLimit` is **worse than none** — Busboy truncates and Payload never reads the flag. **§1.13.9**: the phase is committed with **no Cloudinary credentials**, so the degraded path is what was verified — and the storage plugin is registered *unconditionally* with `alwaysInsertFields: true` because conditional registration would emit two different schemas from one committed migration. Deviations **DEV-33** (no `sharp` — reverses DEV-28's closing clause and three lines of STACK_VERSIONS), **DEV-34** (eight contexts, not six), **DEV-35** (SVG and GIF refused). New decisions **D-26**–**D-29**. New script `pnpm verify:media` — 48 checks, plus a live round trip that arms itself when credentials appear. 15 browser checks at **CLS 0.0000** and 0 axe violations; 25 URL-builder checks against the live CDN; the migration applied, rolled back, re-applied and diffed **identical** against the pushed schema. Two dependencies added, one removed from the plan. Step 4 carried out as **§1.13.13**. |
 | Phase 9 — storefront shell | 2026-08-28 | Notes **§1.14**: the shell mounted in the storefront root layout and driven by the `navigation` and `site-settings` globals, with **no dependency added**. **§1.14.1** answers the two questions that had to precede a component — where a document lives (gap **G-15**, closed by **D-30**: one route map, `campaigns` deliberately mapping to nothing) and what a broken link renders as (**dropped**, never disabled, because a disabled navigation item is §0.1.17's fake control with an apology attached) — and records that publication has to be re-tested at render because the Local API's `overrideAccess: true` bypasses the access rule. **§1.14.2**: one state variable makes a second open overlay *unrepresentable*, the mega menu joins the machine from outside because it is the only overlay with no focus trap, and neither reset is an effect — the React Compiler's `set-state-in-effect` rule failed the build on the first version. **§1.14.3 records the defect only a browser could find**: Radix's modal dialog restores focus to `Dialog.Trigger`, these overlays have none (their triggers are in the header, their dialogs beside the footer, because §9.1d demands they work from every page), so `DialogContentModal` focused a null ref and **dropped focus to `document.body` on every close** — a WCAG 2.4.3 failure invisible to axe, which inspects a static tree. **§1.14.4**: two visual failures fixed against screenshots — equal-fraction mega-menu columns that put two columns at the far ends of a 1440px bar, and a primary row that sat against the top of the bar because Radix's `<nav>` → `<div>` → `<ul>` breaks an `h-full` chain. **§1.14.6**: `revalidateTag`'s single-argument form is deprecated in Next 16, and the hook must survive `pnpm seed` running outside Next, which is why `next/cache` is imported dynamically and a failure warns. Deviations **DEV-36** (no back button — there are no nested groups), **DEV-37** (the search overlay is chrome, with an honest interim panel), **DEV-38** (social links are words: `lucide-react@1.x` ships no brand marks). New decisions **D-30**, **D-31** (`global-not-found.tsx` behind `experimental.globalNotFound`, because **D-08**'s two root layouts leave no layout for a root `not-found`), **D-32**. New script `pnpm verify:shell` — 76 checks including the publication states as **real** Payload documents; 49 browser checks at two widths; **0 axe-core violations** across five route and overlay states. Step 4 carried out as **§1.14.10** — **DEV-01** and **DEV-07** discharged, their *"still to be exercised by Phase 9"* clause closed. |
+| Phase 9 — post-implementation audit | 2026-08-28 | Note **§1.14.13**: the committed shell re-read adversarially, four defects found and fixed. **The headline is a security defect in Phase 7 code**: one same-site-path rule copied into four files, all four accepting `/\t/evil.example` — which the WHATWG URL parser strips to `//evil.example` — so `/login?next=/%09/evil.example` sent a customer to another domain immediately after they typed their password. Demonstrated end to end against the running application and re-tested after the fix. Closed by `lib/same-site-path.ts`, one rule with no imports, reachable both by alias and by relative path, refusing control characters rather than stripping them. Second: `documentHref`'s object literal answered for `Object.prototype` members — `'toString'` returned a string that **rendered**, `'constructor'` returned a *relative* href, `'isPrototypeOf'` returned a boolean from a function typed `string | null`, and `'__proto__'` **threw**, silently degrading the whole shell; fixed with a `Map`, and slugs are now encoded so a stored `../../admin` cannot climb out of its namespace. Third, and **the same root cause as §1.14.3's focus defect with only half of it fixed at the time**: bypassing `Dialog.Trigger` loses the trigger ARIA as well as the focus restoration, so the search and bag buttons announced no `aria-haspopup` and no `aria-expanded` — invisible to axe, which had swept the markup clean twice. Fourth: `key`/`value` on the href meant two navigation items at one URL shared a mega-menu panel; fixed with positional keys and verified by writing duplicates to the live global. Also **tested two claims the phase had only written down**: the editor-save revalidation round trip (correct, but the README said "next request" where stale-while-revalidate makes it the one after — corrected), and the degraded shell in all four database-failure modes, which layer — a prerendered route serves real content, a dynamic route serves the fallback and logs, a route with its own data access 500s, and a build fails loudly rather than baking a fallback site. `verify:shell` is **100 checks**, up from 83. |
 | Phase 9 — campaigns deferred out of the linkable set | 2026-08-28 | Note **§1.14.11**, deviation **DEV-39**. `campaigns` had a route of `null` *and* remained in `LINKABLE_COLLECTIONS`, which together made an **editor trap**: the admin panel accepted a campaign as a link target and the header silently dropped the item. The evidence that a campaign has no page is tabulated — no `CAMPAIGN` node in structure §2's site map, campaigns on the *homepage* in feature matrix §3 and inside a **collection** page's edge cases in §12, no phase in the plan building a route, and no page-level art direction in visual guide §09 — together with the one line that cuts the other way (structure §4 path C and §22's Journey E draw *Home → Campaign → Lookbook*, in diagrams whose other steps are an overlay and a component). **Zero rows referenced a campaign**, measured rather than assumed: Drizzle's push warning quotes *table* row counts, not reference counts. One migration, `20260828_060719_phase_9_defer_campaign_links` — the only schema change in Phase 9 — applied, rolled back and re-applied, with the catalogue re-seeded afterwards because the rollback reached the data-model tables. Records a workflow hazard: `pnpm migrate` twice printed nothing, applied nothing and exited 0 inside a chained command, then worked when run alone. `verify-shell.ts` now asserts the *invariant* rather than the instance — every collection in `LINKABLE_COLLECTIONS` has a route — 83 checks, up from 76. The `campaigns` collection itself is untouched. Two workflow hazards recorded: a Payload CLI script that prints nothing may have done nothing while exiting 0, and `migrate:down` follows *batch* numbers rather than file order, which on a database with non-monotonic batches rolls back across phases and leaves a chain that reports itself fully applied while missing columns. **§1.14.12** records the Phase 7 harness defect that rebuild exposed: `verify-access.ts` created its editor fixture before its admin, so on an empty `users` table `Users.ts`'s first-account bootstrap silently promoted the editor to admin, every *"an editor cannot …"* assertion tested an admin, and one of them deleted a product and crashed the run on an unrelated foreign key. Fixed by ordering plus two assertions — `verify:access` is now **45 checks**. |
 | Phase 8 — Cloudinary credentials, live verification | 2026-08-28 | Note **§1.13.14**: credentials arrived after the phase was committed and `pnpm verify:media` armed its live half with no edit — **61/61**, up from 48. Confirms the one thing that could not be predicted without an account: **Strict transformations is off**, so the dynamically built delivery URLs this project depends on derive on the fly. Also confirms the storage round trip end to end — public id, asset id, version and resource type stored from Cloudinary's own response, `media.url` pointing at the CDN, Cloudinary's dimensions replacing the local probe's, every `srcset` candidate for a real record resolving, and a deleted record leaving a 404 behind. **The height-limited clamp predicted real data correctly**: a 3000×1200 landscape in the 4:5 gallery context clamps to 960 = `floor(1200 × 0.8)`, a formula derived from an unrelated 864×576 fixture. Recorded that `f_auto` returns **WebP** on this account where the demo cloud returned AVIF — both correct, and noted so the difference is not later read as a regression. One vacuous check name corrected. **§1.5 Cloudinary unblocked**; the live round trip is struck from §1.13.12's owed list. `.env.example` also de-duplicated: the Phase 8 commit added a Cloudinary block while an empty one already existed in the per-provider section. |
 > **Append this table, and the sections above it, at the end of every phase.**

@@ -9,7 +9,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
-import { useShellOverlay } from '@/components/shell/overlay-context'
+import { OVERLAY_PANEL_ID, useShellOverlay } from '@/components/shell/overlay-context'
 import { Drawer, DrawerClose, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import { IconButton } from '@/components/ui/icon-button'
 import { Link, NewTabHint } from '@/components/ui/link'
@@ -66,6 +66,7 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
       </DrawerTrigger>
 
       <DrawerContent
+        id={OVERLAY_PANEL_ID.menu}
         side="left"
         title="Menu"
         className="max-w-panel"
@@ -80,11 +81,13 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
             </p>
           ) : (
             <Accordion type="single" collapsible>
-              {items.map((item) => {
+              {items.map((item, index) => {
                 const current = pathname === item.href || pathname.startsWith(`${item.href}/`)
 
                 return item.columns.length > 0 ? (
-                  <AccordionItem key={item.href} value={item.href}>
+                  // Position, not href — see the note in `desktop-nav.tsx`. Two items sharing a
+                  // URL shared one accordion value, so opening either expanded both.
+                  <AccordionItem key={index} value={String(index)}>
                     <AccordionTrigger aria-current={current ? 'page' : undefined}>
                       {item.label}
                     </AccordionTrigger>
@@ -99,8 +102,8 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
                           </DrawerClose>
                         </li>
 
-                        {item.columns.map((column, index) => (
-                          <li key={column.heading ?? index}>
+                        {item.columns.map((column, columnIndex) => (
+                          <li key={columnIndex}>
                             {column.heading ? (
                               <p className="mt-m font-sans text-micro uppercase text-foreground-muted">
                                 {column.heading}
@@ -108,8 +111,8 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
                             ) : null}
 
                             <ul className="mt-s flex flex-col gap-s">
-                              {column.links.map((link) => (
-                                <li key={link.href}>
+                              {column.links.map((link, linkIndex) => (
+                                <li key={linkIndex}>
                                   <DrawerClose asChild>
                                     <Link
                                       href={link.href}
@@ -131,7 +134,7 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
                   </AccordionItem>
                 ) : (
                   // A group with no columns is a destination, so here the row *is* a link.
-                  <div key={item.href} className="border-b border-border">
+                  <div key={index} className="border-b border-border">
                     <DrawerClose asChild>
                       <Link
                         href={item.href}

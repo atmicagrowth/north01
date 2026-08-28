@@ -182,7 +182,9 @@ overlay and bag drawer are mounted on every storefront route and driven by the C
 
 - **The navigation is content.** Six primary destinations, their mega-menu columns, a featured panel
   and the footer columns all come from the `navigation` global; saving it drops the cached shell, so
-  an edit reaches the storefront on the next request rather than on the next deployment.
+  an edit reaches the storefront within a request or two — no deployment, no waiting on a timer. The
+  round trip is measured, not assumed: read one serves the old value, read two the new, which is
+  stale-while-revalidate doing its job.
 - **A link that cannot work is not rendered.** An item whose target is unpublished, scheduled for a
   future date, deleted, or in a collection with no public page is dropped from the menu — never drawn
   as a dead or disabled control.
@@ -195,8 +197,13 @@ overlay and bag drawer are mounted on every storefront route and driven by the C
   close behaviour are built and verified. Phase 12 fills the panel with Algolia; until then it says so
   and offers the browse routes instead of an input that swallows a query.
 
-`pnpm verify:shell` proves 83 assertions, including the publication cases against real Payload
+`pnpm verify:shell` proves 100 assertions, including the publication cases against real Payload
 documents. 49 browser checks at desktop and phone widths, **0 axe-core violations**.
+
+A post-implementation audit followed and found four defects, the first a live **open redirect** in the
+sign-in flow: `/login?next=/%09/evil.example` sent a customer to another domain immediately after they
+typed their password, because a browser strips the tab and resolves `//evil.example`. One rule had been
+copied into four files and all four had the hole. See notes §1.14.13.
 
 The catalogue is still Phase 11's, so most destinations in that navigation return a 404 — a styled
 one, inside the shell, with a way back.

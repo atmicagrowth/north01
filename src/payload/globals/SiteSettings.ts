@@ -2,6 +2,7 @@ import type { GlobalConfig } from 'payload'
 
 import { anyone, isAdminField, isStaff } from '../access'
 import { revalidateShell } from '../hooks/revalidateShell'
+import { isSameSitePath } from '../../lib/same-site-path'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 
 /**
@@ -303,12 +304,16 @@ export const SiteSettings: GlobalConfig = {
                     condition: (_data, siblingData: { enabled?: unknown }) =>
                       Boolean(siblingData?.enabled),
                   },
+                  /*
+                   * The path half is `lib/same-site-path.ts`, not a `startsWith` written out here.
+                   * The version written out here accepted `/\t/evil.example`, which a browser
+                   * resolves off-site — see that module, and Phase 9's audit.
+                   */
                   validate: (value: unknown) =>
                     value === null || value === undefined || value === ''
                       ? true
-                      : typeof value === 'string' &&
-                          ((value.startsWith('/') && !value.startsWith('//')) ||
-                            /^https?:\/\/\S+$/.test(value))
+                      : isSameSitePath(value) ||
+                          (typeof value === 'string' && /^https?:\/\/\S+$/.test(value))
                         ? true
                         : 'A site path beginning with / or a full https:// URL.',
                 },

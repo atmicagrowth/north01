@@ -36,6 +36,8 @@
  * Restoring campaigns is one entry here, one in `LINKABLE_COLLECTIONS`, and a migration. **DEV-39.**
  */
 
+import { isSameSitePath } from '@/lib/same-site-path'
+
 /** The `relationTo` values `payload/fields/link.ts` permits. Kept in step with `LINKABLE_COLLECTIONS`. */
 export type LinkableCollection =
   'products' | 'categories' | 'collections' | 'edits' | 'lookbooks' | 'journal'
@@ -48,35 +50,66 @@ export type LinkableCollection =
  * namespaces the structure document already uses for `/edit`, `/lookbook` and `/journal`. The plural
  * `/collections` is the structure document's own spelling and is kept exactly as written.
  */
-const DOCUMENT_ROUTES: Record<LinkableCollection, ((slug: string) => string) | null> = {
-  products: (slug) => `/product/${slug}`,
-  categories: (slug) => `/shop/${slug}`,
-  collections: (slug) => `/collections/${slug}`,
-  edits: (slug) => `/edit/${slug}`,
-  lookbooks: (slug) => `/lookbook/${slug}`,
-  journal: (slug) => `/journal/${slug}`,
-}
+const DOCUMENT_ROUTES = new Map<LinkableCollection, (slug: string) => string>([
+  ['products', (slug) => `/product/${slug}`],
+  ['categories', (slug) => `/shop/${slug}`],
+  ['collections', (slug) => `/collections/${slug}`],
+  ['edits', (slug) => `/edit/${slug}`],
+  ['lookbooks', (slug) => `/lookbook/${slug}`],
+  ['journal', (slug) => `/journal/${slug}`],
+])
 
-/** The public path for a document, or `null` when its collection has no public page. */
+/**
+ * The public path for a document, or `null` when its collection has no public page.
+ *
+ * ### Two things here are not incidental
+ *
+ * **A `Map`, not an object literal.** This takes a `string` — it is called with whatever `relationTo`
+ * a database row holds — and an object literal inherits `Object.prototype`, so the lookup answered
+ * for names that are not routes at all. Measured, before the change:
+ *
+ * | `collection` | returned |
+ * |---|---|
+ * | `'toString'` | `'[object Undefined]'` — a string, so the link rendered |
+ * | `'constructor'` | `'x'` — the **slug**, as a *relative* href resolved against the current page |
+ * | `'isPrototypeOf'` | `false` — a boolean, from a function typed `string \| null` |
+ * | `'__proto__'` | **threw**, which `getShell` catches, degrading the whole shell to the fallback |
+ *
+ * A `Map` has no prototype chain to walk, so every one of those is now `null`. The values were never
+ * reachable through the CMS — Payload constrains `relationTo` — but this function's contract is
+ * "a path, or nothing", and it was returning three other things.
+ *
+ * **The slug is encoded.** `slugField` allows `[a-z0-9-]` only, and `encodeURIComponent` leaves every
+ * such slug byte-identical, so this costs nothing on real data. What it stops is a value that never
+ * went through that validator — written before it existed, by a script, or by a future collection
+ * with a different field — becoming a path: an unencoded `../../admin` interpolates to
+ * `/product/../../admin`, which a browser resolves to `/admin`.
+ */
 export function documentHref(collection: string, slug: string): string | null {
-  const route = DOCUMENT_ROUTES[collection as LinkableCollection]
+  const route = DOCUMENT_ROUTES.get(collection as LinkableCollection)
 
-  return route ? route(slug) : null
+  return route ? route(encodeURIComponent(slug)) : null
 }
 
 /**
  * Whether an href leaves this site.
  *
- * `payload/fields/link.ts` already refuses anything that is neither a single-slash-rooted path nor an
- * absolute `http(s)` URL — `javascript:` and protocol-relative `//host` are rejected at save time —
- * so this only has to tell the two surviving shapes apart. It re-checks the leading `//` anyway,
- * because a value written before that validator existed would still be in the column.
+ * `payload/fields/link.ts` refuses anything that is neither a rooted path nor an absolute `http(s)`
+ * URL at save time, so this mostly has to tell the two surviving shapes apart. It re-checks anyway,
+ * because a value written before that validator existed is still in the column — and because the
+ * validator and this function were separately wrong in the same way until Phase 9's audit.
  */
 export function isExternalHref(href: string): boolean {
   return /^https?:\/\//i.test(href)
 }
 
-/** A path this application will route: rooted, and not protocol-relative. */
+/**
+ * A path this application will route: rooted, and not resolvable off-site.
+ *
+ * The rule is `lib/same-site-path.ts`. It used to be three `startsWith` calls written out here, and
+ * they accepted `/\t/evil.example` — which a browser strips to `//evil.example` before resolving it.
+ * See that module for the measurement.
+ */
 export function isInternalHref(href: string): boolean {
-  return href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/\\')
+  return isSameSitePath(href)
 }

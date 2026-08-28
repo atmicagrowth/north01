@@ -2,7 +2,11 @@
 
 import { ShoppingBag } from 'lucide-react'
 
-import { useShellOverlay } from '@/components/shell/overlay-context'
+import {
+  OVERLAY_PANEL_ID,
+  overlayTriggerProps,
+  useShellOverlay,
+} from '@/components/shell/overlay-context'
 import { Drawer, DrawerContent } from '@/components/ui/drawer'
 import { IconButton } from '@/components/ui/icon-button'
 import { Button } from '@/components/ui/button'
@@ -46,7 +50,12 @@ export function CartDrawer({ items }: { items: ShellNavItem[] }) {
 
   return (
     <Drawer open={isOpen('cart')} onOpenChange={(next) => setOpen('cart', next)}>
-      <DrawerContent side="right" title="Bag" onCloseAutoFocus={handleCloseAutoFocus}>
+      <DrawerContent
+        id={OVERLAY_PANEL_ID.cart}
+        side="right"
+        title="Bag"
+        onCloseAutoFocus={handleCloseAutoFocus}
+      >
         <div className="flex h-full flex-col items-start justify-center gap-m px-m py-xl">
           <p className="font-display text-heading-m text-foreground">Your bag is empty.</p>
 
@@ -76,13 +85,14 @@ export function CartDrawer({ items }: { items: ShellNavItem[] }) {
 
 /** The header control. Separate so the bar can place it without knowing what it opens. */
 export function CartTrigger({ className }: { className?: string }) {
-  const { registerTrigger, setOpen } = useShellOverlay()
+  const { isOpen, registerTrigger, setOpen } = useShellOverlay()
 
   return (
     <IconButton
       label="Bag"
       size="sm"
       className={className}
+      {...overlayTriggerProps('cart', isOpen('cart'))}
       onClick={(event) => {
         registerTrigger(event.currentTarget)
         setOpen('cart', true)

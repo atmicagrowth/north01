@@ -802,6 +802,19 @@ destinations and the structural footer columns — facts about this site's infor
 **no mega menu, no featured panel, no social links**, because those are merchandising and fabricating
 them would put words in an editor's mouth.
 
+Phase 9's audit measured all four failure modes against an unreachable database, and they layer. The
+fallback is one of them, and it is **not** the outermost:
+
+| Scenario | Result |
+|---|---|
+| A statically prerendered route (`/`) | **200**, real CMS content, database never contacted — the prerender is a stronger guarantee than the fallback |
+| A dynamic route rendering the shell | **200**, fallback navigation, `[shell] Falling back…` in the log |
+| A dynamic route with its own data access (`/login`, `/account`) | **500** — correctly: the page has nothing true to show |
+| `pnpm build` | **exit 1** — a deploy against a broken database fails loudly rather than silently baking a fallback site |
+
+So the fallback protects *the shell's own two reads*. It is not, and should not be read as, a promise
+that the storefront survives a database outage; the first row is what does that, and it does it better.
+
 ---
 
 ## 5. Current position
@@ -1025,9 +1038,20 @@ from every page. `DialogContentModal`'s own `onCloseAutoFocus` therefore focused
 focus to `document.body` on every close: a WCAG 2.4.3 failure no static check would have reported. The
 shell now owns the restore itself.
 
-`pnpm verify:shell` — **83 checks**, including the publication states as real Payload documents rather
-than fixtures. 49 browser checks at 1440×900 and 390×844. New decisions **D-30**, **D-31**, **D-32**;
-gap **G-15** closed; deviations **DEV-36**, **DEV-37**, **DEV-38**, **DEV-39**. One migration —
+`pnpm verify:shell` — **100 checks**, including the publication states as real Payload documents rather
+than fixtures, and the open-redirect and prototype-chain regressions the audit added. 49 browser checks at 1440×900 and 390×844. New decisions **D-30**, **D-31**, **D-32**;
+gap **G-15** closed; deviations **DEV-36**, **DEV-37**, **DEV-38**, **DEV-39**.
+
+**A post-implementation audit followed the phase and found four defects**, the first of which is a
+security defect in **Phase 7** code: one same-site-path rule copied into four files, all four accepting
+`/\t/evil.example`, which a browser resolves to `//evil.example`. `/login?next=/%09/evil.example` sent
+a signed-in customer to another domain — demonstrated against the running application, and closed by
+`lib/same-site-path.ts`. Also: `documentHref` answered for `Object.prototype` members (one of which
+threw, degrading the whole shell); the search and bag triggers carried no `aria-haspopup` or
+`aria-expanded`, which is the *same* root cause as the focus defect fixed during the phase with only
+half of it addressed; and two navigation items at one URL shared a mega-menu panel. Notes §1.14.13.
+
+One migration —
 `20260828_060719_phase_9_defer_campaign_links` — which drops four `campaigns_id` columns and is the
 only schema change in the phase.
 

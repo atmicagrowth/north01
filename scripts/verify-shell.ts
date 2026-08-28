@@ -41,7 +41,8 @@ import {
   resolveSettings,
 } from '../src/lib/navigation/resolve'
 import { documentHref, isExternalHref, isInternalHref } from '../src/lib/navigation/routes'
-import { LINKABLE_COLLECTIONS } from '../src/payload/fields/link'
+import { LINKABLE_COLLECTIONS, linkFields } from '../src/payload/fields/link'
+import { isSameSitePath } from '../src/lib/same-site-path'
 import { legalNav, utilityNav } from '../src/lib/navigation/utility'
 
 if (!developmentDatabase.ok) {
@@ -70,6 +71,32 @@ function check(name: string, ok: boolean, detail = '') {
 type LinkFixture = Parameters<typeof resolveLink>[0]
 
 const link = (fixture: unknown) => resolveLink(fixture as LinkFixture)
+
+/**
+ * The **real** `href` validator, pulled out of the field builder rather than re-implemented.
+ *
+ * Reaching for the wired-up field is the point: a copy of the rule in this script would pass while
+ * the schema shipped the old one, which is the whole failure mode being tested for. Only
+ * `siblingData.kind` and `req.t` are consulted, so the rest of Payload's validate context is not
+ * needed and is not faked.
+ */
+const hrefField = linkFields({ required: false }).find(
+  (field) => 'name' in field && field.name === 'href',
+)
+
+const validateLinkHref = (value: string): string | true => {
+  const validate = (hrefField as { validate?: unknown })?.validate
+
+  if (typeof validate !== 'function') {
+    return 'the href field has no validator — the field builder changed shape'
+  }
+
+  return (validate as (v: unknown, o: unknown) => string | true)(value, {
+    req: { t: (key: string) => key },
+    required: false,
+    siblingData: { kind: 'url' },
+  })
+}
 
 /* -------------------------------------------------------------------------------------------------
  * A — the route map (D-30, closing G-15)
@@ -151,6 +178,76 @@ for (const [href, internal, external] of HREF_CASES) {
     isInternalHref(href) === internal && isExternalHref(href) === external,
   )
 }
+
+/*
+ * **The open redirect Phase 9's audit found, as a regression test.**
+ *
+ * A browser strips tab, line feed and carriage return from a URL before parsing it, so `/\t/host`
+ * *is* `//host` by the time it is resolved — measured in Chromium, and demonstrated end to end
+ * against the running application through `/login?next=/%09/evil.example`, which left the site.
+ *
+ * Four places had copied the same three-`startsWith` check and all four accepted it. They now share
+ * `lib/same-site-path.ts`, and this is the check that fails if any of them drifts back.
+ */
+const CONTROL_VECTORS = [
+  '/\t/evil.example',
+  '/\n/evil.example',
+  '/\r/evil.example',
+  '/\0/evil.example',
+]
+
+for (const href of CONTROL_VECTORS) {
+  check(
+    `open redirect: ${JSON.stringify(href)} is not a same-site path`,
+    !isSameSitePath(href) && !isInternalHref(href),
+  )
+  check(
+    `open redirect: ${JSON.stringify(href)} is refused by the CMS link validator`,
+    validateLinkHref(href) !== true,
+  )
+}
+
+check(
+  'open redirect: a legitimate path with no control characters still passes',
+  isSameSitePath('/shop/clothing?sort=newest') && isInternalHref('/shop/clothing?sort=newest'),
+)
+
+/*
+ * **The route map reads its own entries and nothing else.**
+ *
+ * It was an object literal, so it inherited `Object.prototype` and answered for names that are not
+ * routes: `'toString'` returned the string `'[object Undefined]'`, `'constructor'` returned the slug
+ * as a *relative* href, `'isPrototypeOf'` returned `false` from a function typed `string | null`, and
+ * `'__proto__'` **threw** — which `getShell` catches, silently degrading the whole shell.
+ */
+for (const key of [
+  'toString',
+  'constructor',
+  '__proto__',
+  'isPrototypeOf',
+  'hasOwnProperty',
+  'valueOf',
+]) {
+  let result: unknown
+
+  try {
+    result = documentHref(key, 'a-slug')
+  } catch (error) {
+    result = `threw ${(error as Error).message}`
+  }
+
+  check(`route map: ${key} is not a route`, result === null, JSON.stringify(result))
+}
+
+check(
+  'route map: a slug is encoded, so a traversal cannot climb out of its namespace',
+  documentHref('products', '../../admin') === '/product/..%2F..%2Fadmin',
+)
+
+check(
+  'route map: a slug the validator would accept is byte-identical after encoding',
+  documentHref('products', 'field-jacket') === '/product/field-jacket',
+)
 
 /* -------------------------------------------------------------------------------------------------
  * C — one link at a time

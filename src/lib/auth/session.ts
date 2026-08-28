@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { cache } from 'react'
 
 import { getPayloadClient } from '@/lib/payload'
+import { isSameSitePath } from '@/lib/same-site-path'
 import type { Customer, User } from '@/payload-types'
 
 /**
@@ -88,20 +89,15 @@ export const getCustomer = cache(async (): Promise<Customer | null> => {
  *
  * **Only same-site paths.** An open redirect is a phishing primitive — `/login?next=https://evil.example`
  * puts a link on our own domain that lands on someone else's login form — so anything that is not a
- * single-slash-rooted path is discarded rather than sanitised. `//host` and `/\host` are both
- * protocol-relative URLs that a browser resolves off-site, which is why the second character is
- * checked too.
+ * single-slash-rooted path is discarded rather than sanitised.
+ *
+ * The rule itself is `lib/same-site-path.ts`, and it lives there because this function's own version
+ * of it **had a hole**: it refused `//host` and `/\host` but accepted `/\t/host`, which a browser
+ * strips to `//host` before resolving. Signing in at `/login?next=/%09/evil.example` left the site.
+ * Found by the Phase 9 audit and fixed in all four places that had copied the check.
  */
 export function safeReturnPath(value: null | string | undefined): string | null {
-  if (!value || !value.startsWith('/')) {
-    return null
-  }
-
-  if (value.startsWith('//') || value.startsWith('/\\')) {
-    return null
-  }
-
-  return value
+  return isSameSitePath(value) ? value : null
 }
 
 /**

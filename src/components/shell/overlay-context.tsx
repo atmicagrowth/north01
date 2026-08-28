@@ -55,6 +55,45 @@ import type { ReactNode } from 'react'
 
 export type ShellOverlay = 'cart' | 'menu' | 'search'
 
+/**
+ * The id each overlay's panel carries, so a trigger outside it can name it with `aria-controls`.
+ *
+ * Radix generates these itself and wires them up — but only between a `Dialog.Trigger` and a
+ * `Dialog.Content` in the same subtree, which is precisely the arrangement these overlays cannot
+ * have. Fixed strings are safe here because each overlay is mounted exactly once, in the root layout.
+ */
+export const OVERLAY_PANEL_ID: Record<ShellOverlay, string> = {
+  cart: 'shell-cart-panel',
+  menu: 'shell-menu-panel',
+  search: 'shell-search-panel',
+}
+
+/**
+ * The ARIA a `Dialog.Trigger` would have supplied, for the two triggers that cannot be one.
+ *
+ * Found by the Phase 9 audit, and it is the *same* defect as the focus restoration in this file's
+ * main docblock — one root cause with two symptoms, of which only the first was fixed at the time.
+ * A screen-reader user tabbing the header heard "Search, button" and "Bag, button": no indication
+ * that either opens a dialog, and no indication of whether it is open. The mega menu announced both
+ * correctly throughout, because it uses Radix's own `NavigationMenu.Trigger` — so the two broken
+ * controls sat beside a working one, which is what made it invisible.
+ *
+ * **axe-core reports nothing here.** `aria-haspopup` is an enhancement rather than a violation, and
+ * `aria-expanded` is not required on a plain button. Two clean automated sweeps had already passed
+ * over this markup.
+ *
+ * `aria-controls` is emitted **only while the panel is open**, because Radix unmounts the content on
+ * close and an `aria-controls` pointing at an id that is not in the document is an invalid attribute
+ * value — a real axe violation, and a worse outcome than the omission it would be fixing.
+ */
+export function overlayTriggerProps(overlay: ShellOverlay, open: boolean) {
+  return {
+    'aria-haspopup': 'dialog' as const,
+    'aria-expanded': open,
+    'aria-controls': open ? OVERLAY_PANEL_ID[overlay] : undefined,
+  }
+}
+
 type ShellOverlayContextValue = {
   /** The overlay currently open, or `null`. At most one, always. */
   open: ShellOverlay | null

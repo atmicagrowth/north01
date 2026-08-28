@@ -69,8 +69,8 @@ export async function SiteFooter({
                   {column.heading}
                 </h2>
                 <ul className="mt-m flex flex-col gap-s">
-                  {column.links.map((item) => (
-                    <li key={item.href}>
+                  {column.links.map((item, linkIndex) => (
+                    <li key={linkIndex}>
                       <Link
                         href={item.href}
                         variant="quiet"
@@ -111,8 +111,8 @@ export async function SiteFooter({
           <div className="flex flex-col gap-s sm:items-end">
             {navigation.social.length > 0 ? (
               <ul aria-label="Social" className="flex flex-wrap items-center gap-m">
-                {navigation.social.map((entry) => (
-                  <li key={entry.url}>
+                {navigation.social.map((entry, socialIndex) => (
+                  <li key={socialIndex}>
                     <Link href={entry.url} variant="meta" external className="text-micro">
                       {entry.label}
                       <NewTabHint />
