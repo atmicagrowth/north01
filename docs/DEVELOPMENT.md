@@ -276,6 +276,22 @@ reset token deliverable to whoever forged it. If you run the dev server on a por
 Outside local development the same adapter logs at `error` level on every send, because a deployed
 storefront whose password resets land in a log file is a broken storefront and should say so.
 
+### The local admin account
+
+Its email and password are in **`docs/LOCAL_ADMIN.md`**, which is **git-ignored** — `AGENTS.md` lists
+*"Never commit secrets"* among the rules that do not bend, and a password in a tracked file is a
+password on the remote. A fresh clone will not have that file; the account it describes does not exist
+on a fresh database either, so create one:
+
+```
+pnpm dev
+# then visit /admin/create-first-user
+```
+
+That route is reachable exactly while `users` is empty, and the hook below forces the account it
+creates to `admin`. Anything that rebuilds the database — `pnpm migrate:fresh` in particular —
+removes the account and you do this again.
+
 ### Roles
 
 `users.role` is `editor` or `admin`. The first account created on an empty database is forced to
