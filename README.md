@@ -173,8 +173,9 @@ upload time.
 
 **It runs with no Cloudinary account.** Uploads fall back to local disk and every image renders as its
 deliberate placeholder — which, with a catalogue that has no assets yet, is what the whole storefront
-does today. `pnpm verify:media` proves 48 assertions now and adds a live upload/derive/delete round
-trip the moment credentials are set.
+does today. `pnpm verify:media` proves 48 assertions without credentials and arms a live
+upload/derive/delete round trip the moment they are set — 61 in total, all passing against a real
+account.
 
 No storefront *feature* is built yet: the shell components exist and are proved, but they are mounted
 in Phase 9, alongside the search overlay and cart drawer that make their controls do something.

@@ -884,12 +884,18 @@ focal-point implementation asked for a 345,600 × 432,000 image and got a 400. A
 browser: the art-directed *placeholder* did not change shape at the breakpoint, which mattered because
 with no assets in the catalogue the placeholder is the only path that renders.
 
-**Cloudinary credentials do not exist**, at the project owner's direction, so the phase is committed on
-the degraded path: uploads fall back to local disk, the storefront renders every image as its
-placeholder, and `lib/env.core.ts` now warns at startup if that state is ever reached outside local
-development. `pnpm verify:media` proves 48 assertions today and runs a live upload/derive/delete round
-trip — including the account-level *Strict transformations* check that cannot be predicted from here —
-the moment credentials are set.
+**The phase was committed on the degraded path**, at the project owner's direction — uploads falling
+back to local disk, every image rendering as its placeholder, and `lib/env.core.ts` warning at startup
+if that state is ever reached outside local development. That path remains supported and is what a
+contributor without credentials gets.
+
+**Credentials arrived shortly afterwards and the live half ran with no edit: 61/61**, up from the 48
+provable without an account. It confirmed the one thing that could not be reasoned about from here —
+*Strict transformations* is off, so dynamically built delivery URLs derive on the fly — along with the
+whole storage round trip: public id, asset id, version and resource type stored from Cloudinary's own
+response, `media.url` pointing at the CDN, Cloudinary's dimensions replacing the local probe's, every
+`srcset` candidate for a real record resolving, and a deleted record leaving a 404 behind. Notes
+§1.13.14.
 
 **Next: Phase 9 — storefront shell.**
 

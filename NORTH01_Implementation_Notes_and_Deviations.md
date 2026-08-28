@@ -135,7 +135,7 @@ test tier — no paid service is required for local development.
 | Service | Needed from | What is required |
 |---|---|---|
 | ~~**Neon Postgres**~~ | ~~**Phase 2**~~ | **RESOLVED 2026-08-22.** Development branch provisioned, PostgreSQL 17.11. Phase 2 proved this lands earlier than Phase 5 — see **DEV-15** and §1.7.2. |
-| Cloudinary | Phase 8 | Cloud name, API key/secret, development folder or preset |
+| ~~**Cloudinary**~~ | ~~Phase 8~~ | **RESOLVED 2026-08-28.** Cloud name, API key and secret provided after the phase was committed. The live round trip passes — see §1.13.14. No folder or preset was needed: the adapter uploads into `north01/`, which Cloudinary creates implicitly. |
 | Algolia | Phase 12 | App ID, search-only key, admin key, development index |
 | Stripe | Phase 17 | **Test mode only.** Secret key, publishable key, webhook signing secret |
 | Resend | Phase 19 | API key; verified sending domain before any production claim |
@@ -2553,10 +2553,9 @@ treatment as Phases 3 and 7 (§1.8.7), because both are Phase 27 packages.
 
 ### 1.13.12 What is now owed
 
-- **The live Cloudinary round trip.** `pnpm verify:media` runs it automatically once the three variables
-  are set. It is the only way to check one thing that cannot be predicted from here: whether the account
-  has **Strict transformations** enabled, which refuses any derived URL not registered in advance and
-  would make every dynamically built URL in this project return 400.
+- ~~**The live Cloudinary round trip.**~~ **Discharged the same day — see §1.13.14.** Credentials arrived
+  after the phase was committed, `pnpm verify:media` armed its second half automatically, and everything
+  passed including the *Strict transformations* check that could not be predicted from here.
 - **Assets uploaded before credentials arrive do not migrate themselves.** Any file on local disk keeps
   its `/api/media/file/…` URL and gains no `cloudinaryPublicId`. There are none today and the seed
   creates none, so the practical exposure is zero — but if any exist when Cloudinary is switched on they
@@ -2574,6 +2573,46 @@ treatment as Phases 3 and 7 (§1.8.7), because both are Phase 27 packages.
 - **`next.config.mjs` still has no `images` block**, and correctly so — **D-29** means Next never fetches
   an image, so `remotePatterns` would configure a code path that does not run. The file's own comment
   nominating "the phases that introduce them" is satisfied by *not* adding it.
+
+### 1.13.14 The live round trip, run after the phase was committed
+
+Credentials arrived shortly after the commit, which is exactly the sequence `verify-media.ts` was built
+for: its second half arms itself on `integrationStatus('cloudinary') === 'configured'` and needs no
+edit. **61/61**, up from the 48 provable without an account.
+
+What the thirteen live checks establish, none of which could be reasoned about from here:
+
+| Check | Result |
+|---|---|
+| **Strict transformations is off** | three contexts derived on the fly, `200 image/webp` |
+| The upload reaches Cloudinary and stores its public id | `north01/landscape` |
+| §8.1a's *Asset ID* and version are returned and stored | both present |
+| `cloudinaryResourceType` comes from Cloudinary, not from a client MIME | `image` |
+| `media.url` points at the CDN, not at this server | `https://res.cloudinary.com/…` |
+| **Cloudinary's dimensions replace the local probe's** | 3000 × 1200 |
+| Every `srcset` candidate a real record produces resolves | 3/3 |
+| No candidate exceeds the source | `640w 768w 960w` |
+| The LQIP is worth inlining | **83 bytes** |
+| Deleting the record removes the asset | `404` |
+
+Two of those are worth drawing out.
+
+**The clamp is right on real data.** A 3000 × 1200 landscape in the 4:5 `productGallery` context clamps
+to **960**, which is `floor(1200 × 0.8)` — the height-limited formula from §1.13.3, arrived at from a
+synthetic 864 × 576 fixture, predicting the correct answer for a completely different asset. The widths
+the component would emit are the widths that exist.
+
+**`f_auto` chose WebP here, not AVIF.** The demo-cloud measurements returned AVIF; this account returns
+WebP for the same request. That is the point of `f_auto` — the format is the CDN's decision against the
+request's `Accept` header and the account's own settings, and both answers are correct. It is recorded
+because a future reader comparing §1.13.2's AVIF numbers against a live response would otherwise think
+something had regressed.
+
+**One label was corrected while doing this**, in the same category as the Phase 7 harness defect: a check
+named *"with Cloudinary unconfigured, an uploaded asset still has a usable URL"* had the assertion
+`cloudinary !== 'configured' ? … : true`, so once credentials existed it passed vacuously under a name
+that described the opposite situation. It now asserts the Cloudinary URL in the configured case and the
+local one otherwise, and names whichever it is checking.
 
 ### 1.13.13 Confirmation sweep of earlier deviations
 
@@ -3430,4 +3469,5 @@ rather than by widening the list.
 | Phase 6 — post-implementation audit | 2026-08-27 | Note **§1.11.10**: the committed phase re-reviewed by seven independent auditors with adversarial verification — 38 claims, 8 refuted, 30 survived, 8 distinct defects fixed. The headline is that **`context` is not a per-call argument**: `createLocalReq` merges it onto the *same* request object it is handed, so `skipDerivedSync` latched — every permanent variant delete skipped its product's price/stock refresh, and in a bulk variant edit only the first product was refreshed. The suppression now travels as the id of the product being deleted. Second: swallowing a hook error hid a transaction Payload had **already rolled back** via `killTransaction`, so a variant save reported success for a write that no longer existed — both hooks now rethrow. Third: eleven media references and three hotspot references were `NOT NULL` + `ON DELETE SET NULL` inside array and block rows, where no cascade can reach them, making the referenced product or asset permanently undeletable — the columns are nullable and the requirement moved to `validate`, which is also what makes plan §22.1b's "hide the hotspot" and §8.1d's placeholder reachable at all. Fourth: a custom `validate` replaces Payload's built-in one and with it `required`, which money fields and `addresses.country` both relied on. Plus a promotion saveable with no discount value, fractional stock, a seed blind to trashed rows, and both scripts guarding on `appEnv` — which cannot see a connection string — instead of D-10's database identity, now exposed as `developmentDatabase`. Twelve documentation errors corrected, including a table count of 74 that is 73 and a comment asserting the opposite of what its own foreign key did. 13 targeted re-checks against the live database, all passing. |
 | Phase 7 — access control and authentication | 2026-08-27 | Notes **§1.12**: route protection is **three** layers and only two are checks — the Next 16 `proxy.ts` (renamed from `middleware.ts`) is an optimistic cookie-presence redirect that cannot verify anything, and the real route check lives in the *pages* rather than `account/layout.tsx`, because a layout does not re-render on navigation within its own segment. **§1.12.2**: the role bootstrap needed two answers — a hook forcing the first account on an empty database to `admin`, and a data statement in the migration backfilling existing staff, because `editor` would not have preserved their permissions, it would have removed them from all of them at once with no admin left to grant them back. **§1.12.3**: ownership rules return a `Where`, so a cross-account read is *empty* rather than *forbidden*; and two things a rule cannot do — say whose a new row is (`enforceCustomerOwnership` forces it) and protect one field of a permitted write (field access does). The variant/product publication join `publishedOn('product.status')` was measured both ways, because getting it wrong would have published every unreleased SKU, price and stock count. **§1.12.4–5**: why the reset link's origin comes from `SITE_URL` and never the `Host` header, why the token is not validated on page load, why a reset does not sign you in, and a password policy of twelve characters with no composition rules against Payload's built-in floor of **three**. **§1.12.7 records two defects found by running it**: React **resets** an uncontrolled form once its action resolves, so a rejected sign-in emptied the email field — fixed with echoed `defaultValue`s, password excluded; and the first `verify-access.ts` counted *any* thrown error as a passing access check, so a fixture typo would have reported a clean run while proving nothing. Deviations **DEV-31** (registration names a duplicate email), **DEV-32** (the reset flow exists before email does). New decisions **D-22**–**D-25**. New script `pnpm verify:access` — 43 checks, all passing; 42 further browser checks across dev, production and the admin panel; **0 axe-core violations** on six routes. No dependency added. Step 4 carried out as **§1.12.11**. |
 | Phase 8 — media and Cloudinary | 2026-08-28 | Notes **§1.13**: **D-03/DEV-05 confirmed against the registry** in the phase told to confirm it (`@payloadcms/storage-cloudinary` still 404s; five sibling adapters publish at 3.88.0), and ARCHITECTURE.md's premature *"Confirmed in Phase 8"* marker corrected. **§1.13.2**: Cloudinary transforms at *delivery* and Payload declares **no `imageSizes`** — a delivery URL is pure string concatenation (verified in the SDK source and against the live CDN unsigned), while the `imageSizes` route would have cost 48 columns, 8 indexes and 9 uploads per asset to reproduce it, and would freeze the breakpoints into stored rows. **§1.13.3 records three defects found by measuring rather than reading, all of which would have shipped**: `c_lfill` — the documented "fill but do not enlarge" mode — *silently abandons the aspect ratio* when a request exceeds the source, which is the layout shift §8.1d forbids arriving through the safe-looking option; clamping to the source **width** is insufficient once a crop changes the ratio, because the binding constraint moves to the height (an 864×576 source asked for the 4:5 hero returned 864×**1080**); and `fl_relative` makes Cloudinary's `x_`/`y_` **multiply** the source dimensions, so the first focal-point implementation requested a 345,600 × 432,000 image and got a 400. A fourth was caught in a browser — the art-directed *placeholder* did not change shape at the breakpoint, which mattered because with an empty catalogue the placeholder is the only path that renders. **§1.13.5**: `checkFileRestrictions` has two mutually exclusive branches and without `mimeTypes` there is **no content inspection at all**; setting it is the whole of §8.1b, and SVG and GIF are excluded as verified bypasses (an `<?xml`-prefixed SVG skips `validateSvg`; `file-type` reads offset 0 only, so a `GIF89a`+`MZ` polyglot passes as an image). A size limit without `abortOnLimit` is **worse than none** — Busboy truncates and Payload never reads the flag. **§1.13.9**: the phase is committed with **no Cloudinary credentials**, so the degraded path is what was verified — and the storage plugin is registered *unconditionally* with `alwaysInsertFields: true` because conditional registration would emit two different schemas from one committed migration. Deviations **DEV-33** (no `sharp` — reverses DEV-28's closing clause and three lines of STACK_VERSIONS), **DEV-34** (eight contexts, not six), **DEV-35** (SVG and GIF refused). New decisions **D-26**–**D-29**. New script `pnpm verify:media` — 48 checks, plus a live round trip that arms itself when credentials appear. 15 browser checks at **CLS 0.0000** and 0 axe violations; 25 URL-builder checks against the live CDN; the migration applied, rolled back, re-applied and diffed **identical** against the pushed schema. Two dependencies added, one removed from the plan. Step 4 carried out as **§1.13.13**. |
+| Phase 8 — Cloudinary credentials, live verification | 2026-08-28 | Note **§1.13.14**: credentials arrived after the phase was committed and `pnpm verify:media` armed its live half with no edit — **61/61**, up from 48. Confirms the one thing that could not be predicted without an account: **Strict transformations is off**, so the dynamically built delivery URLs this project depends on derive on the fly. Also confirms the storage round trip end to end — public id, asset id, version and resource type stored from Cloudinary's own response, `media.url` pointing at the CDN, Cloudinary's dimensions replacing the local probe's, every `srcset` candidate for a real record resolving, and a deleted record leaving a 404 behind. **The height-limited clamp predicted real data correctly**: a 3000×1200 landscape in the 4:5 gallery context clamps to 960 = `floor(1200 × 0.8)`, a formula derived from an unrelated 864×576 fixture. Recorded that `f_auto` returns **WebP** on this account where the demo cloud returned AVIF — both correct, and noted so the difference is not later read as a regression. One vacuous check name corrected. **§1.5 Cloudinary unblocked**; the live round trip is struck from §1.13.12's owed list. `.env.example` also de-duplicated: the Phase 8 commit added a Cloudinary block while an empty one already existed in the per-provider section. |
 > **Append this table, and the sections above it, at the end of every phase.**

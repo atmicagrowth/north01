@@ -376,8 +376,12 @@ try {
   const cloudinary = integrationStatus('cloudinary')
 
   check(
-    'with Cloudinary unconfigured, an uploaded asset still has a usable URL',
-    cloudinary !== 'configured' ? Boolean(good.url) : true,
+    cloudinary === 'configured'
+      ? 'an uploaded asset has a Cloudinary URL'
+      : 'with Cloudinary unconfigured, an uploaded asset still has a usable local URL',
+    cloudinary === 'configured'
+      ? String(good.url).startsWith('https://res.cloudinary.com/')
+      : Boolean(good.url),
     String(good.url).slice(0, 60),
   )
   check(
@@ -450,6 +454,34 @@ try {
         `${response.status} ${response.headers.get('content-type') ?? ''}`,
       )
     }
+
+    /**
+     * **Every candidate the component would actually emit, fetched.**
+     *
+     * The checks above prove one URL per context from a hand-built asset. This proves the whole
+     * `srcset` for a record that genuinely came back from an upload — which is the join between the
+     * storage adapter and the delivery layer, and the only part of the path that no other check
+     * covers. Until credentials existed it could not be run at all.
+     */
+    const srcSet = buildSrcSet({ cloudName, asset: liveAsset, context: 'productGallery' })
+    const candidates = srcSet.split(', ').map((entry) => entry.split(' ')[0]!)
+    const responses = await Promise.all(candidates.map((url) => fetch(url, { method: 'HEAD' })))
+
+    check(
+      'live: every srcset candidate for a real record resolves',
+      responses.every((response) => response.ok),
+      `${responses.filter((r) => r.ok).length}/${responses.length} of ${srcSet.split(', ').length} candidates`,
+    )
+    check(
+      'live: no srcset candidate exceeds the source width',
+      srcSet
+        .split(', ')
+        .every((entry) => Number(entry.split(' ')[1]!.replace('w', '')) <= (live.width ?? 0)),
+      srcSet
+        .split(', ')
+        .map((e) => e.split(' ')[1])
+        .join(' '),
+    )
 
     const lqip = await fetch(buildLqipUrl({ cloudName, asset: liveAsset, context: 'productCard' }))
     const lqipBytes = (await lqip.arrayBuffer()).byteLength
