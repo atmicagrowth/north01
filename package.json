@@ -28,7 +28,8 @@
     "generate:importmap": "payload generate:importmap",
     "seed": "payload run scripts/seed.ts",
     "verify:access": "payload run scripts/verify-access.ts",
-    "verify:media": "payload run scripts/verify-media.ts"
+    "verify:media": "payload run scripts/verify-media.ts",
+    "verify:shell": "payload run scripts/verify-shell.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",

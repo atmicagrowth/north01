@@ -3072,7 +3072,7 @@ export interface SiteSetting {
   defaultOgImage?: (number | null) | Media;
   announcement?: {
     /**
-     * Shows the bar above the header. Rendered by Phase 9.
+     * Shows the bar above the header. It scrolls away with the page — only the header itself is sticky.
      */
     enabled?: boolean | null;
     /**
@@ -3088,7 +3088,7 @@ export interface SiteSetting {
   createdAt?: string | null;
 }
 /**
- * Header, mega menu, footer and social links. Rendered by Phase 9 — the shell exists but is not yet mounted.
+ * Header, mega menu, footer and social links. Rendered on every storefront page.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "navigation".
@@ -3306,7 +3306,7 @@ export interface Navigation {
       }[]
     | null;
   /**
-   * Rendered as icons in the footer. Kept quiet — visual guide §06.
+   * Rendered as text links in the footer, not icons — lucide-react 1.x ships no brand marks, and drawing six logos by hand is not a design system. Kept quiet either way — visual guide §06.
    */
   social?:
     | {

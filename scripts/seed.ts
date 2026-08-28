@@ -1035,7 +1035,6 @@ try {
             {
               heading: 'Clothing',
               links: [
-                { label: 'All', kind: 'url', href: '/shop' },
                 {
                   label: 'Tops',
                   kind: 'reference',

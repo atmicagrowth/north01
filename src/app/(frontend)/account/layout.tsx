@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 
 import { PageContainer } from '@/components/layout/page-container'
 import { Section } from '@/components/layout/section'
-import { Link } from '@/components/ui/link'
 
 /**
  * **The protected segment.** Everything under `/account` requires a signed-in customer.
@@ -23,24 +22,16 @@ import { Link } from '@/components/ui/link'
  *
  * `width="narrow"` — the 1024px step the container reserves for *"account, checkout, support"*,
  * matching visual guide §09's calmer utility surfaces.
+ *
+ * The `<main>` landmark and the standalone wordmark left this file in Phase 9: the storefront root
+ * layout mounts the global shell, which owns both. See `(frontend)/layout.tsx`.
  */
 export default function AccountLayout({ children }: { children: ReactNode }) {
   return (
-    <main id="main-content">
-      <PageContainer width="narrow">
-        <Section spacing="tight" className="flex flex-col gap-xl">
-          <Link
-            href="/"
-            variant="quiet"
-            aria-label="NORTH / 01 — home"
-            className="self-start font-display text-heading-s uppercase tracking-[0.18em] text-foreground hover:no-underline"
-          >
-            NORTH / 01
-          </Link>
-
-          {children}
-        </Section>
-      </PageContainer>
-    </main>
+    <PageContainer width="narrow">
+      <Section spacing="tight" className="flex flex-col gap-xl">
+        {children}
+      </Section>
+    </PageContainer>
   )
 }

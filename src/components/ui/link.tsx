@@ -91,4 +91,22 @@ export function Link({ className, variant, external = false, rel, ...props }: Li
   )
 }
 
+/**
+ * The words `external` asks the caller for, for the callers who cannot write them.
+ *
+ * `Link`'s `external` prop deliberately does not announce the new tab itself — the component cannot
+ * write a sentence, and *"Read the story (opens in a new tab)"* is copy, not markup. That holds
+ * wherever a human writes the label.
+ *
+ * It stops holding in the global shell, where every label is typed by an **editor** into a CMS field
+ * and no reviewer sees it before it renders. A visually hidden suffix is the only way to keep WCAG
+ * 3.2.5 without either constraining what an editor may type or leaving the announcement to chance.
+ *
+ * Visually hidden rather than shown: sighted users already get the target from the platform, and
+ * *"Instagram (opens in a new tab)"* in a footer of six is the visual noise guide §11 rules out.
+ */
+export function NewTabHint() {
+  return <span className="sr-only"> (opens in a new tab)</span>
+}
+
 export { linkVariants }

@@ -1,6 +1,7 @@
 import type { GlobalConfig } from 'payload'
 
 import { anyone, isAdminField, isStaff } from '../access'
+import { revalidateShell } from '../hooks/revalidateShell'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 
 /**
@@ -66,6 +67,11 @@ export const SiteSettings: GlobalConfig = {
   access: {
     read: anyone,
     update: isStaff,
+  },
+
+  /** The header reads `siteName`, `logo` and `announcement` on every page. See `Navigation.ts`. */
+  hooks: {
+    afterChange: [revalidateShell('shell', 'site-settings')],
   },
 
   fields: [
@@ -274,7 +280,10 @@ export const SiteSettings: GlobalConfig = {
                   name: 'enabled',
                   type: 'checkbox',
                   defaultValue: false,
-                  admin: { description: 'Shows the bar above the header. Rendered by Phase 9.' },
+                  admin: {
+                    description:
+                      'Shows the bar above the header. It scrolls away with the page — only the header itself is sticky.',
+                  },
                 },
                 {
                   name: 'message',

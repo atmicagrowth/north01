@@ -46,14 +46,14 @@ pointed for generated types.
 | `src/app/(payload)/` | Payload admin + REST API routes | Phase 2 |
 | `src/payload.config.ts` | the Payload config, aliased as `@payload-config` | Phase 2 |
 | `src/payload/` | collections, globals, blocks, reusable fields, hooks, migrations, access rules, email, **storage adapters** | Phase 2; filled out in Phase 6; `access/` and `email/` in Phase 7; `storage/` in Phase 8 |
-| `src/components/` | reusable presentation and interaction components | Phase 3 |
-| `src/lib/` | integrations, infrastructure, helpers, **server-only** modules | Phase 3 (`cn.ts`); `env.public.ts` / `env.server.ts` / `env.core.ts` from Phase 4 |
+| `src/components/` | reusable presentation and interaction components; `shell/` holds the global overlay state machine and its triggers | Phase 3; `shell/` in Phase 9 |
+| `src/lib/` | integrations, infrastructure, helpers, **server-only** modules | Phase 3 (`cn.ts`); `env.*` from Phase 4; `media/` in Phase 8; `navigation/` in Phase 9 |
 | `src/instrumentation.ts` | Next's startup hook — environment validation | Phase 4 |
 | `src/proxy.ts` | Next 16's renamed `middleware` — the optimistic `/account` redirect | **Phase 7** |
 | `src/features/` | domain-oriented modules, where complexity warrants isolation | as needed |
 | `emails/` | React Email templates | Phase 19 |
 | `tests/` | unit / component / e2e suites and helpers | Phase 27 |
-| `scripts/` | seeding, reindexing, one-off admin tasks | Phase 6 — `seed.ts`, `baseline-migrations.ts`; **Phase 7 — `verify-access.ts`** |
+| `scripts/` | seeding, reindexing, one-off admin tasks | Phase 6 — `seed.ts`, `baseline-migrations.ts`; Phase 7 — `verify-access.ts`; Phase 8 — `verify-media.ts`; **Phase 9 — `verify-shell.ts`** |
 | `docs/` | architecture, environment, decisions, runbooks | Phase 1 |
 
 ### Route-group topology
@@ -78,6 +78,11 @@ Preflight out of the admin panel: separate root layouts compile to separate CSS 
 Tailwind chunk is never referenced by an admin document. **Two invariants preserve that** —
 `(payload)/layout.tsx` must never import the storefront stylesheet, and no shared
 `src/app/layout.tsx` may be introduced above the two groups. See decision **D-08**.
+
+Phase 9 added one file *beside* the two groups rather than above them: `src/app/global-not-found.tsx`,
+which is not a layout and therefore breaches neither invariant. It exists precisely because there are
+two root layouts and so no single one from which a root `not-found.tsx` could be composed — see
+**D-31**.
 
 No GraphQL routes are generated; see **D-02**.
 
@@ -173,6 +178,7 @@ assigned to the phase that first needs it.
 | G-11 | **Payment status vs fulfillment status.** Feature matrix §21 models them as two fields; the plan's §18.1b machine is a single linear axis mixing both. | Phase 18 |
 | G-12 | Design tokens for **radius, shadow, motion duration and accent** are required numerically by plan §3.1a; the visual guide describes them only in adjectives. The type scale gives sizes but no weights, line-heights or tracking. | ~~Phase 3~~ **Closed in Phase 3** — every number fixed and recorded in notes §1.8.1. |
 | G-13 | The visual guide gives page-level art direction for seven page types — **Cart and Checkout are absent**, as are Payload Admin and transactional email. | Phases ~~3~~, 14, 17, 19 — Phase 3's part is answered: guide §09's "Account / Utility" direction plus the token layer is what Cart and Checkout compose from, so no new visual language is needed for them. |
+| G-15 | **The public URL of a single document.** The structure document draws the browsing namespaces (`SHOP`, `COLLECTIONS`, `EDIT`, `LOOKBOOK`, `JOURNAL`) but gives no path for an individual product, and no node at all for a campaign — while plan §9.1a requires a navigation item to be a *reference* whose href is derived at render time. | ~~Phase 9~~ **Closed in Phase 9** — one route map in `lib/navigation/routes.ts`, following the namespaces the document does give. See **D-30**. |
 | G-14 | **Sale / compare-at price** and **selected/active** states need a visible accent, but the palette forbids saturated colour and prescribes low-contrast borders. | ~~Phase 3~~ **Closed in Phase 3** — selection is carried by contrast, compare-at is typographic, and the border rule is split. See notes §1.8.2, **DEV-21**, **DEV-22**. |
 
 ### 3.3 Image-only elements — present in the reference, defined nowhere
@@ -700,6 +706,102 @@ the page, not of the picture.** The delivery context supplies the aspect ratio, 
 before it is known whether an asset exists, whether its bytes arrive, or whether the CDN 404s. Measured
 in a browser across all those states: **CLS 0.0000**.
 
+
+### D-30 — One route map owns every document URL, and a campaign has none
+
+Gap **G-15**. Plan §9.1a drives the header from Payload, and `payload/fields/link.ts` models a
+navigation item as a *reference* so that renaming a document cannot break the link — the href is
+"derived from its current slug at render time, not stored." Nothing in the corpus says what that
+derivation is. The structure document draws the browsing namespaces and never gives a path for a
+single product; it has no `CAMPAIGN` node at all.
+
+`src/lib/navigation/routes.ts` is the whole derivation, and no other file may build a document URL:
+
+| Collection | Route |
+|---|---|
+| `products` | `/product/<slug>` |
+| `categories` | `/shop/<slug>` |
+| `collections` | `/collections/<slug>` |
+| `edits` | `/edit/<slug>` |
+| `lookbooks` | `/lookbook/<slug>` |
+| `journal` | `/journal/<slug>` |
+| `campaigns` | **none** |
+
+Two things worth being explicit about.
+
+**The namespace is the structure document's word, not the Payload collection slug.** The collection is
+`edits` and the route is `/edit/…`; `lookbooks` and `/lookbook/…`. Structure §2 owns user-facing IA —
+the authority ruling that settled **C-03** — and a URL is user-facing. `/product/<slug>` is singular for
+the same reason: it is the plan's own canonical name and it matches the singular namespaces already in
+use. `/collections` stays plural because that is how the document spells it.
+
+**A campaign resolves to nothing and its navigation item is dropped.** A campaign is a statement
+rendered inside another page — `Campaigns.ts`, and structure §22's Journey E — and no document gives it
+a page. Inventing `/campaign/<slug>` would be inventing a route; pointing every campaign at `/` would
+be a lie for the second one. It stays *linkable* in the schema because removing it from
+`LINKABLE_COLLECTIONS` is a foreign-key change and a migration, and because a phase that later builds
+campaign pages only has to fill in the one entry.
+
+This is also why the shell **drops** rather than disables. An item whose target is missing, deleted,
+unpublished, scheduled, or in a collection with no page is removed from the rendered navigation. A dead
+link is the "broken internal route" the feature matrix asks us to handle; a *disabled* navigation item
+is plan §0.1.17's fake control with an apology attached. A shorter menu is the honest outcome, and an
+empty column, an empty menu and an empty header are all states the components render without complaint.
+
+---
+
+### D-31 — The global 404 is `global-not-found.tsx`, behind Next's experimental flag
+
+The one experimental Next flag in this project, and **D-08** is what put it there.
+
+Two root layouts means there is no single layout from which a root `app/not-found.tsx` can be composed,
+which is exactly the case Next's own documentation names `global-not-found.js` for. Without it, every
+URL the Phase 9 navigation points at before its own phase is built — `/shop` (Phase 11), the product
+route (Phase 13), `/lookbook` (Phase 22), `/about` and the support surface (Phase 23, **G-08**) — lands
+on Next's built-in 404: no header, no footer, no typography, no way back into the shop. Mounting a
+global header is what created that exposure, so the phase that mounts it closes it.
+
+The alternative considered and rejected was a catch-all `[...slug]` route inside `(frontend)`. A
+top-level catch-all in one route group competes for every path with the *other* group's `/admin` and
+`/api`, which is a routing hazard aimed squarely at the CMS.
+
+**The cost, stated plainly.** `experimental.globalNotFound` is not a stable API and may change shape or
+name. The exposure is one file and one config key: delete `src/app/global-not-found.tsx` and the flag
+together and the behaviour reverts to Next's default 404, losing nothing else.
+`(frontend)/not-found.tsx` is the stable half of the pair and handles `notFound()` thrown inside a
+route that does exist; it needs no flag. **Phase 31** owns error, empty and loading states as a system
+and should absorb both.
+
+---
+
+### D-32 — The shell is cached by tag, and its failure is a fallback rather than a page
+
+The header and footer are in the storefront root layout, so their two `findGlobal` calls would
+otherwise be on the critical path of every page — and a failed read would take out the whole site
+rather than the piece of content it belongs to.
+
+**Caching.** `lib/navigation/shell.ts` wraps the read in `unstable_cache` under three tags with a
+300-second floor, and `payload/hooks/revalidateShell.ts` calls `revalidateTag` from an `afterChange`
+hook on both globals. An editor's change therefore reaches the storefront on the next request rather
+than on the next deployment, and the timer is the backstop for a write the hook cannot see — a script,
+a migration, a direct SQL edit. `cacheComponents` is not enabled, so this is Next 16's previous caching
+model; if a later phase turns it on, this becomes `"use cache"` with `cacheLife`/`cacheTag` and nothing
+else about the module changes.
+
+The hook has to survive running **outside** Next — `pnpm seed` writes both globals from a CLI process
+with no server to revalidate — so `next/cache` is imported dynamically inside a `try`, and a failure
+warns rather than throwing. The write has already committed by the time an `afterChange` hook runs;
+throwing there would report failure for a change that happened.
+
+**Failure.** The `try` is around the *call*, not inside the cached function. A function that throws
+stores nothing, so a database blip degrades one request instead of pinning a degraded header in the data
+cache for five minutes. What it degrades to is `lib/navigation/fallback.ts`: the six primary
+destinations and the structural footer columns — facts about this site's information architecture — and
+**no mega menu, no featured panel, no social links**, because those are merchandising and fabricating
+them would put words in an editor's mouth.
+
+---
+
 ## 5. Current position
 
 **Phase 1 — Workspace, repository and baseline: complete.** Repository initialized on `main`, baseline
@@ -897,7 +999,35 @@ response, `media.url` pointing at the CDN, Cloudinary's dimensions replacing the
 `srcset` candidate for a real record resolving, and a deleted record leaving a 404 behind. Notes
 §1.13.14.
 
-**Next: Phase 9 — storefront shell.**
+**Phase 9 — Storefront shell: complete.**
+
+The header, mega menu, mobile drawer, footer, search overlay and bag drawer, mounted in the storefront
+root layout and driven by the `navigation` and `site-settings` globals. **No dependency added** — the
+mega menu is `radix-ui`'s NavigationMenu, which was already installed.
+
+| Phase 9 acceptance | Status |
+|---|---|
+| Desktop navigation and utility actions (§9.1a) | **pass** — six items from the CMS; search and bag open overlays, wishlist and account are links |
+| Mega menu content driven from Payload (§9.1b, feature matrix §1) | **pass** — columns and featured panel from the `navigation` global; *"do not make it visually overwhelming"* held to |
+| Mobile drawer with hierarchical expansion (§9.1c) | **pass** — one self-collapsing level, no accidental navigation, Escape, focus trap and restore, scroll containment. The back button is **DEV-36** |
+| Global cart drawer, working from every page (§9.1d) | **pass** — mounted outside every route subtree; empty-bag state only, because nothing can add to a bag before Phase 14 |
+| **Open/close search, menu and cart from any route without state conflicts** | **pass** — one state machine, at most one overlay representable |
+| Missing item · unpublished collection · broken internal route (feature matrix §1) | **pass** — all three resolved to *dropped*, proven against real documents in three publication states |
+| Keyboard navigation, reduced motion (feature matrix §1) | **pass** — driven in a browser at both widths |
+| Accessibility | **0 axe-core violations** across five route and overlay states, WCAG 2.0/2.1/2.2 A + AA |
+
+**One real defect was found by driving a browser rather than by reading the code**, and it was invisible
+in the markup: Radix's modal dialog restores focus to `Dialog.Trigger`, and these overlays have none —
+their triggers are in the header, their dialogs beside the footer, because §9.1d requires them to work
+from every page. `DialogContentModal`'s own `onCloseAutoFocus` therefore focused a null ref and dropped
+focus to `document.body` on every close: a WCAG 2.4.3 failure no static check would have reported. The
+shell now owns the restore itself.
+
+`pnpm verify:shell` — **76 checks**, including the publication states as real Payload documents rather
+than fixtures. 49 browser checks at 1440×900 and 390×844. New decisions **D-30**, **D-31**, **D-32**;
+gap **G-15** closed; deviations **DEV-36**, **DEV-37**, **DEV-38**.
+
+**Next: Phase 10 — homepage / editorial system.**
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 

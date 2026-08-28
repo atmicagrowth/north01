@@ -98,6 +98,7 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm seed` | Representative demo content — catalogue, editorial, globals. Idempotent, local only, and deliberately creates no customers, orders or media. See `scripts/seed.ts` |
 | `pnpm payload run scripts/baseline-migrations.ts <name…>` | Put a push-built development database onto the migration chain without destroying it. [`DATABASE.md`](DATABASE.md) §10 |
 | `pnpm verify:media` | The Phase 8 media rules — the mime allowlist and magic-byte sniffing, the hostile-upload set, the dimension cap, the delivery-URL grammar and the reserved-box geometry. Adds a live Cloudinary round trip when credentials exist. Generates its own fixtures; local database only |
+| `pnpm verify:shell` | The Phase 9 shell rules — the document route map, href validation, and every one of feature matrix §1’s navigation edge cases. Runs the publication cases against **real** Payload documents, then removes them; local database only |
 | `pnpm verify:access` | The Phase 7 access-control matrix, run against the live rules — cross-customer reads, role escalation, ownership forcing, the disabled account, the password policy. Creates and removes its own fixtures; local database only. Phase 27 lifts these assertions into Vitest |
 | `pnpm test` | Vitest unit/component tests *(pending — Phase 27)* |
 | `pnpm test:e2e` | Playwright *(pending — Phase 27)* |
@@ -136,11 +137,15 @@ src/
 │  │  ├─ fonts/          self-hosted .woff2 + their OFL licence texts
 │  │  ├─ design-system/  the specimen sheet — see below
 │  │  ├─ (auth)/         login, register, forgot-password, reset-password (Phase 7)
-│  │  └─ account/        the protected segment (Phase 7; filled out in Phase 20)
-│  └─ (payload)/         admin panel + Payload REST API — its own root layout
+│  │  ├─ account/        the protected segment (Phase 7; filled out in Phase 20)
+│  │  ├─ layout.tsx      the storefront root layout — mounts the global shell (Phase 9)
+│  │  └─ not-found.tsx   notFound() inside a route that exists (Phase 9)
+│  ├─ (payload)/         admin panel + Payload REST API — its own root layout
+│  └─ global-not-found.tsx  the 404 for an unmatched URL — see D-31 (Phase 9)
 ├─ components/
 │  ├─ ui/                primitives (button, input, dialog, drawer, …)
 │  ├─ layout/            global shell (header, nav, footer, containers)
+│  ├─ shell/             the overlay state machine, its triggers, search and bag (Phase 9)
 │  ├─ auth/              the auth forms and their shared field/status pieces (Phase 7)
 │  └─ media/             MediaImage — the one way an image reaches a page (Phase 8)
 ├─ instrumentation.ts    startup environment validation (Phase 4)
@@ -151,6 +156,7 @@ src/
 │  ├─ password-policy.ts the password rule, shared by the forms and the collection (Phase 7)
 │  ├─ auth/              session DAL, server actions, Zod schemas, form state (Phase 7)
 │  ├─ media/             delivery contexts, the Cloudinary URL builder, upload limits (Phase 8)
+│  ├─ navigation/        document routes, CMS link resolution, the cached shell read (Phase 9)
 │  ├─ env.public.ts      browser-safe environment — importable anywhere
 │  ├─ env.server.ts      server-only environment — what application code imports
 │  └─ env.core.ts        the same without the `server-only` guard; config and instrumentation only
@@ -162,11 +168,11 @@ src/
    ├─ email/             the log-only transport and the reset message (Phase 7)
    ├─ fields/            reusable field builders — money, slug, seo, address, link, hotspot
    ├─ globals/           site settings and navigation
-   ├─ hooks/             collection hooks — derived-price sync, cascades, ownership
+   ├─ hooks/             collection hooks — derived-price sync, cascades, ownership, shell revalidation
    ├─ storage/           the Cloudinary adapter — the only file importing the SDK (Phase 8)
    └─ migrations/        generated, committed, applied in order (Phase 5)
 
-scripts/                 one-off local administration — seed, migration baseline, access + media checks
+scripts/                 one-off local administration — seed, migration baseline, access + media + shell checks
 ```
 
 **`scripts/` is the one place outside `src/` that may import `lib/env.core`.** It runs under the

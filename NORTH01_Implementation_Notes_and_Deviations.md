@@ -799,8 +799,8 @@ Required by the append rule, step 4.
 |---|---|---|
 | **DEV-14** — substantial work uses feature branches | ongoing | **Confirmed again.** Phase 3 ran on `phase-3-design-system`, not `main`. |
 | **DEV-16** — route-group topology insulates the admin | Phase 2 onward | **Confirmed under load.** Phase 3 is the first phase that could plausibly have broken it: it added a full token layer, two self-hosted typefaces and eighteen components. Re-verified two ways — no admin build manifest references the Tailwind chunk, and `/admin`'s live `<body>` computes to Payload's own colours and font stack. |
-| **DEV-01** — Essentials is a Collection | Phases 9, 11, 23 | **Encoded.** `navigation.ts` places Essentials under Collections and keeps the Edit set at four. Still to be exercised by Phase 9. |
-| **DEV-07** — six primary nav items, including NEW | Phase 9 | **Encoded.** Six items ship in `primaryNav`. Still to be exercised by Phase 9. |
+| **DEV-01** — Essentials is a Collection | Phases 9, 11, 23 | **Encoded**, and **exercised in Phase 9** — the seeded navigation puts Essentials under Collections, the Edit set is four, and the resolved header was read in a browser. See §1.14.10. |
+| **DEV-07** — six primary nav items, including NEW | Phase 9 | **Encoded**, and **discharged in Phase 9** — rendered as NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT and asserted against both the resolved data and the DOM. See §1.14.10. |
 | DEV-05 — Cloudinary first-party adapter | Phase 8 | Still pending. Not due. |
 | DEV-03 — order state as two axes | Phase 18 | Still pending. Not due. |
 | DEV-06 — hosted vs embedded Checkout | Phase 17 | Still open. Not due. |
@@ -2647,6 +2647,264 @@ Step 4 of the append rule.
 
 ---
 
+## 1.14 Phase 9 — storefront shell
+
+Plan §9.1a–§9.1d. The header, the mega menu, the mobile drawer, the footer, the search overlay and the
+bag drawer — mounted, driven by Payload, and gated on one sentence:
+
+> A user can open/close search, mobile menu, and cart from any major route without navigation state
+> conflicts.
+
+Phase 3 built the header and footer components and deliberately did not mount them, recording the
+condition in its own docblocks: *"plan §9.1a mounts them once the search overlay, mega menu and cart
+drawer behind their controls exist."* This phase built those three and discharged that.
+
+**No dependency was added.** The mega menu is `radix-ui`'s NavigationMenu, which came with the
+primitive set in Phase 3.
+
+### 1.14.1 The two questions this phase had to answer before writing a component
+
+**Where does a document live?** Plan §9.1a drives navigation from Payload, and `fields/link.ts` models
+an item as a *reference* precisely so that renaming a document cannot break a link — *"the URL is
+derived from this document at render time."* No document in the corpus says what that derivation is.
+The structure document draws the browsing namespaces and never gives a path for a single product; it
+has no `CAMPAIGN` node at all. That is a specification gap of exactly the kind §3.2 records, and it is
+now **G-15**, closed by **D-30**: one route map, following the namespaces the structure document does
+give, with `campaigns` mapping to nothing because nothing gives a campaign a page.
+
+**What does a broken link render as?** Feature matrix §1 lists *"missing navigation item"*,
+*"unpublished collection"* and *"broken internal route"* as global-shell edge cases and does not say
+what to do about them. The answer taken is **drop it**, and the alternative is worth naming because it
+is the tempting one: rendering the item *disabled*. A disabled navigation item is a word in the header
+that looks like a destination and is not one — plan §0.1.17's fake control with an apology attached.
+A menu that is one item shorter is the only honest outcome, so an empty column, an empty mega menu and
+an empty header are all states the components render without complaint, and `verify-shell.ts` asserts
+each of them.
+
+One consequence that had to be checked rather than assumed: **publication is re-tested at render.** The
+shell reads through the Local API, whose default is `overrideAccess: true`, so `payload/access`'s
+published-only narrowing does not apply and an unpublished target would populate happily. Scheduling is
+included too — a future `publishedAt` hides an item — which is not a disagreement with the access rule
+that excludes it, but the split that rule's own docblock describes: *"a query concern belonging to the
+page that renders the listing."* A navigation menu is a listing.
+
+### 1.14.2 One state machine, because the acceptance criterion is about state
+
+§9's criterion and its prompt (*"verify that opening one overlay closes conflicting overlays"*) are
+statements about state, not appearance. `components/shell/overlay-context.tsx` holds one variable that
+names at most one overlay, so a second open overlay is **unrepresentable** rather than merely avoided,
+and "open the cart" is the same operation as "close whatever else was open."
+
+Three things follow that would each have been a separate bug:
+
+- **The mega menu is in the machine, from the outside.** It is Radix's own uncontrolled state, but it
+  is the only overlay in the shell with no focus trap — so it is the only one that could sit *behind*
+  an open drawer. `DesktopNav` reads the context and collapses when anything in it opens.
+- **Navigation closes everything.** `DrawerClose` handles the common path; the pathname comparison
+  covers a link inside the search panel, a browser back button, and a `redirect()` from a server
+  action.
+- **Neither of those is an effect.** Both are React's *"adjusting state when a prop changes"* pattern —
+  a comparison in the render body. An effect would repaint the new route with the stale drawer still
+  over it before running, and this project's ESLint config rejects it outright: the React Compiler's
+  `react-hooks/set-state-in-effect` rule failed the build on the first version of both.
+
+### 1.14.3 The defect a browser found and a review would not have
+
+**Radix's modal dialog restores focus to `Dialog.Trigger`, and these overlays have none.**
+
+The search and bag controls are in the header; their dialogs are mounted beside the footer, outside
+every route's subtree, because §9.1d requires them to work from every page. So there is no
+`Dialog.Trigger` anywhere in the tree. `DialogContentModal`'s own `onCloseAutoFocus` unconditionally
+calls `preventDefault()` and then focuses `context.triggerRef.current` — which is `null` — so **every
+close dropped focus to `document.body`**.
+
+That is a WCAG 2.4.3 failure, and nothing available would have caught it. The markup is correct. The
+axe-core run is clean, because axe inspects a static tree and this is a transition. Only pressing
+Escape in a real browser and asking what `document.activeElement` was showed it, and the mobile drawer
+— which *does* use `DrawerTrigger` — behaved correctly throughout, so the two overlays that were broken
+sat beside one that was not.
+
+The fix is to own the restore rather than reshape the component tree around Radix's assumption: each
+trigger registers the element it was activated on, and one shared handler always `preventDefault()`s —
+which, through `composeEventHandlers`, also suppresses the internal handler that caused the problem —
+and then focuses the registered control. The one case it deliberately skips is a handoff to another
+overlay, where a restore would land inside a fresh focus trap and fight it.
+
+### 1.14.4 What the mega menu is, and the two things §9.1b actually asks for
+
+§9.1b is four words of layout and one instruction — **"Do not make it visually overwhelming."** Both
+were failed by the first version and fixed against a screenshot:
+
+- **Columns were equal fractions of the header width.** Two columns of three links each landed at the
+  far ends of a 1440px bar with a void between them. That is "visually overwhelming" arriving through
+  emptiness rather than through clutter. They are now a wrapping row of fixed-measure columns, packed
+  from the left, which holds guide §06's *"strong alignment"* whether an editor writes one column or
+  four.
+- **The primary row sat against the top of the bar** while the wordmark sat on its centre line. Radix's
+  `NavigationMenu.Root` renders `<nav>` → `<div style="position:relative">` → `<ul>`, and that
+  intermediate div has no height, so the `h-full` chain the row relied on resolved against `auto`.
+  Centring needs no height chain to survive, and it puts the current-page rule directly under the word
+  rather than at the bottom of the bar — type rather than a tab.
+
+**The trigger is a button, not a link**, on both desktop and mobile. §9.1c's *"no accidental navigation
+while expanding"* is a statement about the relationship between a group and its landing page, and it
+does not stop being true on a pointer device. SHOP opens the panel; **All Shop**, the first row inside
+it, is the way to `/shop`.
+
+### 1.14.5 Compact on scroll, measured rather than listened for
+
+Structure §3 asks for *"sticky when appropriate, compact on scroll"*. It is an `IntersectionObserver`
+watching a one-pixel sentinel in normal flow above the bar, not a scroll handler: the observer fires
+**twice in a session** and costs nothing in between, where a scroll listener fires on every frame of
+every scroll on every page and has to be throttled to be survivable.
+
+The compaction is 72px to 56px and nothing else — no colour change, no shadow appearing, no shrinking
+type — and it runs on the `--duration-base` token, so the single reduced-motion block in
+`globals.css` collapses it to 1ms. A customer who asked for less motion gets the compact bar without
+the animation, rather than a bar that never compacts.
+
+### 1.14.6 Caching, and why an editor does not have to wait
+
+The header and footer are in the storefront root layout, so their two `findGlobal` calls are on the
+critical path of every page. **D-32**: `unstable_cache` under three tags with a 300-second floor, plus
+an `afterChange` hook on both globals calling `revalidateTag`. Saving navigation in the admin panel
+reaches the storefront on the next request.
+
+Three details that were got wrong first and are now deliberate:
+
+- **`revalidateTag(tag)` alone is deprecated in Next 16.** The two-argument form with `'max'` is
+  current, and gives stale-while-revalidate — so an editor's save never puts a database read in a
+  customer's critical path. `updateTag`, which expires immediately, is Server-Actions-only and the
+  admin panel saves through a Route Handler.
+- **The hook has to survive running outside Next.** `pnpm seed` writes both globals from a CLI process
+  where there is no static generation store; `revalidateTag` throws *"Invariant: static generation
+  store missing"*. `next/cache` is therefore imported **dynamically inside the try** — a static import
+  would be evaluated whenever `payload.config.ts` loads, which is every CLI command and every
+  migration — and a failure warns rather than throwing, because the write has already committed by the
+  time an `afterChange` hook runs. Verified by running `pnpm seed`: the warning appears, the seed
+  completes.
+- **The failure path is not cached.** The `try` is around the *call*, not inside the cached function.
+  A function that throws stores nothing, so a database blip degrades one request rather than pinning a
+  degraded header in the data cache for five minutes.
+
+### 1.14.7 What was verified, and how
+
+`pnpm verify:shell` — **76 checks, all passing.** New script, same shape as `verify:access` and
+`verify:media`, behind the same **D-10** database guard.
+
+Its first half needs no database, which is why `lib/navigation/routes.ts` and `resolve.ts` import
+nothing from Next and nothing from the server: the route map, the href boundary (`//evil.example`,
+`/\evil.example` and `javascript:` are each refused), and every navigation edge case as a fixture.
+
+Its second half does what a fixture cannot. It creates **real** `collections` documents in three
+publication states, points real navigation links at them, then unpublishes one and deletes another and
+re-reads both. That is what proves the resolver is being fed what it thinks it is — `publishedAt`
+arriving as an ISO string, `status` living on the document rather than the relationship, a deleted
+target arriving as `null` through `ON DELETE SET NULL` — which is the class of thing Phase 7's first
+access harness got wrong by asserting against its own assumptions.
+
+**49 browser checks** against the production build at 1440×900 and 390×844, covering the acceptance
+criterion directly: search, the mobile menu and the bag opened and closed from `/`, `/login`, the
+design-system route and a 404; the mega menu opened by hover and closed by Escape; the drawer group
+expanded by tap without navigating; a link inside the drawer closing it; focus inside each overlay and
+back on its trigger afterwards; the header compacting and un-compacting; and the drawer fully open
+after 150ms under `prefers-reduced-motion`.
+
+**0 axe-core violations** across five route and overlay states — home, home with the bag open, the
+mobile drawer open, the 404, the design-system sheet and the login page — at WCAG 2.0/2.1/2.2 A and AA.
+
+The visual review against the guide is §1.14.4 above; both findings were fixed and re-shot.
+
+### 1.14.8 Things that would have been bugs
+
+- **A second `<main>` on four routes.** Mounting the shell in the root layout means the layout owns
+  `<main id="main-content">`; the auth layout, the account layout, the foundation page and the
+  design-system sheet each declared their own, and two of them also drew a standalone wordmark that
+  would have been a second link to the same place beside the header's. All four were stripped, and the
+  contract is now written into `site-header.tsx` where the skip link lives.
+- **The design-system sheet rendering the shell twice.** It composed `SiteHeader` and `SiteFooter`
+  itself, which was right while they were unmounted and became a duplicate the moment they were not.
+  Removing them made the sheet a *better* specimen: what a reviewer sees there is now the shipped
+  shell, on the shipped data.
+- **`lucide-react@1.x` ships no brand icons.** `Instagram`, `Youtube`, `Linkedin` and the rest were
+  removed from the icon set, so the `Navigation` global's promise that social links are *"rendered as
+  icons in the footer"* could not be kept — see **DEV-38**. Found by checking the export rather than by
+  rendering an undefined component, which is what would have happened at the end of the phase.
+- **Social links opening a new tab with no announcement.** `Link`'s `external` prop deliberately
+  leaves the *"opens in a new tab"* wording to the caller, which is right where a human writes the
+  label and wrong in a shell where every label is typed by an editor into a CMS field. A visually
+  hidden `NewTabHint` now travels with every external link the shell renders (WCAG 3.2.5).
+- **A three-deep `asChild` stack in the bag drawer.** `DrawerClose asChild` → `Button asChild` →
+  `Link` is three Radix Slots, and Phase 3's audit found that stack is where `asChild` breaks quietly.
+  Replaced by a click handler, which also covers the case a route change does not: navigating to the
+  page you are already on.
+
+### 1.14.9 What is now owed
+
+- **The navigation points at routes that do not exist yet**, and will until Phases 11, 13, 22 and 23
+  land. **D-31**'s global 404 makes that a styled page inside the shell with a way back, rather than
+  Next's built-in blank. The visible residue is that Next prefetches those links — **41 prefetch 404s**
+  on a home-page load — which is noise in a browser console and nothing else. It resolves itself as the
+  phases land; nothing should paper over it with `prefetch={false}`, which would have to be undone.
+- **`experimental.globalNotFound` is not a stable API.** **D-31** states the exposure and the exit: one
+  file and one config key. **Phase 31** owns error, empty and loading states as a system and should
+  absorb both halves of the 404.
+- **The search overlay is chrome without contents** — **DEV-37**. Phase 12 replaces the body of
+  `SearchPanel` and nothing else.
+- **The bag drawer has an empty state and no other state** — Phase 14 fills the `Drawer` primitive's
+  pinned `footer` slot, which was built in Phase 3 and is still empty on purpose.
+- **The newsletter column is still a slot** — **DEV-25**, unchanged, Phase 19.
+- **A cart count badge on the bag trigger.** Deliberately absent: a badge reading "0" on every page is
+  noise. Phase 14 adds it with the number behind it.
+- **The mega menu's featured panel has never rendered an image**, because the seed creates no media
+  (by design) and no editor has uploaded one. The code path is the same `MediaImage` every other
+  surface uses and its placeholder branch is what renders today; the *image* branch is unexercised
+  here specifically.
+
+### 1.14.10 Confirmation sweep of earlier deviations
+
+Step 4 of the append rule.
+
+- **DEV-01 — Essentials is a Collection, not an Edit. CONFIRMED and now exercised.** The seeded
+  navigation puts Essentials under COLLECTIONS and keeps the Edit set at four, and Phase 9 is the first
+  phase to *render* either. `verify-shell` asserts the resolved primary set is six items.
+- **DEV-07 — six primary items including NEW. CONFIRMED and now exercised.** Rendered in a browser as
+  **NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT**, and asserted both against the resolved data
+  and against the DOM. Both DEV-01 and DEV-07 carried *"still to be exercised by Phase 9"* in §1.8's
+  table; that clause is discharged.
+- **C-07 — Journal in the footer, never the primary navigation. CONFIRMED**, in the seeded data, in
+  the fallback, and by an assertion in `verify-shell`.
+- **C-09 — wishlist is a header affordance routing to `/account/wishlist`. CONFIRMED**, and it is the
+  one header link that still 404s; Phase 20 builds its target.
+- **DEV-20 — the visual test surface is an in-app route. CONFIRMED and improved.** The sheet stopped
+  mocking the shell and now sits inside it.
+- **DEV-23 — Drawer is Radix Dialog. CONFIRMED, and this is the phase that consumed it** for the cart
+  and the mobile navigation, exactly as its entry predicted. §1.14.3 is the one place the abstraction
+  leaked, and the leak was in Radix's *Dialog* assumption rather than in the wrapper.
+- **DEV-24 — Motion is not installed. CONFIRMED and re-argued.** The mega menu, the compact header and
+  both overlays animate from Radix's `data-state` and the duration tokens (**D-13**). Nothing in this
+  phase needed a spring.
+- **DEV-25 — the newsletter column is deferred. CONFIRMED**, and the slot is still a slot.
+- **DEV-22 — interactive control boundaries are Muted Stone. CONFIRMED**; the header utilities and the
+  drawer controls inherit it through `IconButton`.
+- **D-08 — the admin panel is insulated by topology. CONFIRMED, and tested by this phase.**
+  `global-not-found.tsx` sits *beside* the two route groups rather than above them, so neither
+  invariant is breached; the alternative — a catch-all route inside `(frontend)` — was rejected
+  precisely because it would have competed with `/admin` and `/api`.
+- **D-10 — the development-database guard. CONFIRMED.** `verify-shell.ts` creates and deletes real
+  documents and refuses to run without it, the same as `seed`, `verify:access` and `verify:media`.
+- **D-14 — the environment trust boundary. CONFIRMED and untouched.** Nothing in the shell reads the
+  environment except `MediaImage`, which was already reaching the cloud name through the browser-safe
+  tier.
+- **D-29 — images are `<picture>`/`<img>`, not `next/image`. CONFIRMED**, including for the header
+  logo: a fixed height against the context's reserved aspect ratio is what turns a component built for
+  fluid editorial imagery into a fixed-height mark, so the bar cannot be pushed around by whatever an
+  editor uploads.
+- **DEV-14 — substantial work uses feature branches. CONFIRMED.** Phase 9 ran on
+  `phase-9-storefront-shell`.
+
+---
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -3422,6 +3680,75 @@ DPR multiples of them.
 
 ---
 
+### DEV-36 — The mobile drawer has no back button, because it has no nested groups
+
+**Plan §9.1c says** the mobile navigation needs *"a drawer with hierarchical expansion"* and lists,
+among its requirements, *"back button for nested groups."*
+
+**What was built** is a one-level, self-collapsing accordion with no back control.
+
+**Why.** There are no nested groups to go back through. The CMS shape settles it rather than taste: a
+primary item holds *columns of links*, and a column is a heading, not a destination — there is no third
+level in the schema to nest. A panel-sliding drawer would satisfy the letter of that bullet by first
+manufacturing the problem it solves: the customer would lose sight of the other five destinations in
+order to read four category links, on the surface visual guide §10 asks to keep *"quiet, monochrome,
+highly legible, minimal visual clutter."*
+
+Everything else on §9.1c's list is met and was driven in a browser: the group header is an accordion
+trigger rather than a link, so tapping SHOP never navigates; the landing page is an explicit **All
+Shop** row inside the group; Escape, the focus trap, focus restoration, scroll containment and
+`aria-expanded` are Radix's.
+
+**Revisit** if a later phase adds a third level to the `navigation` global. The back control comes with
+it, not before it.
+
+*Affects Phase 9. Recorded because it is a requirement bullet not literally implemented.*
+
+### DEV-37 — The search overlay ships as chrome, with an honest interim panel
+
+**Plan §9 requires** that a user can *"open/close search … from any major route"*, and its §9.1a prompt
+lists a *"search trigger"* among the shell's parts. **Plan §12.1c** enumerates what goes inside the
+overlay — query input, suggested categories and collections, product suggestions, recent and popular
+searches, view-all — and every one of those is an Algolia query, which **Phase 12** owns.
+
+**What was built** is the overlay and everything around it: the trigger, the state machine, focus
+into and out of it, Escape, scroll containment, mutual exclusion with the bag and the mobile menu.
+Inside it, one line saying search arrives with the catalogue, and the primary navigation as a way
+through to browsing.
+
+**Why there is no search box.** A field that swallows a query, or one that submits to a `/search` route
+no phase has built, is exactly plan §0.1.17's *"never create fake UI for unsupported functionality"* —
+and worse than nothing, because it costs the customer a typed sentence and their attention before
+telling them anything. Offering the browse routes instead is the same instinct structure §12 applies to
+a real no-results state: *"offer category alternatives."*
+
+This is the same shape as **DEV-25**, where the footer's newsletter column is a slot the phase that can
+post a form fills in. Phase 12 replaces the body of `SearchPanel` and touches nothing else.
+
+*Affects Phases 9 and 12.*
+
+### DEV-38 — Social links are words, not icons
+
+**`Navigation.ts` said** the social array is *"rendered as icons in the footer"*, and its `platform`
+field was a closed list on the stated grounds that *"each value is an icon the application ships."*
+
+**Neither is true, and the schema now says so.** `lucide-react@1.x` — the only icon dependency the tech
+stack approves — **ships no brand marks**. `Instagram`, `Youtube`, `Linkedin`, `Twitter` and `Facebook`
+were all removed from the set; the export is `undefined`.
+
+**What was built:** the footer renders each platform as a quiet uppercase text link, which is guide
+§06's own instruction for links — *"text-first, precise"* — and is consistent with the rest of the
+footer. The closed list survives with a different justification, written into the field: it supplies a
+*printed name*, because "TikTok" and "YouTube" carry internal capitals that no case transform produces
+and "X" is a single letter that title-casing would leave looking like a typo.
+
+**The two alternatives were worse.** Adding a second icon library for six glyphs is a dependency the
+stack does not list, for decoration; hand-drawing six trademarked logos into this repository is not a
+design system.
+
+*Affects Phase 9. The field description in `Navigation.ts` and the docblock in `site-footer.tsx` both
+record it.*
+
 ### DEV-35 — SVG and GIF are refused on upload
 
 **Plan §8.1b says:** validate *"Allowed mime types"* and *"Reasonable image formats"*, and *"Do not
@@ -3469,5 +3796,6 @@ rather than by widening the list.
 | Phase 6 — post-implementation audit | 2026-08-27 | Note **§1.11.10**: the committed phase re-reviewed by seven independent auditors with adversarial verification — 38 claims, 8 refuted, 30 survived, 8 distinct defects fixed. The headline is that **`context` is not a per-call argument**: `createLocalReq` merges it onto the *same* request object it is handed, so `skipDerivedSync` latched — every permanent variant delete skipped its product's price/stock refresh, and in a bulk variant edit only the first product was refreshed. The suppression now travels as the id of the product being deleted. Second: swallowing a hook error hid a transaction Payload had **already rolled back** via `killTransaction`, so a variant save reported success for a write that no longer existed — both hooks now rethrow. Third: eleven media references and three hotspot references were `NOT NULL` + `ON DELETE SET NULL` inside array and block rows, where no cascade can reach them, making the referenced product or asset permanently undeletable — the columns are nullable and the requirement moved to `validate`, which is also what makes plan §22.1b's "hide the hotspot" and §8.1d's placeholder reachable at all. Fourth: a custom `validate` replaces Payload's built-in one and with it `required`, which money fields and `addresses.country` both relied on. Plus a promotion saveable with no discount value, fractional stock, a seed blind to trashed rows, and both scripts guarding on `appEnv` — which cannot see a connection string — instead of D-10's database identity, now exposed as `developmentDatabase`. Twelve documentation errors corrected, including a table count of 74 that is 73 and a comment asserting the opposite of what its own foreign key did. 13 targeted re-checks against the live database, all passing. |
 | Phase 7 — access control and authentication | 2026-08-27 | Notes **§1.12**: route protection is **three** layers and only two are checks — the Next 16 `proxy.ts` (renamed from `middleware.ts`) is an optimistic cookie-presence redirect that cannot verify anything, and the real route check lives in the *pages* rather than `account/layout.tsx`, because a layout does not re-render on navigation within its own segment. **§1.12.2**: the role bootstrap needed two answers — a hook forcing the first account on an empty database to `admin`, and a data statement in the migration backfilling existing staff, because `editor` would not have preserved their permissions, it would have removed them from all of them at once with no admin left to grant them back. **§1.12.3**: ownership rules return a `Where`, so a cross-account read is *empty* rather than *forbidden*; and two things a rule cannot do — say whose a new row is (`enforceCustomerOwnership` forces it) and protect one field of a permitted write (field access does). The variant/product publication join `publishedOn('product.status')` was measured both ways, because getting it wrong would have published every unreleased SKU, price and stock count. **§1.12.4–5**: why the reset link's origin comes from `SITE_URL` and never the `Host` header, why the token is not validated on page load, why a reset does not sign you in, and a password policy of twelve characters with no composition rules against Payload's built-in floor of **three**. **§1.12.7 records two defects found by running it**: React **resets** an uncontrolled form once its action resolves, so a rejected sign-in emptied the email field — fixed with echoed `defaultValue`s, password excluded; and the first `verify-access.ts` counted *any* thrown error as a passing access check, so a fixture typo would have reported a clean run while proving nothing. Deviations **DEV-31** (registration names a duplicate email), **DEV-32** (the reset flow exists before email does). New decisions **D-22**–**D-25**. New script `pnpm verify:access` — 43 checks, all passing; 42 further browser checks across dev, production and the admin panel; **0 axe-core violations** on six routes. No dependency added. Step 4 carried out as **§1.12.11**. |
 | Phase 8 — media and Cloudinary | 2026-08-28 | Notes **§1.13**: **D-03/DEV-05 confirmed against the registry** in the phase told to confirm it (`@payloadcms/storage-cloudinary` still 404s; five sibling adapters publish at 3.88.0), and ARCHITECTURE.md's premature *"Confirmed in Phase 8"* marker corrected. **§1.13.2**: Cloudinary transforms at *delivery* and Payload declares **no `imageSizes`** — a delivery URL is pure string concatenation (verified in the SDK source and against the live CDN unsigned), while the `imageSizes` route would have cost 48 columns, 8 indexes and 9 uploads per asset to reproduce it, and would freeze the breakpoints into stored rows. **§1.13.3 records three defects found by measuring rather than reading, all of which would have shipped**: `c_lfill` — the documented "fill but do not enlarge" mode — *silently abandons the aspect ratio* when a request exceeds the source, which is the layout shift §8.1d forbids arriving through the safe-looking option; clamping to the source **width** is insufficient once a crop changes the ratio, because the binding constraint moves to the height (an 864×576 source asked for the 4:5 hero returned 864×**1080**); and `fl_relative` makes Cloudinary's `x_`/`y_` **multiply** the source dimensions, so the first focal-point implementation requested a 345,600 × 432,000 image and got a 400. A fourth was caught in a browser — the art-directed *placeholder* did not change shape at the breakpoint, which mattered because with an empty catalogue the placeholder is the only path that renders. **§1.13.5**: `checkFileRestrictions` has two mutually exclusive branches and without `mimeTypes` there is **no content inspection at all**; setting it is the whole of §8.1b, and SVG and GIF are excluded as verified bypasses (an `<?xml`-prefixed SVG skips `validateSvg`; `file-type` reads offset 0 only, so a `GIF89a`+`MZ` polyglot passes as an image). A size limit without `abortOnLimit` is **worse than none** — Busboy truncates and Payload never reads the flag. **§1.13.9**: the phase is committed with **no Cloudinary credentials**, so the degraded path is what was verified — and the storage plugin is registered *unconditionally* with `alwaysInsertFields: true` because conditional registration would emit two different schemas from one committed migration. Deviations **DEV-33** (no `sharp` — reverses DEV-28's closing clause and three lines of STACK_VERSIONS), **DEV-34** (eight contexts, not six), **DEV-35** (SVG and GIF refused). New decisions **D-26**–**D-29**. New script `pnpm verify:media` — 48 checks, plus a live round trip that arms itself when credentials appear. 15 browser checks at **CLS 0.0000** and 0 axe violations; 25 URL-builder checks against the live CDN; the migration applied, rolled back, re-applied and diffed **identical** against the pushed schema. Two dependencies added, one removed from the plan. Step 4 carried out as **§1.13.13**. |
+| Phase 9 — storefront shell | 2026-08-28 | Notes **§1.14**: the shell mounted in the storefront root layout and driven by the `navigation` and `site-settings` globals, with **no dependency added**. **§1.14.1** answers the two questions that had to precede a component — where a document lives (gap **G-15**, closed by **D-30**: one route map, `campaigns` deliberately mapping to nothing) and what a broken link renders as (**dropped**, never disabled, because a disabled navigation item is §0.1.17's fake control with an apology attached) — and records that publication has to be re-tested at render because the Local API's `overrideAccess: true` bypasses the access rule. **§1.14.2**: one state variable makes a second open overlay *unrepresentable*, the mega menu joins the machine from outside because it is the only overlay with no focus trap, and neither reset is an effect — the React Compiler's `set-state-in-effect` rule failed the build on the first version. **§1.14.3 records the defect only a browser could find**: Radix's modal dialog restores focus to `Dialog.Trigger`, these overlays have none (their triggers are in the header, their dialogs beside the footer, because §9.1d demands they work from every page), so `DialogContentModal` focused a null ref and **dropped focus to `document.body` on every close** — a WCAG 2.4.3 failure invisible to axe, which inspects a static tree. **§1.14.4**: two visual failures fixed against screenshots — equal-fraction mega-menu columns that put two columns at the far ends of a 1440px bar, and a primary row that sat against the top of the bar because Radix's `<nav>` → `<div>` → `<ul>` breaks an `h-full` chain. **§1.14.6**: `revalidateTag`'s single-argument form is deprecated in Next 16, and the hook must survive `pnpm seed` running outside Next, which is why `next/cache` is imported dynamically and a failure warns. Deviations **DEV-36** (no back button — there are no nested groups), **DEV-37** (the search overlay is chrome, with an honest interim panel), **DEV-38** (social links are words: `lucide-react@1.x` ships no brand marks). New decisions **D-30**, **D-31** (`global-not-found.tsx` behind `experimental.globalNotFound`, because **D-08**'s two root layouts leave no layout for a root `not-found`), **D-32**. New script `pnpm verify:shell` — 76 checks including the publication states as **real** Payload documents; 49 browser checks at two widths; **0 axe-core violations** across five route and overlay states. Step 4 carried out as **§1.14.10** — **DEV-01** and **DEV-07** discharged, their *"still to be exercised by Phase 9"* clause closed. |
 | Phase 8 — Cloudinary credentials, live verification | 2026-08-28 | Note **§1.13.14**: credentials arrived after the phase was committed and `pnpm verify:media` armed its live half with no edit — **61/61**, up from 48. Confirms the one thing that could not be predicted without an account: **Strict transformations is off**, so the dynamically built delivery URLs this project depends on derive on the fly. Also confirms the storage round trip end to end — public id, asset id, version and resource type stored from Cloudinary's own response, `media.url` pointing at the CDN, Cloudinary's dimensions replacing the local probe's, every `srcset` candidate for a real record resolving, and a deleted record leaving a 404 behind. **The height-limited clamp predicted real data correctly**: a 3000×1200 landscape in the 4:5 gallery context clamps to 960 = `floor(1200 × 0.8)`, a formula derived from an unrelated 864×576 fixture. Recorded that `f_auto` returns **WebP** on this account where the demo cloud returned AVIF — both correct, and noted so the difference is not later read as a regression. One vacuous check name corrected. **§1.5 Cloudinary unblocked**; the live round trip is struck from §1.13.12's owed list. `.env.example` also de-duplicated: the Phase 8 commit added a Cloudinary block while an empty one already existed in the per-provider section. |
 > **Append this table, and the sections above it, at the end of every phase.**

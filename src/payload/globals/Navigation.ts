@@ -2,6 +2,7 @@ import type { GlobalConfig } from 'payload'
 
 import { anyone, isStaff } from '../access'
 import { linkFields } from '../fields/link'
+import { revalidateShell } from '../hooks/revalidateShell'
 
 /**
  * Header navigation, footer navigation and social links — the other three items on plan §6.1a's
@@ -41,8 +42,15 @@ export const Navigation: GlobalConfig = {
 
   admin: {
     group: 'Settings',
-    description:
-      'Header, mega menu, footer and social links. Rendered by Phase 9 — the shell exists but is not yet mounted.',
+    description: 'Header, mega menu, footer and social links. Rendered on every storefront page.',
+  },
+
+  /**
+   * Saving this global drops the cached shell, so the change reaches the storefront on the next
+   * request rather than on the five-minute floor. See `hooks/revalidateShell.ts`.
+   */
+  hooks: {
+    afterChange: [revalidateShell('shell', 'navigation')],
   },
 
   /**
@@ -154,7 +162,8 @@ export const Navigation: GlobalConfig = {
               maxRows: 6,
               labels: { singular: 'Social link', plural: 'Social links' },
               admin: {
-                description: 'Rendered as icons in the footer. Kept quiet — visual guide §06.',
+                description:
+                  'Rendered as text links in the footer, not icons — lucide-react 1.x ships no brand marks, and drawing six logos by hand is not a design system. Kept quiet either way — visual guide §06.',
               },
               fields: [
                 {
@@ -162,9 +171,10 @@ export const Navigation: GlobalConfig = {
                   fields: [
                     {
                       /**
-                       * A closed list, because each value is an icon the application ships. A free
-                       * text platform name would render as a missing icon — the "broken internal
-                       * route" problem in a different coat.
+                       * A closed list, because each value has a display name the application
+                       * ships — "TikTok" and "YouTube" are not their own slugs in print, and a free
+                       * text platform would render however it was typed, in a row where every other
+                       * label is set consistently.
                        */
                       name: 'platform',
                       type: 'select',

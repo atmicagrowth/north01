@@ -177,8 +177,29 @@ does today. `pnpm verify:media` proves 48 assertions without credentials and arm
 upload/derive/delete round trip the moment they are set — 61 in total, all passing against a real
 account.
 
-No storefront *feature* is built yet: the shell components exist and are proved, but they are mounted
-in Phase 9, alongside the search overlay and cart drawer that make their controls do something.
+**Phase 9 — Storefront shell: complete.** The header, mega menu, mobile drawer, footer, search
+overlay and bag drawer are mounted on every storefront route and driven by the CMS.
+
+- **The navigation is content.** Six primary destinations, their mega-menu columns, a featured panel
+  and the footer columns all come from the `navigation` global; saving it drops the cached shell, so
+  an edit reaches the storefront on the next request rather than on the next deployment.
+- **A link that cannot work is not rendered.** An item whose target is unpublished, scheduled for a
+  future date, deleted, or in a collection with no public page is dropped from the menu — never drawn
+  as a dead or disabled control.
+- **One overlay at a time, by construction.** Search, the mobile menu and the bag share a single piece
+  of state, so a second open overlay is unrepresentable rather than merely avoided.
+- **The bag drawer says the bag is empty, because it is.** Nothing in the application can add a line
+  to one until Phase 14, so there are no quantity steppers, no subtotal and no checkout button
+  standing in for behaviour that does not exist.
+- **Search opens and closes; it does not pretend to search.** The overlay, its focus handling and its
+  close behaviour are built and verified. Phase 12 fills the panel with Algolia; until then it says so
+  and offers the browse routes instead of an input that swallows a query.
+
+`pnpm verify:shell` proves 76 assertions, including the publication cases against real Payload
+documents. 49 browser checks at desktop and phone widths, **0 axe-core violations**.
+
+The catalogue is still Phase 11's, so most destinations in that navigation return a 404 — a styled
+one, inside the shell, with a way back.
 
 Local setup: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
