@@ -7,7 +7,8 @@
  *
  * **Content only.** Plan §6's brief is *"seed only representative demo content"*, and this script
  * reads that word strictly: categories, size guides, products, variants, collections, Edits, a
- * campaign, a lookbook, journal articles, FAQs, promotions, and the two globals. It creates **no
+ * campaign, a lookbook, journal articles, FAQs, promotions, the homepage composition, and the
+ * three globals. It creates **no
  * customers, carts, orders, reviews or wishlist rows**, because those are not content — they are
  * records of things people did, and inventing them produces an admin panel full of purchases nobody
  * made and reviews nobody wrote. A commerce demo whose order list is fiction is worse than one whose
@@ -394,7 +395,7 @@ try {
         { name: 'Oat', hex: '#D6CFC0', family: 'bone', stock: [3, 5, 2, 0, 0] },
       ],
       sizes: APPAREL_SIZES,
-      flags: { isBestSeller: true },
+      flags: { isBestSeller: true, isNew: true },
       sortOrder: 20,
     },
     {
@@ -416,7 +417,7 @@ try {
         { name: 'Slate', hex: '#5A6068', family: 'grey', stock: [4, 8, 9, 7, 2] },
       ],
       sizes: APPAREL_SIZES,
-      flags: { isBestSeller: true },
+      flags: { isBestSeller: true, featured: true },
       sortOrder: 30,
     },
     {
@@ -437,7 +438,7 @@ try {
       priceMinor: 19500,
       colors: [{ name: 'Charcoal', hex: '#333330', family: 'charcoal', stock: [3, 7, 11, 8, 5] }],
       sizes: APPAREL_SIZES,
-      flags: { featured: true },
+      flags: { featured: true, isNew: true },
       sortOrder: 40,
     },
     {
@@ -456,7 +457,7 @@ try {
       priceMinor: 34000,
       colors: [{ name: 'Moss', hex: '#3F4736', family: 'green', stock: [2, 4, 5, 3, 1] }],
       sizes: APPAREL_SIZES,
-      flags: { isLimitedEdition: true, isNew: true },
+      flags: { isLimitedEdition: true, isNew: true, featured: true },
       sortOrder: 50,
     },
     {
@@ -467,6 +468,7 @@ try {
       description: [
         'Cut from a dry wool-blend twill that creases where it should and nowhere else.',
       ],
+      flags: { isLimitedEdition: true },
       categories: ['pants', 'clothing'],
       gender: 'unisex',
       fit: 'relaxed',
@@ -500,7 +502,7 @@ try {
       priceMinor: 23500,
       colors: [{ name: 'Indigo', hex: '#2A3550', family: 'navy', stock: [3, 8, 10, 5] }],
       sizes: WAIST_SIZES,
-      flags: { isBestSeller: true },
+      flags: { isBestSeller: true, isLimitedEdition: true },
       sortOrder: 70,
     },
     {
@@ -544,7 +546,7 @@ try {
         { name: 'Rust', hex: '#8A4B32', family: 'rust', stock: [4] },
       ],
       sizes: [{ size: 'ONE SIZE', sizeSortOrder: 10 }],
-      flags: { featured: true },
+      flags: { featured: true, isBestSeller: true, isLimitedEdition: true },
       sortOrder: 90,
     },
     {
@@ -772,8 +774,57 @@ try {
 
   payload.logger.info(`Edits: ${editSpecs.length}`)
 
+  // -------------------------------------------------------------------- media
+  /**
+   * **What is already in the media library, if anything.**
+   *
+   * The seed creates **no** assets — plan §6's brief is content only, and Phase 8 built the
+   * placeholder path precisely so that an empty library renders a deliberate neutral box at the
+   * right aspect ratio rather than a broken layout.
+   *
+   * But three homepage blocks and each community-gallery item carry `validateRequiredUpload` —
+   * Phase 6's *"required to author, nullable in the database"* rule — so writing them against an
+   * empty library is a `ValidationError`, not a page of placeholders. (Measured: seven errors, one
+   * per required upload.)
+   *
+   * So the composition adapts to what is there. On an empty library the seed writes the seven
+   * sections that need no asset; on a library with images it writes all ten and attaches the
+   * campaign's own hero. Both are valid homepages, and neither invents a media id the seed did not
+   * create.
+   */
+  const { docs: mediaDocs } = await payload.find({
+    collection: 'media',
+    limit: 30,
+    sort: 'id',
+    overrideAccess: true,
+  })
+
+  const byRole = (role: string) =>
+    mediaDocs.filter((doc) => (doc as { role?: string }).role === role)
+  const campaignMedia = byRole('campaign')
+  const editorialMedia = byRole('editorial')
+
+  const pick = (index: number): number | undefined =>
+    editorialMedia[index]?.id ?? mediaDocs[index]?.id
+
+  /** Only compose a media block when there is genuinely something to put in it. */
+  const withMedia = <T>(image: number | undefined, block: (id: number) => T): T[] =>
+    image === undefined ? [] : [block(image)]
+
+  const socialItems = editorialMedia
+    .slice(0, 4)
+    .map((doc) => ({ image: doc.id, handle: '@north01' }))
+
+  if (mediaDocs.length > 0) {
+    payload.logger.info(
+      `Media present: ${mediaDocs.length} — the full composition will be written.`,
+    )
+  } else {
+    payload.logger.info('Media library empty — the media-led sections are omitted, by design.')
+  }
+
   // ---------------------------------------------------------------- campaign
-  await upsert({
+  const campaignId = await upsert({
     payload,
     collection: 'campaigns',
     where: { slug: { equals: 'aw26-north' } },
@@ -781,6 +832,13 @@ try {
       title: 'Due North',
       slug: 'aw26-north',
       season: 'AW26',
+      /*
+       * The desktop and mobile frames are a genuinely different pair when the library has them —
+       * `campaigns.mobileHero` has existed since Phase 6 and was unrenderable until Phase 10 gave
+       * `MediaImage` a `mobileMedia` prop. Attaching both is what exercises that path.
+       */
+      ...(campaignMedia[0] ? { hero: campaignMedia[0].id } : {}),
+      ...(campaignMedia[1] ? { mobileHero: campaignMedia[1].id } : {}),
       story: rich(
         'A season assembled for weather rather than for a mood board. Heavier cloth, fewer pieces, and nothing that needs explaining.',
       ),
@@ -792,6 +850,12 @@ try {
         kind: 'reference',
         label: 'See the collection',
         reference: { relationTo: 'collections', value: collectionIds.get('current-season') },
+      },
+      // Plan §10.1b's second hero button. Added to `campaigns` in Phase 10 — see that collection.
+      secondaryCta: {
+        kind: 'url',
+        label: 'Read the story',
+        href: '/journal/a-weekend-north',
       },
       status: 'published',
     },
@@ -820,7 +884,7 @@ try {
               yDesktop: 38,
               xMobile: 50,
               yMobile: 44,
-              markerTone: 'light',
+              markerTone: 'light' as const,
             },
             {
               product: productIds.get('pleated-trouser'),
@@ -878,8 +942,11 @@ try {
     },
   ]
 
+  /** Captured so the homepage's editorial block can reference an article rather than type a path. */
+  const journalIds = new Map<string, number>()
+
   for (const spec of journalSpecs) {
-    await upsert({
+    const journalId = await upsert({
       payload,
       collection: 'journal',
       where: { slug: { equals: spec.slug } },
@@ -897,6 +964,8 @@ try {
         status: 'published',
       },
     })
+
+    journalIds.set(spec.slug, journalId)
   }
 
   payload.logger.info(`Journal: ${journalSpecs.length}`)
@@ -1135,7 +1204,155 @@ try {
     depth: 0,
   })
 
-  payload.logger.info('Globals: site-settings, navigation')
+  // -------------------------------------------------------------- homepage
+  /**
+   * **The homepage composition**, in structure §4's order:
+   *
+   * > 1. Hero campaign. 2. Featured categories. 3. New arrivals. 4. Editorial / Shop the Look
+   * > moment. 5. Best sellers or limited edition. 6. Brand story. 7. Community/social.
+   * > 8. Newsletter/footer.
+   *
+   * Step 8 is the footer's column, not a section here — **DEV-42**.
+   *
+   * `updateGlobal` rather than `upsert`: a global has one document and this replaces the whole of
+   * it, so the seed is idempotent by construction. Running it twice produces eleven sections, not
+   * twenty-two.
+   *
+   * **No media is attached, deliberately.** The seed creates no assets — plan §6's brief is content
+   * only, and Phase 8 built the placeholder path precisely so an empty media library renders a
+   * deliberate neutral box at the right aspect ratio rather than a broken layout. That path is
+   * still the one this project is committed in.
+   */
+  /**
+   * **The four blocks that cannot be authored without an image.**
+   *
+   * `splitFeature`, `figure`, `shopTheLook` and each `socialGallery` item carry
+   * `validateRequiredUpload` — Phase 6's *"required to author, nullable in the database"* rule,
+   * which is what keeps a referenced asset deletable while still refusing a half-finished block.
+   * The seed creates no media, so writing those blocks against an empty library is a
+   * `ValidationError`, not a page with placeholders. (Measured: seven errors, one per required
+   * upload.)
+   *
+   * So the composition adapts. On an empty media library the seed writes the seven blocks that
+   * need no asset; on a library with images it writes all eleven. Both are valid homepages, and
+   * neither is a lie about what is in the database — which is better than either hard-coding a
+   * media id the seed did not create, or dropping four of structure §4's eight steps permanently.
+   */
+  await payload.updateGlobal({
+    slug: 'homepage',
+    data: {
+      sections: [
+        { blockType: 'hero', campaign: campaignId },
+        {
+          blockType: 'categoryTiles',
+          heading: 'Shop by category',
+          items: [
+            { category: categoryIds.get('jackets') },
+            { category: categoryIds.get('tops') },
+            { category: categoryIds.get('pants') },
+            { category: categoryIds.get('accessories') },
+          ],
+        },
+        {
+          blockType: 'productRail',
+          heading: 'New arrivals',
+          source: 'new',
+          limit: 4,
+          layout: 'grid',
+          cta: { kind: 'url', label: 'View all', href: '/shop' },
+        },
+        ...withMedia(pick(0), (image) => ({
+          blockType: 'splitFeature' as const,
+          image,
+          imageSide: 'left' as const,
+          eyebrow: 'AW26',
+          heading: 'Cloth chosen for weather',
+          body: rich(
+            'The overshirt is a twelve-ounce wool, milled in Yorkshire and cut long enough to sit over a crew. It is the piece the rest of the season is built around.',
+          ),
+          cta: {
+            kind: 'reference' as const,
+            label: 'Read the journal',
+            reference: { relationTo: 'journal' as const, value: journalIds.get('on-selvedge') },
+          },
+        })),
+        ...withMedia(pick(1), (image) => ({
+          blockType: 'shopTheLook' as const,
+          image,
+          heading: 'Shop the look',
+          hotspots: [
+            {
+              product: productIds.get('wool-overshirt'),
+              label: 'Wool Overshirt',
+              xDesktop: 38,
+              yDesktop: 34,
+              xMobile: 44,
+              yMobile: 38,
+              markerTone: 'light' as const,
+            },
+            {
+              product: productIds.get('pleated-trouser'),
+              label: 'Pleated Trouser',
+              xDesktop: 44,
+              yDesktop: 70,
+              xMobile: 50,
+              yMobile: 74,
+              markerTone: 'light' as const,
+            },
+            {
+              product: productIds.get('cashmere-scarf'),
+              label: 'Cashmere Scarf',
+              xDesktop: 52,
+              yDesktop: 22,
+              xMobile: 58,
+              yMobile: 26,
+              markerTone: 'dark' as const,
+            },
+          ],
+        })),
+        {
+          blockType: 'productRail',
+          heading: 'Best sellers',
+          source: 'bestSellers',
+          limit: 4,
+          layout: 'rail',
+          cta: { kind: 'url', label: 'View all', href: '/shop' },
+        },
+        {
+          blockType: 'collectionFeature',
+          collection: collectionIds.get('limited'),
+          eyebrow: 'Limited',
+          body: 'Short runs of the pieces we could only make a few of. When they are gone they are not repeated.',
+        },
+        // The brand story is a split feature — DEV-43. Same shape, different words.
+        ...withMedia(pick(2), (image) => ({
+          blockType: 'splitFeature' as const,
+          image,
+          imageSide: 'right' as const,
+          eyebrow: 'About',
+          heading: 'Fewer things, made properly',
+          body: rich(
+            'NORTH / 01 is an online-only label. No shops, no seasonal churn, and no pretending that a garment needs to be replaced every six months.',
+          ),
+          cta: { kind: 'url' as const, label: 'About the label', href: '/about' },
+        })),
+        ...(socialItems.length >= 3
+          ? [{ blockType: 'socialGallery' as const, heading: 'Worn by', items: socialItems }]
+          : []),
+        {
+          blockType: 'promoStrip',
+          items: [
+            { text: 'Made in small runs' },
+            { text: 'Thirty-day returns' },
+            { text: 'Carbon-neutral delivery' },
+          ],
+        },
+      ],
+    },
+    depth: 0,
+  })
+
+  payload.logger.info('Globals: site-settings, navigation, homepage')
   payload.logger.info('Seed complete.')
 } finally {
   await payload.destroy()

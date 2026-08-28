@@ -67,7 +67,7 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
 | `lucide-react` | 1.33.0 | **Phase 3 — installed** |
 | `class-variance-authority` / `tailwind-merge` / `clsx` | 0.7.1 / 3.6.0 / 2.1.1 | **Phase 3 — installed** |
 | `shadcn` (CLI) | 4.19.0 | **not installed — see §7** |
-| `motion` | 13.1.1 | ~~Phase 3~~ **Phase 10** — see **DEV-24** |
+| `motion` | 13.1.1 | ~~Phase 3~~ ~~Phase 10~~ **not installed — see DEV-40** |
 | `storybook` | 10.5.10 | **not installed — see DEV-20**; revisit at Phase 27 |
 | `zod` | 4.4.3 | **Phase 4 — installed** |
 | `react-hook-form` + `@hookform/resolvers` | 7.86.0 / 5.9.1 | Phase 7 |
@@ -226,7 +226,12 @@ contrary to most Next 15-era guidance.
 - **`vaul` and `sonner` + `next-themes`.** The current shadcn registry reaches outside Radix for
   Drawer and Toast. Both are built on Radix here instead, dropping three dependencies. **DEV-23**.
 - **`motion`.** Installed early in Phase 3, then removed — nothing in the design system needed it.
-  Overlay animation is CSS driven by Radix's `data-state`. Moves to **Phase 10**. **DEV-24**.
+  Overlay animation is CSS driven by Radix's `data-state` (**DEV-24**). Phase 10 built the editorial
+  reveals it had been deferred for and **declined it again** (**DEV-40**), on measurements rather than
+  on taste: 8.64 MiB across four packages, ~40 KB gzip on the LCP route, `reducedMotion` defaulting to
+  `"never"`, and a Web Animations API path that cannot read the duration tokens
+  `prefers-reduced-motion` overrides. The reveal is two CSS declarations and one
+  `IntersectionObserver`. Still an approved technology; nothing in the built product needs it.
 
 ### Fonts are vendored, not depended on
 

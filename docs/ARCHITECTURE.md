@@ -46,14 +46,14 @@ pointed for generated types.
 | `src/app/(payload)/` | Payload admin + REST API routes | Phase 2 |
 | `src/payload.config.ts` | the Payload config, aliased as `@payload-config` | Phase 2 |
 | `src/payload/` | collections, globals, blocks, reusable fields, hooks, migrations, access rules, email, **storage adapters** | Phase 2; filled out in Phase 6; `access/` and `email/` in Phase 7; `storage/` in Phase 8 |
-| `src/components/` | reusable presentation and interaction components; `shell/` holds the global overlay state machine and its triggers | Phase 3; `shell/` in Phase 9 |
-| `src/lib/` | integrations, infrastructure, helpers, **server-only** modules | Phase 3 (`cn.ts`); `env.*` from Phase 4; `media/` in Phase 8; `navigation/` in Phase 9 |
+| `src/components/` | reusable presentation and interaction components; `shell/` holds the global overlay state machine and its triggers; `home/` and `editorial/` render the CMS block set | Phase 3; `shell/` in Phase 9; `home/`, `editorial/`, `newsletter/` in Phase 10 |
+| `src/lib/` | integrations, infrastructure, helpers, **server-only** modules | Phase 3 (`cn.ts`); `env.*` from Phase 4; `media/` in Phase 8; `navigation/` in Phase 9; `home/`, `newsletter/`, `money.ts` in Phase 10 |
 | `src/instrumentation.ts` | Next's startup hook — environment validation | Phase 4 |
 | `src/proxy.ts` | Next 16's renamed `middleware` — the optimistic `/account` redirect | **Phase 7** |
 | `src/features/` | domain-oriented modules, where complexity warrants isolation | as needed |
 | `emails/` | React Email templates | Phase 19 |
 | `tests/` | unit / component / e2e suites and helpers | Phase 27 |
-| `scripts/` | seeding, reindexing, one-off admin tasks | Phase 6 — `seed.ts`, `baseline-migrations.ts`; Phase 7 — `verify-access.ts`; Phase 8 — `verify-media.ts`; **Phase 9 — `verify-shell.ts`** |
+| `scripts/` | seeding, reindexing, one-off admin tasks | Phase 6 — `seed.ts`, `baseline-migrations.ts`; Phase 7 — `verify-access.ts`; Phase 8 — `verify-media.ts`; Phase 9 — `verify-shell.ts`; **Phase 10 — `verify-home.ts`** |
 | `docs/` | architecture, environment, decisions, runbooks | Phase 1 |
 
 ### Route-group topology
@@ -180,6 +180,7 @@ assigned to the phase that first needs it.
 | G-13 | The visual guide gives page-level art direction for seven page types — **Cart and Checkout are absent**, as are Payload Admin and transactional email. | Phases ~~3~~, 14, 17, 19 — Phase 3's part is answered: guide §09's "Account / Utility" direction plus the token layer is what Cart and Checkout compose from, so no new visual language is needed for them. |
 | G-15 | **The public URL of a single document.** The structure document draws the browsing namespaces (`SHOP`, `COLLECTIONS`, `EDIT`, `LOOKBOOK`, `JOURNAL`) but gives no path for an individual product, and no node at all for a campaign — while plan §9.1a requires a navigation item to be a *reference* whose href is derived at render time. | ~~Phase 9~~ **Closed in Phase 9** — one route map in `lib/navigation/routes.ts`, following the namespaces the document does give. See **D-30**. |
 | G-14 | **Sale / compare-at price** and **selected/active** states need a visible accent, but the palette forbids saturated colour and prescribes low-contrast borders. | ~~Phase 3~~ **Closed in Phase 3** — selection is carried by contrast, compare-at is typographic, and the border rule is split. See notes §1.8.2, **DEV-21**, **DEV-22**. |
+| G-16 | **Art direction for a promotional strip and a community gallery.** Visual guide §09 gives page-level direction for seven page types and neither section is among them, while plan §10.1a and feature matrix §3 both require them on the homepage. | ~~Phase 10~~ **Closed in Phase 10** — both are treated as editorial furniture governed by §09's Home composition rules and §06's component rules: hairline rules and Meta-sized statements for the strip, a 4:5 tile grid with a Micro credit for the gallery. Neither invents a visual language. |
 
 ### 3.3 Image-only elements — present in the reference, defined nowhere
 
@@ -393,11 +394,16 @@ keyframes alone. No JavaScript runs to move a drawer, the animations cannot drif
 duration tokens, and `prefers-reduced-motion` is honoured from the single media query that overrides
 those tokens.
 
-`motion` was installed early in Phase 3 and removed: nothing in the design system needed it. It
-remains approved and moves to **Phase 10**, with the editorial reveals that first have something to
-reveal. See **DEV-24**.
+`motion` was installed early in Phase 3 and removed: nothing in the design system needed it. See
+**DEV-24**.
 
-*Recorded in Phase 3.*
+**Amended in Phase 10.** This decision originally deferred the library to Phase 10, *"with the
+editorial reveals that first have something to reveal."* Phase 10 built those reveals and did not
+install it — the argument above turned out to apply unchanged to a scroll reveal, and the library
+would have introduced the second definition of motion this decision exists to prevent. See **D-34**
+and **DEV-40**; `motion` stays an approved technology that nothing in the built product needs.
+
+*Recorded in Phase 3, amended in Phase 10.*
 
 ### D-14 — The environment's trust boundary is a file boundary
 
@@ -783,7 +789,7 @@ otherwise be on the critical path of every page — and a failed read would take
 rather than the piece of content it belongs to.
 
 **Caching.** `lib/navigation/shell.ts` wraps the read in `unstable_cache` under three tags with a
-300-second floor, and `payload/hooks/revalidateShell.ts` calls `revalidateTag` from an `afterChange`
+300-second floor, and `payload/hooks/revalidateTags.ts` calls `revalidateTag` from an `afterChange`
 hook on both globals. An editor's change therefore reaches the storefront on the next request rather
 than on the next deployment, and the timer is the backstop for a write the hook cannot see — a script,
 a migration, a direct SQL edit. `cacheComponents` is not enabled, so this is Next 16's previous caching
@@ -814,6 +820,78 @@ fallback is one of them, and it is **not** the outermost:
 
 So the fallback protects *the shell's own two reads*. It is not, and should not be read as, a promise
 that the storefront survives a database outage; the first row is what does that, and it does it better.
+
+---
+
+### D-33 — The homepage is a global of typed blocks, and its rules live in a pure resolver
+
+Plan §10.1a asks for *"reorderable, typed blocks"*. There is exactly one homepage, so it is a
+**global** (`homepage`) rather than a collection: a collection would need a slug, a publish status, a
+rule deciding which row is live and a route resolver — four mechanisms to express a singleton.
+`SiteSettings` and `Navigation` set that precedent and Phase 9 proved the pipeline against it.
+
+Eleven block types, of which **five are the existing `blocks/editorial.ts` objects, imported
+unchanged**. Payload sanitises a block config once and keys storage off the parent table name, so one
+object serves three parents, produces three separate tables, and yields **one** shared interface in
+`payload-types.ts`. Two of plan §10.1a's ten named blocks — "Editorial split" and "Brand story" — are
+the *same shape*, and shipping two identical schemas so a picker could name both would be the
+duplicate abstraction §A.1.6 forbids (**DEV-43**).
+
+The split that matters is the same one Phase 9 used: `lib/home/resolve.ts` is **pure** — no `next`,
+no `server-only`, nothing runnable from `payload` — so every drop/keep rule for feature matrix §3's
+edge cases is exercised by `pnpm verify:home` outside a request, and `lib/home/home.ts` holds only
+caching and a `try`. Publication is re-tested at render because the Local API's default
+`overrideAccess: true` propagates into population; the homepage's surface is wider than the shell's,
+because products carry `status` **and** are soft-deletable.
+
+Cached under one tag, `home`, with the same 300-second floor; the `homepage` global and the
+`campaigns` collection both revalidate it. Products deliberately do not — they fire on every variant
+save through `syncProductDerived`, and a rail is a five-minute-stale merchandising surface by design.
+
+*Recorded in Phase 10.*
+
+### D-34 — The editorial reveal is CSS on the existing duration tokens; there is still no animation library
+
+**Amends D-13**, which deferred `motion` to this phase.
+
+Measured before deciding: `motion@13.1.1` is **8.64 MiB across four packages** and ~**40 KB gzip** on
+the LCP route — the one route plan §37's performance gate names. Two facts settled it beyond size.
+`MotionConfigContext` defaults to `reducedMotion: "never"`, and even when opted in it neuters only
+positional keys — **opacity is not among them** — so a reduced-motion visitor gets every fade at full
+duration. And it animates through the Web Animations API, which does not read CSS custom properties,
+so `prefers-reduced-motion` would have needed a *second* implementation beside the media query in
+`globals.css` that already collapses every duration token to 1 ms. That second definition of motion
+is exactly what D-13 exists to prevent.
+
+What ships instead is two CSS declarations and one client component (`components/editorial/reveal.tsx`)
+using `IntersectionObserver`. **The hidden state exists only when JavaScript sets it**, so content is
+visible with JS disabled, before hydration, on a failed hydration, in a browser without the observer,
+and in print — there is no path on which a section can be stranded invisible.
+
+CSS scroll-driven animation (`animation-timeline: view()`) was rejected for that same property: a
+subject inside an `overflow: hidden` ancestor binds its timeline to an unscrollable container and sits
+at `opacity: 0` permanently. It also ignores `animation-duration`, which would have moved pacing out
+of the token layer, and it scrubs — scrolling up un-reveals.
+
+*Recorded in Phase 10. See **DEV-40**.*
+
+### D-35 — Rich-text hrefs are re-validated at render
+
+Every other link in this application is refused at save time by `payload/fields/link.ts` and
+re-checked at render by `navigation/resolve.ts`. A **Lexical link node has been through neither**:
+`payload.config.ts` registers `LinkFeature()` with no field override, so it stores whatever URL an
+editor typed.
+
+Phase 10 is the first phase to put editor-authored rich text on a public page (campaign stories,
+editorial bodies). `components/editorial/prose.tsx` therefore runs every href through the same
+`isInternalHref`/`isExternalHref` pair — which is `lib/same-site-path.ts`, the one rule, not a
+`startsWith` written out again — and **renders a failing link as plain text**. The sentence still
+reads; only the navigation is removed.
+
+That closes `javascript:` and `data:` URLs, and the protocol-relative `//evil.example` and
+tab-prefixed `/	/evil.example` forms Phase 9's audit found accepted in four separate files.
+
+*Recorded in Phase 10.*
 
 ---
 
@@ -1055,7 +1133,44 @@ One migration —
 `20260828_060719_phase_9_defer_campaign_links` — which drops four `campaigns_id` columns and is the
 only schema change in the phase.
 
-**Next: Phase 10 — homepage / editorial system.**
+**Phase 10 — Homepage / editorial system: complete.**
+
+The homepage as a `homepage` **global** of eleven typed, reorderable block types — five of them the
+Phase 6 editorial blocks imported unchanged. **No dependency added**; direct dependencies stay at 22.
+
+| Phase 10 acceptance | Status |
+|---|---|
+| Reorderable, typed blocks (§10.1a) | **pass** — eleven types; the five reuses are argued in **DEV-43**, and `blocks/editorial.ts` predicted them |
+| Hero: desktop + mobile media, season, headline, body, two CTAs (§10.1b) | **pass** — all from the campaign document; the secondary CTA is a new field on `campaigns` |
+| Hero: optional video (§10.1b) | **deferred, DEV-41** — §30.1c forbids autoplaying video on this route, and no frame could be reserved from a container Payload does not probe |
+| Hero edge cases — CTA omitted, mobile image omitted, video unavailable, media loading, text too long (§10.1b) | **pass** — the last is removed *by construction*: the copy never sits over the crop (**DEV-44**) |
+| Every editorial block has an explicit path into commerce (§10.1c) | **pass** — structurally for `collectionFeature`, whose subject is a reference, so a path exists even with no CTA authored |
+| Responsive sizes, lazy loading, priority only on the LCP image (§10.1d) | **pass** — measured: exactly one `fetchpriority="high"`, every other image lazy, and no image delivered smaller than its box |
+| Skeletons for asynchronous product data *where needed* (§10.1d) | **none, deliberately** — `/` is prerendered static and all reads are in one cached loader; a `loading.tsx` would put the LCP behind a boundary. Notes §1.15.9 |
+| Connected to real Payload data; no hard-coded product content | **pass** — the page renders only what the global holds |
+| Empty / missing media and incomplete blocks handled gracefully | **pass** — every edge case in feature matrix §3 asserted in `verify-home.ts` |
+| Accessibility | **0 axe-core violations** at 1440×900 and 390×844; the scrollable rail is keyboard-operable, which axe cannot see |
+
+`pnpm verify:home` — **161 checks**, including the publication states as real Payload documents and
+the invariant that **no generated identifier has been truncated at 63 bytes**. 55 browser checks
+across §30.1a's eight widths. `verify:access` 45/45, `verify:media` 61/61, `verify:shell` 100/100 all
+unchanged. New decisions **D-33**, **D-34** (amending **D-13**), **D-35**; gap **G-16** closed;
+deviations **DEV-40**–**DEV-44**, discharging **DEV-24** and **DEV-25**.
+
+**Two defects found by measuring rather than reading.** The editorial reveal stranded six sections
+permanently invisible when the reader jumped to the foot of the page — an `IntersectionObserver`
+reports threshold *crossings*, and a section that skips past the viewport in one scroll never fires
+one; the component's own docblock had claimed this could not happen. And a **Phase 7** defect the
+newsletter schema exposed: `z.email().trim()` validates the *untrimmed* input, so a pasted address
+with a leading space was rejected on the sign-in, registration and reset forms — precisely the case
+`auth/schemas.ts` said the trim existed to handle. Notes §1.15.6 and §1.15.7.
+
+One migration — `20260828_085710_phase_10_homepage` — purely additive: 17 tables, 15 enums, 3 columns
+on `campaigns`, no `DROP COLUMN` and no `DROP TABLE` in its `up`. Applied, rolled back and re-applied
+on a throwaway database, and the resulting schema **diffed identical** to the pushed development one
+across 867 columns, 519 indexes, 282 constraints and 68 enums.
+
+**Next: Phase 11 — product catalog and discovery.**
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 

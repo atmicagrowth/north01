@@ -36,7 +36,7 @@ the project owner's job, not this repository's. Nothing in the workflow below as
 **Seventy-three.** Nine belong to Payload's own machinery — `users`, `users_sessions`,
 `customers_sessions`, `payload_preferences`, `payload_preferences_rels`, `payload_locked_documents`,
 `payload_locked_documents_rels`, `payload_migrations`, `payload_kv` — and the rest are Phase 6's data
-model: twenty-two collections, two globals, and the array, block and relationship tables beneath them.
+model: twenty-two collections, **three** globals, and the array, block and relationship tables beneath them.
 
 Phase 5's fixture, `schema_probes`, is gone. Removing it was this project's first destructive
 migration, deliberately rehearsed on something worthless before the same shape of migration is ever
@@ -204,6 +204,31 @@ that check; run it when a migration looks suspicious.
 9. **Verify it on a throwaway database**, or roll it forward and back on the development one — §10.
 10. **Commit all three files together, with the config change that caused them.** A migration
     separated from its config change is a broken commit in both directions.
+
+### Identifier-length arithmetic, for blocks under a global
+
+Phase 10 is the first phase to put a `blocks` field on a **global**, and that is where Postgres's
+63-byte identifier limit starts to bite. The generated foreign-key name is
+
+```
+${rootTable}_blocks_${blockSlug}_${fieldName}_id_${targetTable}_id_fk
+```
+
+which for a global called `homepage` reached **66** bytes for `collectionFeature` and **65** for
+`categoryTiles`. Both were shortened with the **function** form of `dbName` in
+`payload/blocks/home.ts` — never the string form, which replaces the whole table name including the
+`${parent}_blocks_` prefix and, for a block shared by more than one parent, collapses them into one
+table whose `_parent_id` foreign key names only the first.
+
+**A breach does not fail.** `ADD CONSTRAINT "<66 chars>"` succeeds — Postgres truncates and emits a
+NOTICE — and the matching `DROP CONSTRAINT` truncates identically, so a migration rolls forward, back
+and forward again cleanly while the Drizzle snapshot holds a name the database has never had. It
+breaks only when two long names truncate to the same 63 bytes, by which point the failure is nowhere
+near the change that caused it.
+
+So the arithmetic is done **before** the schema reaches the database, and the invariant is then held
+by a test rather than by memory: `scripts/verify-home.ts` asserts that no constraint, relation or type
+in the whole schema is 63 bytes or longer. A name at exactly 63 is the fingerprint of truncation.
 
 ### Commit policy
 

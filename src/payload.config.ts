@@ -46,6 +46,7 @@ import { Users } from './payload/collections/Users'
 import { WishlistItems } from './payload/collections/WishlistItems'
 import { logEmailAdapter } from './payload/email/logEmailAdapter'
 import { cloudinaryStorage } from './payload/storage/cloudinary'
+import { Homepage } from './payload/globals/Homepage'
 import { Navigation } from './payload/globals/Navigation'
 import { SiteSettings } from './payload/globals/SiteSettings'
 
@@ -220,7 +221,7 @@ export default buildConfig({
     withSecureCookies(Users),
   ],
 
-  globals: [SiteSettings, Navigation],
+  globals: [SiteSettings, Navigation, Homepage],
 
   /**
    * **A restricted feature set, chosen rather than inherited.** Payload's `defaultEditorFeatures` is

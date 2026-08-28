@@ -1,7 +1,7 @@
 import type { GlobalConfig } from 'payload'
 
 import { anyone, isAdminField, isStaff } from '../access'
-import { revalidateShell } from '../hooks/revalidateShell'
+import { revalidateGlobal } from '../hooks/revalidateTags'
 import { isSameSitePath } from '../../lib/same-site-path'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 
@@ -72,7 +72,7 @@ export const SiteSettings: GlobalConfig = {
 
   /** The header reads `siteName`, `logo` and `announcement` on every page. See `Navigation.ts`. */
   hooks: {
-    afterChange: [revalidateShell('shell', 'site-settings')],
+    afterChange: [revalidateGlobal('shell', 'site-settings')],
   },
 
   fields: [

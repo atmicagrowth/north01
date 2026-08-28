@@ -573,6 +573,50 @@
 }
 
 /* -----------------------------------------------------------------------------
+ * Editorial reveal — visual guide §08
+ *
+ * "Keep it slow. Keep it subtle. Prefer crossfades and gentle reveals. Avoid
+ * exaggerated zooms. Avoid distracting parallax."
+ *
+ * DEV-24 deferred an animation library to Phase 10 for exactly this. Phase 10
+ * declined it (DEV-40): 8.6 MiB and 4 packages installed, ~40 KB gzip shipped to
+ * the LCP route, and — decisively — `motion` defaults to `reducedMotion: "never"`
+ * and animates opacity through the Web Animations API, which does not go through
+ * the token overrides below. Two declarations do the job and stay inside the
+ * system D-13 already chose.
+ *
+ * THE CLOSED STATE EXISTS ONLY WHEN JAVASCRIPT SETS IT. Server HTML carries no
+ * `data-reveal` at all, so content is visible with JS disabled, before hydration,
+ * on a failed hydration, in a browser with no IntersectionObserver, and in print.
+ * There is no path on which this stylesheet can strand a section invisible — which
+ * is the failure mode that rules out `animation-timeline: view()`, where a subject
+ * inside an `overflow: hidden` ancestor is pinned at `opacity: 0` forever.
+ *
+ * Reduced motion needs no rule here: the transition reads `--duration-editorial`,
+ * which the block below collapses to 1ms along with every other duration token.
+ * -------------------------------------------------------------------------- */
+@layer components {
+  [data-reveal] {
+    transition-property: opacity, transform;
+    transition-duration: var(--duration-editorial);
+    transition-timing-function: var(--ease-editorial);
+  }
+
+  /* 12px, not a slide. The section settles; it does not arrive from off-screen. */
+  [data-reveal='closed'] {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@media print {
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* -----------------------------------------------------------------------------
  * Reduced motion
  *
  * Overriding the duration tokens in one place is what disables motion across the

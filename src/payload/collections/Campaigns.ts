@@ -2,6 +2,7 @@ import type { CollectionConfig } from 'payload'
 
 import { isAdmin, isStaff, publishedOnly } from '../access'
 import { linkGroup } from '../fields/link'
+import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
 import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
 
@@ -40,6 +41,20 @@ export const Campaigns: CollectionConfig = {
   },
 
   defaultSort: '-publishedAt',
+
+  /**
+   * **The campaign is the homepage hero**, so a save here changes the largest statement on the site
+   * and must not wait out the storefront's five-minute cache floor. Deleting one changes the page
+   * too — the hero is dropped — and no `afterChange` fires for that, hence both hooks.
+   *
+   * This is the only collection that revalidates the homepage. Product saves deliberately do not:
+   * they fire on every variant change through `syncProductDerived`, and the rails are a
+   * 300-second-stale merchandising surface by design. See `hooks/revalidateTags.ts`.
+   */
+  hooks: {
+    afterChange: [revalidateCollection('home')],
+    afterDelete: [revalidateCollectionDelete('home')],
+  },
 
   /**
    * Published documents are public; everything else is staff. See `access/index.ts` — `publishedOnly`
@@ -97,6 +112,17 @@ export const Campaigns: CollectionConfig = {
               },
             },
             linkGroup({ name: 'cta', label: 'Call to action' }),
+            /**
+             * Plan §10.1b lists both a *"Primary CTA"* and a *"Secondary CTA"* on the hero, and
+             * Phase 6 shipped only the primary. It is added here rather than to the homepage's
+             * `hero` block for the reason that block has one field: the campaign is the single
+             * source of the campaign statement, and a second call to action living somewhere else
+             * would leave an editor updating a campaign and watching half of it stay behind.
+             *
+             * Purely additive — one enum and three columns, and the reference half is polymorphic
+             * so it lands in `campaigns_rels` rather than adding a foreign key column.
+             */
+            linkGroup({ name: 'secondaryCta', label: 'Secondary call to action' }),
           ],
         },
         {

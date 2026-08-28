@@ -59,6 +59,27 @@ import type { Media } from '@/payload-types'
  * of the page — so the rectangle is known before it is known whether an asset exists, whether its
  * bytes arrive, or whether the CDN 404s. `aspect-ratio` holds the space with no JavaScript and no
  * padding-top hack.
+ *
+ * ### Art direction is two things, and Phase 10 added the second
+ *
+ * `mobileContext` re-crops **one** asset at two ratios — the same photograph, framed upright for a
+ * phone. That is what Phase 8 built and it covers most surfaces.
+ *
+ * `mobileMedia` supplies a **different asset** for narrow screens, and it exists because the schema
+ * already promised it: `campaigns.mobileHero` has been in the data model since Phase 6, described as
+ * a portrait crop with a docblock citing plan §10.1b's *"Mobile media"* — and until Phase 10 there
+ * was no way to render it. The field was unreachable, which is the CMS half of §0.1.17's fake
+ * control.
+ *
+ * The two compose: `mobileMedia` decides *which* asset the mobile `<source>` uses, `mobileContext`
+ * decides how it is cropped, and either may be used without the other. When `mobileMedia` is absent
+ * the behaviour is exactly what it was before — §10.1b's *"Mobile image omitted: use safe fallback"*
+ * is therefore satisfied by doing nothing, which is the right shape for a fallback.
+ *
+ * **The reserved mobile box follows the asset that will actually be served.** That matters for an
+ * uncropped context, where `reserveBox` reads the asset's own dimensions: reserving from the desktop
+ * record while delivering the mobile one is the letterboxing defect Phase 8 measured, reintroduced
+ * through a different door.
  */
 
 /** What an `upload` field holds once populated. Unpopulated it is an id, which is not enough to render. */
@@ -82,6 +103,18 @@ export type MediaImageProps = {
    * generate a class it can see in the source.
    */
   mobileContext?: MediaContext
+  /**
+   * A **different asset** below 768px — a portrait frame shot for the phone, not a re-crop of the
+   * landscape one. `campaigns.mobileHero` is the field this exists for.
+   *
+   * Absent, the mobile `<source>` uses `media` (re-cropped by `mobileContext` if one is given),
+   * which is plan §10.1b's *"safe fallback"*. Present without `mobileContext`, it is delivered in
+   * the same context as the desktop asset.
+   *
+   * The `alt` text comes from the desktop record either way: `<picture>` has one `<img>` and
+   * therefore one accessible name, so a differing `alt` on the mobile asset is deliberately unused.
+   */
+  mobileMedia?: MediaValue
   /**
    * The CSS `sizes` attribute — how wide the image will be at each breakpoint.
    *
@@ -155,16 +188,28 @@ export function MediaImage({
   media,
   context,
   mobileContext,
+  mobileMedia,
   sizes,
   priority = false,
   alt,
   className,
   imageClassName,
 }: MediaImageProps) {
-  const record = asRecord(media)
+  /*
+   * A hero given only a mobile frame still renders. The fallback is symmetric on purpose: the
+   * editor supplied one photograph and the honest thing is to show it, not to decide that the
+   * wrong field was filled in.
+   */
+  const record = asRecord(media) ?? asRecord(mobileMedia)
+  const mobileRecord = asRecord(mobileMedia) ?? record
+
   const resolved = resolveContext(context, record?.role as MediaRole | undefined)
+  /* A distinct mobile asset may carry a different `role`, so its context is resolved from itself. */
+  const mobileResolved = mobileContext ?? (mobileRecord === record ? null : resolved)
+
   const box = reserveBox(resolved, record)
-  const mobileBox = mobileContext ? reserveBox(mobileContext, record) : null
+  // Reserve from the record that will actually be delivered — see the docblock.
+  const mobileBox = mobileResolved ? reserveBox(mobileResolved, mobileRecord) : null
 
   /**
    * The box is reserved with `aspect-ratio` rather than fixed pixels, so the image is fluid but its
@@ -200,6 +245,8 @@ export function MediaImage({
 
   const cloudName = publicEnv.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
   const asset = toAsset(record)
+  /* `null` when the mobile source is the desktop one, or when it has no Cloudinary bytes. */
+  const mobileAsset = mobileRecord && mobileRecord !== record ? toAsset(mobileRecord) : null
   const altText = alt ?? record.alt ?? ''
 
   /**
@@ -216,22 +263,47 @@ export function MediaImage({
       return <Placeholder className={cn(frameClass, className)} style={frame} />
     }
 
+    /*
+     * Art direction survives here even with no CDN. The crops do not — those are Cloudinary's — but
+     * a distinct `mobileMedia` is a distinct file that Payload is already serving, so the phone
+     * still gets the photograph shot for it. This is the state the project is committed in, so the
+     * branch is not hypothetical.
+     */
+    const mobileUrl = mobileAsset === null ? null : (mobileRecord?.url ?? null)
+
     return (
       <div
         data-slot="media-image"
         className={cn('relative w-full overflow-hidden bg-surface', frameClass, className)}
         style={frame}
       >
-        <img
-          src={record.url}
-          alt={altText}
-          width={box.width}
-          height={box.height}
-          loading={priority ? 'eager' : 'lazy'}
-          decoding={priority ? 'sync' : 'async'}
-          fetchPriority={priority ? 'high' : undefined}
-          className={cn('h-full w-full object-cover', imageClassName)}
-        />
+        {mobileUrl ? (
+          <picture>
+            <source media="(max-width: 767.98px)" srcSet={mobileUrl} />
+            <source srcSet={record.url} />
+            <img
+              src={record.url}
+              alt={altText}
+              width={box.width}
+              height={box.height}
+              loading={priority ? 'eager' : 'lazy'}
+              decoding={priority ? 'sync' : 'async'}
+              fetchPriority={priority ? 'high' : undefined}
+              className={cn('h-full w-full object-cover', imageClassName)}
+            />
+          </picture>
+        ) : (
+          <img
+            src={record.url}
+            alt={altText}
+            width={box.width}
+            height={box.height}
+            loading={priority ? 'eager' : 'lazy'}
+            decoding={priority ? 'sync' : 'async'}
+            fetchPriority={priority ? 'high' : undefined}
+            className={cn('h-full w-full object-cover', imageClassName)}
+          />
+        )}
       </div>
     )
   }
@@ -266,8 +338,8 @@ export function MediaImage({
   const image = (
     <img
       src={desktopFallback}
-      srcSet={mobileContext ? undefined : desktopSrcSet}
-      sizes={mobileContext ? undefined : sizes}
+      srcSet={mobileResolved ? undefined : desktopSrcSet}
+      sizes={mobileResolved ? undefined : sizes}
       alt={altText}
       width={box.width}
       height={box.height}
@@ -284,16 +356,21 @@ export function MediaImage({
       className={cn('relative w-full overflow-hidden bg-surface', frameClass, className)}
       style={blur}
     >
-      {mobileContext ? (
+      {mobileResolved ? (
         <picture>
           {/*
-            Art direction, and the reason this component renders `<picture>` at all. The mobile source
-            is a different CROP, not a smaller copy — visual guide §10. It comes first because a
-            browser takes the first matching `<source>`.
+            Art direction, and the reason this component renders `<picture>` at all. The mobile
+            source is a different CROP — and, when `mobileMedia` is supplied, a different
+            PHOTOGRAPH — not a smaller copy. Visual guide §10. It comes first because a browser
+            takes the first matching `<source>`.
           */}
           <source
             media="(max-width: 767.98px)"
-            srcSet={buildSrcSet({ cloudName, asset, context: mobileContext })}
+            srcSet={buildSrcSet({
+              cloudName,
+              asset: mobileAsset ?? asset,
+              context: mobileResolved,
+            })}
             sizes={sizes}
           />
           <source srcSet={desktopSrcSet} sizes={sizes} />

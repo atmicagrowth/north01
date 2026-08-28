@@ -29,7 +29,8 @@
     "seed": "payload run scripts/seed.ts",
     "verify:access": "payload run scripts/verify-access.ts",
     "verify:media": "payload run scripts/verify-media.ts",
-    "verify:shell": "payload run scripts/verify-shell.ts"
+    "verify:shell": "payload run scripts/verify-shell.ts",
+    "verify:home": "payload run scripts/verify-home.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",

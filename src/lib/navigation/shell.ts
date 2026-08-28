@@ -31,7 +31,7 @@ import { getPayloadClient } from '@/lib/payload'
  * - **`cache()`** — React's per-render memo. The layout, the header and the footer all need this in
  *   one pass; without it they would each issue their own pair of queries.
  * - **`unstable_cache`** — Next's cross-request data cache, which is what stops every visitor paying
- *   for two global reads. It carries **tags**, and `payload/hooks/revalidateShell.ts` calls
+ *   for two global reads. It carries **tags**, and `payload/hooks/revalidateTags.ts` calls
  *   `revalidateTag` when either global is saved, so an editor's change reaches the storefront on the
  *   next request rather than on the next deployment. The 300-second `revalidate` is the floor under
  *   that: if a tag call is ever missed — a write from a script, a direct SQL edit — the shell is

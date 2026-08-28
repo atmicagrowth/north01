@@ -3164,6 +3164,319 @@ Step 4 of the append rule.
 
 ---
 
+## 1.15 Phase 10 — homepage / editorial system
+
+Plan §10.1a–§10.1d. A CMS-driven editorial commerce homepage: typed reorderable blocks, a campaign
+hero, product rails, editorial sections, shop-the-look, and the performance rules that govern the
+site's LCP route.
+
+**No dependency was added.** Direct dependencies stay at 22. The one the phase was expected to add —
+`motion`, deferred here by **DEV-24** — was measured and declined; see §1.15.5 and **DEV-40**.
+
+### 1.15.1 The homepage is a global, and the split that makes its rules testable
+
+There is exactly one homepage, so it is a **global** (`homepage`) holding one `blocks` field. A
+collection would have needed a slug, a publish status, a rule deciding which row is live, and a route
+resolver — four mechanisms to express a singleton. Feature matrix §25 is the only place the corpus
+says where homepage content lives, and it says the CMS: *"Manage: … Homepage content."*
+
+The architecture is Phase 9's, reused deliberately rather than reinvented:
+
+| Module | Job |
+|---|---|
+| `lib/home/resolve.ts` | **pure** — every drop/keep rule, the LCP choice, the heading rule, the rail query |
+| `lib/home/home.ts` | `server-only` — `unstable_cache` under the `home` tag, `revalidate: 300`, one `try` |
+| `lib/home/sizes.ts` | pure — every `sizes` string, as a table a verification script can assert |
+
+The point of the split is that `pnpm verify:home` exercises **161 checks** without a browser, because
+the module holding the rules imports nothing from Next, nothing runnable from Payload, and nothing
+marked `server-only`. The one Payload import is `import type { Where }`, which TypeScript erases —
+a `Where` handed straight to `payload.find` should not be typed as a bare record.
+
+**Measured, not assumed:** after `pnpm build`, `.next/prerender-manifest.json` reports `/` as
+`"compute": "static"` with `initialRevalidateSeconds: 300`, and `.next/server/app/index.meta` carries
+
+```
+x-next-cache-tags: …,shell,navigation,site-settings,home
+```
+
+That `home` tag is what lets an editor's save invalidate **prerendered HTML**. An uncached read would
+have made `/` dynamic; a cached-but-untagged one would have made the save invisible for five minutes.
+
+`revalidateShell.ts` was renamed **`revalidateTags.ts`**. It had always been a generic variadic tag
+factory named after its first caller, and Phase 10 needed the same body for a *collection* hook —
+`campaigns`, because the campaign **is** the hero and a five-minute delay on the site's largest
+statement is not acceptable. Products deliberately do **not** revalidate: they fire on every variant
+save through `syncProductDerived`, and a rail is a 300-second-stale merchandising surface by design.
+Recorded as owed to Phase 11, which builds the listings that make a tighter guarantee worth paying for.
+
+### 1.15.2 Eleven block types, five of them already written
+
+Plan §10.1a lists ten blocks *"such as"* — and the hedge matters, because two of the ten are the same
+data shape and one is not a homepage section at all.
+
+| §10.1a names | Delivered as | New? |
+|---|---|---|
+| Hero | `hero` (one field: a campaign reference) | new |
+| Promotional strip | `promoStrip` | new |
+| Category tiles | `categoryTiles` | new |
+| Product rail/grid | `productRail` (query) **+** `productGroup` (curation) | new + **reused** |
+| Editorial split | `splitFeature` | **reused** |
+| Shop-the-look | `shopTheLook` | **reused** |
+| Collection feature | `collectionFeature` | new |
+| Brand story | `splitFeature` | **reused** — **DEV-43** |
+| Social gallery | `socialGallery` | new |
+| Newsletter | the footer's column | **DEV-42** |
+
+Five of the eleven are the Phase 6 objects imported unchanged, which is exactly what
+`blocks/editorial.ts` predicted: *"Phase 10 may reuse any of these seven."* Payload sanitises a block
+config once and keys storage off the parent table name, so one object serves three parents, produces
+three separate tables, and yields **one** shared interface in `payload-types.ts` — confirmed in the
+regenerated types, where `SplitFeatureBlock` and the other four gained a third reference rather than a
+duplicate interface.
+
+Two of the seven are deliberately not offered here: `gallery` (because `socialGallery` is this page's
+multi-image grid, and two grid blocks is a choice with no answer) and `pullQuote` (guide §09's Home
+direction names image-led and typography-led sections, and `editorial` is the second).
+
+`productRail` and `productGroup` both exist because they are different jobs. A rail is a **query** —
+"New arrivals" must stay true without an editor re-curating it weekly — and a group is a **curation**
+whose drag order *is* the merchandising decision. Neither expresses the other. They render through one
+component, because the resolver normalises them to the same shape.
+
+### 1.15.3 The 63-byte identifier arithmetic, done before the schema reached the database
+
+Postgres truncates any identifier over 63 bytes **silently**, with a NOTICE. Worse, the truncation is
+symmetric: `ADD CONSTRAINT "<66 chars>"` succeeds and the matching `DROP CONSTRAINT` truncates
+identically, so a migration rolls forward, back and forward again cleanly while the Drizzle snapshot
+holds a name the database has never had. It breaks only when two long names truncate to the same 63
+bytes — at which point the failure is nowhere near the change that caused it.
+
+Blocks under a global run long, because the template is
+`${global}_blocks_${block}_${field}_id_${target}_id_fk`. Two of the six new blocks breached it:
+
+| Block | Longest generated name | Bytes |
+|---|---|---|
+| `collectionFeature`, default | `homepage_blocks_collection_feature_collection_id_collections_id_fk` | **66** |
+| `collectionFeature`, with `dbName` | `homepage_blocks_collection_collection_id_collections_id_fk` | 58 |
+| `categoryTiles`, default | `homepage_blocks_category_tiles_items_category_id_categories_id_fk` | **65** |
+| `categoryTiles`, with `dbName` | `homepage_blocks_tiles_items_category_id_categories_id_fk` | 56 |
+
+Both carry the **function** form of `dbName`, never a string — a string replaces the whole table name
+including the `${parent}_blocks_` prefix, which for a shared block collapses two parents into one
+table whose `_parent_id` foreign key names only the first. `editorial.ts`'s `shopTheLook` docblock
+already carries that measurement; this is the same trap avoided the same way.
+
+Verified against the pushed schema rather than by arithmetic alone: **zero identifiers at 63 bytes or
+longer anywhere in the database**, 17 `homepage*` tables, longest constraint 58. `verify-home.ts` §M
+now asserts that invariant permanently — no earlier harness had it, and no earlier phase needed it.
+
+### 1.15.4 `MediaImage` could not render a field the schema had promised since Phase 6
+
+`campaigns.mobileHero` has existed since Phase 6, with a docblock citing plan §10.1b's *"mobile image
+omitted: use safe fallback"*. Phase 8 documented it. **Nothing could render it.**
+
+`MediaImage`'s `mobileContext` art-directs **one** asset at two crops — the same photograph, framed
+upright. A second *asset* had no path through the component at all, so the field was unreachable: the
+CMS half of §0.1.17's fake control, an upload an editor can fill that changes nothing.
+
+Phase 10 added one prop, `mobileMedia`, and the change is backwards-compatible in both directions:
+absent, the behaviour is exactly what it was; present, it supplies the `<picture>`'s mobile `<source>`
+from a different record. Three details that are not incidental:
+
+- **The reserved mobile box follows the asset that will be served**, not the desktop one. For an
+  uncropped context `reserveBox` reads the asset's own dimensions, so reserving from the wrong record
+  is the letterboxing defect Phase 8 measured, reintroduced through a different door.
+- **A hero given only a mobile frame still renders.** The fallback is symmetric — the editor supplied
+  one photograph, and deciding that they filled in the wrong field is not the component's job.
+- **The degraded path art-directs too.** With no Cloudinary configured — the state this project is
+  committed in — the crops are lost but a distinct `mobileMedia` is a distinct file Payload already
+  serves, so the phone still gets the photograph shot for it.
+
+### 1.15.5 Motion: DEV-24 deferred a library to this phase, and this phase declined it
+
+The full argument is **DEV-40** and decision **D-34**. The four measurements:
+
+| | |
+|---|---|
+| Install | 8.64 MiB across four packages (`motion` is a re-export shim over `framer-motion` + `motion-dom` + `motion-utils`) |
+| Bundle | ~40 KB gzip, on the LCP route plan §37's performance gate names |
+| Reduced motion | `MotionConfigContext` defaults to `reducedMotion: "never"`, and opting in neuters only *positional* keys — **opacity is not among them** |
+| Tokens | it animates through the Web Animations API, which cannot read the CSS custom properties `globals.css` collapses to 1 ms under `prefers-reduced-motion` |
+
+The last one is decisive rather than merely unfavourable: honouring the preference would have required
+a **second implementation of motion**, which is the exact thing decision **D-13** exists to prevent.
+
+Two claims in DEV-24 did not survive checking. *"Cinematic"* — the word it quotes as the guide's —
+**does not appear in the visual guide at all**; it is the plan's word, and the guide's actual
+instruction is §08's *"keep it slow, keep it subtle, prefer crossfades and gentle reveals"*, which
+needs no spring, no gesture and no scroll-linked transform. And *"genuinely needed"* was a prediction,
+not a finding.
+
+What ships is two CSS declarations on the existing `--duration-editorial` / `--ease-editorial` tokens
+and one client component using `IntersectionObserver`. CSS scroll-driven animation
+(`animation-timeline: view()`) was rejected for a property the corpus cares about more than novelty:
+a subject inside an `overflow: hidden` ancestor binds its timeline to an unscrollable container and
+sits at `opacity: 0` **permanently**. It also ignores `animation-duration`, which would have moved
+pacing out of the token layer, and it scrubs — scrolling up un-reveals.
+
+### 1.15.6 The defect a browser found, in the component whose docblock said it could not happen
+
+`Reveal`'s docblock claimed that content *"is never stranded invisible"*. It was wrong, and only a
+real browser could show it.
+
+An `IntersectionObserver` reports **threshold crossings**. A section that goes from below the viewport
+to above it in a single jump — the End key, a scrollbar drag, an anchor link, a browser restoring a
+scroll position — moves from ratio 0 to ratio 0 and **fires no callback at all**. Measured on the
+built homepage at 1440×900:
+
+| Scroll | Result |
+|---|---|
+| Gradual (wheel, 600px steps) | all nine sections `open` |
+| `window.scrollTo(0, scrollHeight)` | **six sections stranded at `opacity: 0`**, `top` between −7163 and −1489 |
+
+Those six stay invisible for the rest of the session, and scrolling back up does not recover them —
+the observer has nothing left to report.
+
+The fix is one option, argued rather than pasted: `rootMargin: '100000px 0px 0px 0px'` extends the
+observer's root **upwards only**, so anything above the viewport counts as intersecting and gets a
+callback, while the bottom edge stays at the viewport so what is below still arms. An explicit
+`boundingClientRect.top <= 0` branch covers a section further above than the margin reaches. Re-measured
+after the change: gradual, jump-to-bottom and scroll-back-up all leave zero sections closed.
+
+The general lesson, and it is the same one Phase 9's §1.14.3 recorded about focus: **a docblock
+asserting a safety property is a hypothesis until something executes it.** Both defects were invisible
+to typecheck, lint and axe-core.
+
+### 1.15.7 A Phase 7 defect the newsletter schema exposed
+
+`lib/auth/schemas.ts` has said since Phase 7:
+
+> `.trim()` on email is not cosmetic. A pasted address routinely carries a leading space, and the
+> unique index does not consider `" ada@example.com"` and `"ada@example.com"` the same address.
+
+The reasoning is right and the code did not do it. `z.email().trim()` reads as *"an email, trimmed"*
+and is not: `z.email()` is its own schema type, so the **format check runs against the raw input** and
+the trim only shapes the value it produces. Measured against `zod@4.4.3`:
+
+| Input | `z.email().trim()` | `z.string().trim().pipe(z.email())` |
+|---|---|---|
+| `"  Ada@Example.COM "` | **rejected** | `"ada@example.com"` |
+| `"Ada@Example.COM"` | `"ada@example.com"` | `"ada@example.com"` |
+
+So a customer pasting an address with a trailing space was told *"Enter a valid email address."* — on
+the sign-in form, the registration form and the password-reset form — for an address that is perfectly
+valid. The paragraph above described an intention the code never implemented.
+
+Fixed in both schemas by piping a trimmed string **into** the email check. Found because
+`verify-home.ts` asserted the *behaviour* the docblock claimed rather than the syntax, on a schema
+written by copying the Phase 7 one — which is an argument for testing the sentence rather than the
+expression.
+
+### 1.15.8 The newsletter, and the one place it departs from Phase 7
+
+**DEV-42** in full. The short version: **DEV-25** deferred the footer column in Phase 3 because *"a
+signup field rendered now would post nowhere — the subscriber collection is Phase 6.1n."* Phase 6
+built it, `NewsletterSubscribers.ts` names this phase as the owner, and the premise expired. The
+column is filled and DEV-25 is discharged.
+
+The departure worth recording: `newsletter-subscribers.create` **stays `isStaff`**, and the Server
+Action writes with `overrideAccess: true` — the opposite of `register`, which uses
+`overrideAccess: false` on the principle that *"the storefront gets no privilege the REST API does not
+have."*
+
+That principle is right for an auth collection, which must be publicly creatable or nobody could sign
+up. It is wrong here because of a property `customers` does not have: `email` is `unique` and `read`
+is `isStaff`, so an openly creatable endpoint would answer a duplicate with a constraint error and a
+fresh address with success — a **membership-enumeration oracle over personal data** for anyone with a
+list of addresses. For the same reason a duplicate submission returns the identical success message,
+and an unsubscribed address is **not** silently re-subscribed: that row exists precisely so *"a later
+import cannot resurrect the address."*
+
+Owed: the mail and the §19.1b double-opt-in question (**Phase 19** — these rows are single opt-in, the
+only state the Phase 6 schema can represent), and rate limiting plus Turnstile (**Phase 26**).
+
+### 1.15.9 No Suspense, no skeleton, no `loading.tsx` — and why that is a decision
+
+§10.1d asks for *"skeletons for asynchronous product data **where needed**"*. It is not needed here,
+and adding one would have been theatre:
+
+1. **`/` is statically prerendered.** Every query resolves at build time; the HTML is complete before
+   a visitor exists. There is nothing to stream.
+2. **All reads are inside one cached loader**, so there is no second async boundary a `<Suspense>`
+   could sit on.
+3. Next's own streaming documentation warns that an **LCP element inside a Suspense boundary cannot
+   paint until the boundary resolves** — a homepage `loading.tsx` would put the §10.1b hero behind a
+   full-page skeleton and defeat §10.1d's own priority requirement.
+
+Recorded here so a later reviewer reads the absence as a decision. The `Skeleton` primitive stays
+unused on this route; Phase 11's shop page has real filter-driven streaming and is where it earns its
+place.
+
+Also deliberately absent: `export const revalidate` on the page (redundant — the loader carries it and
+the lowest value across the route wins), and a `<head>` preload for the hero (it would need a client
+component and a duplicated Cloudinary URL builder, for marginal gain on a route that is already
+prerendered with the hero in the first HTML chunk).
+
+### 1.15.10 What was verified, and how
+
+**`pnpm verify:home` — 161 checks, all passing.** Two halves, in `verify-shell.ts`'s shape: pure
+fixtures for every edge case in feature matrix §3, then **real Payload documents** for the states that
+matter. The database half creates a draft campaign, a scheduled one and a product with no active
+variant, and proves the resolver drops exactly those — a fixture proves the function, a real document
+proves the function is being fed what it thinks it is, which is the difference that mattered in Phase
+7's access harness.
+
+No regression elsewhere: `verify:access` **45/45**, `verify:media` **61/61**, `verify:shell`
+**100/100**. Total **367** checks across the four harnesses.
+
+**Browser pass — 54 checks** at 320, 375, 430, 768, 1024, 1280, 1440 and 1920px (§30.1a's eight):
+
+- no horizontal overflow at any width, and the Display XL headline stays inside guide §03's 48–72px
+  range at every one of them;
+- exactly one `<h1>`, one `<main>`, no duplicate DOM ids — including on `/login`, where the footer's
+  form and the sign-in form both render an email field (the reason the newsletter field is named
+  `newsletterEmail`);
+- **exactly one image with `fetchpriority="high"`**, every other image lazy, and every `<img>`
+  carrying `width` and `height`;
+- the horizontal rail focusable and keyboard-scrollable (WCAG 2.1.1 — axe cannot see this: a static
+  tree cannot tell that a `div` scrolls);
+- the reveal in all three failure modes — JavaScript disabled (every section renders, nothing hidden),
+  `prefers-reduced-motion` (transition duration `0.001s`, from the existing token block with no new
+  policy), and jump-scrolling (the defect in §1.15.6, fixed and re-measured);
+- the newsletter end to end: a fresh address, the same address again (indistinguishable), an invalid
+  address (a field error with `aria-invalid`), and a pasted address with whitespace and capitals.
+
+**0 axe-core violations** on `/` at 1440×900 and 390×844, WCAG 2.0/2.1/2.2 A + AA.
+
+**Media.** The database had no assets, so the media pipeline was exercised against nineteen uploaded
+test frames carrying edge ticks and printed dimensions — not photography, and not committed. Two Phase
+8 predictions re-confirmed on live data: a 3000×1200 source clamps to `w_960` in the 4:5 context
+(`floor(1200 × 0.8)`), and a 480×600 source never upscales in any context.
+
+### 1.15.11 What is now owed
+
+- **Every commerce destination on this page 404s** — `/shop/<slug>` (Phase 11), `/product/<slug>`
+  (Phase 13), `/collections/<slug>` (Phase 23). The same accepted state Phase 9 shipped for the
+  navigation, answered by **D-31**'s global 404. Nothing should paper over it with `prefetch={false}`.
+- **The product tile is not the product card.** §11.1b's nine states and §11.1c's interactions are
+  Phase 11's; `ProductTile.soldOut` is carried by the resolver and read by nothing.
+  `derived.compareAtFromMinor` is likewise unread — a struck-through price a variant never sold at is
+  a false saving claim.
+- **Products do not revalidate the `home` tag** — Phase 11.
+- **No hero video, and no `campaigns.video` field** — **DEV-41**, to be confirmed in Phase 23.
+- **The newsletter is single opt-in and unthrottled** — Phase 19 and Phase 26.
+- **Rich-text prose is the first public Lexical surface**, and its hrefs are re-validated at render
+  (**D-35**) because `LinkFeature()` stores an unvalidated editor-typed URL. A phase that adds link
+  *fields* to the editor config should revisit whether the validation belongs at save time too.
+- **Homepage SEO is the layout's default.** No `metadata` export, no OG image, no structured data —
+  Phase 24, which `site-settings` already holds `defaultSeoTitle`/`defaultSeoDescription`/
+  `defaultOgImage` for.
+- **The seed's composition adapts to the media library.** On an empty library it writes seven sections
+  rather than ten, because three blocks carry `validateRequiredUpload`. Phase 29's demo catalogue
+  should ship assets and make the full composition unconditional.
+
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -3637,6 +3950,14 @@ Motion remains an approved technology and is genuinely needed for the guide's "s
 editorial reveals and crossfades. **It moves to Phase 10**, with the homepage editorial system that
 first has something to reveal. `docs/STACK_VERSIONS.md` is corrected accordingly.
 
+> **Revised in Phase 10 — see DEV-40.** Phase 10 built the reveals and did not install the library.
+> Two claims above did not survive contact with the measurement. The word *"cinematic"* **does not
+> appear in the visual guide at all** — it is the plan's word (line 401), and the guide's actual
+> instruction is §08's *"keep it slow, keep it subtle, prefer crossfades and gentle reveals"*, which
+> needs no spring, no gesture and no scroll-linked transform. And *"genuinely needed"* was an
+> assumption rather than a finding: two CSS declarations and one `IntersectionObserver` do the whole
+> job. The deferral was right; the prediction attached to it was not.
+
 *Affects Phases 3 and 10.*
 
 ---
@@ -4063,6 +4384,193 @@ rather than by widening the list.
 
 *Affects Phase 8 and any later phase that wants a vector asset.*
 
+### DEV-40 — Motion is not installed in Phase 10 either, reversing DEV-24's deferral
+
+**DEV-24 said** the animation library *"moves to Phase 10, with the homepage editorial system that
+first has something to reveal."* **The tech stack** lists Motion as approved and Required. **Feature
+matrix §3** names it among the homepage's `**Uses:**`.
+
+**We do:** install no animation library, in this phase or any so far. The homepage's editorial reveal
+is two CSS declarations on the existing duration tokens plus one client component using
+`IntersectionObserver` — `components/editorial/reveal.tsx`, and the `[data-reveal]` block in
+`globals.css`.
+
+**Why — four measurements, not a preference:**
+
+| | |
+|---|---|
+| **Install** | `motion@13.1.1` resolves to a re-export shim; the real tree is `motion` + `framer-motion` + `motion-dom` + `motion-utils` = **8.64 MiB, four new packages** |
+| **Bundle** | `motion/react-client` is **~40 KB gzip** — on the LCP route, and many times React's own runtime in this project |
+| **Reduced motion** | `MotionConfigContext` defaults to `reducedMotion: "never"`; opting in neuters only *positional* keys, and **opacity is not one of them**, so a reduced-motion visitor gets every fade at full duration |
+| **Tokens** | it animates through the Web Animations API, which cannot read the CSS custom properties that `globals.css` collapses to 1 ms under `prefers-reduced-motion` — so honouring the preference would need a **second** implementation of motion, which is precisely what **D-13** exists to prevent |
+
+Every `motion/react` entry point carries `"use client"`, so each animated section would also have
+become a client boundary on a page that currently has two.
+
+**The strongest argument against this, stated plainly:** `useInView` alone is well under 1 KB gzip,
+and importing only that would cost almost nothing. It is rejected because it puts four packages
+permanently in the tree so that the *next* phase can reach for a motion component without making a
+decision — and it will, because the import is already there. A dependency installed in order not to
+use it is §0.1.13's *"unnecessary dependencies"* with extra steps.
+
+**What this costs:** no springs, no gestures, no layout animation, no presence-based exit animation
+outside the Radix overlays that already have one. Nothing in the corpus asks for any of them; guide
+§08 asks for the opposite.
+
+**Revisit** if a written requirement needs motion CSS cannot express — a shared-element transition, a
+drag interaction. Motion stays an approved technology and `docs/STACK_VERSIONS.md` records it as
+available and not installed.
+
+*Affects Phases 3 and 10. Amends **D-13**; adds **D-34**.*
+
+### DEV-41 — The homepage hero renders no video, and `Campaigns` gains no `video` field
+
+**Plan §10.1b says** the hero supports an *"Optional video"*, with the edge case *"Video unavailable:
+image fallback."*
+
+**We do:** render the campaign image and nothing else, and deliberately **do not add** a `video`
+field to `Campaigns`.
+
+**Why, in the order the reasons decided it:**
+
+1. **§30.1c — the section that governs this exact route — says *"Avoid … Autoplaying massive
+   videos."*** The homepage is the LCP route plan §37 measures.
+2. **`prefers-reduced-motion` could not be honoured from the token layer.** An autoplaying video needs
+   a client component reading `matchMedia`, which is the second definition of motion **D-13** forbids
+   and **DEV-40** has just declined for the same reason.
+3. **The frame could not be reserved.** Payload's dimension probe reads no video container, so every
+   video row has `null` width and height — the box would be guessed rather than derived from the
+   delivery context, which is the layout shift §30.1b forbids and §8.1d was built to prevent.
+4. **It could not be smoke-tested.** No video asset exists in this project, and the phase gate
+   requires a real-browser pass. Shipping an unverifiable rendering path is worse than a written
+   deferral.
+
+Adding the *field* without the renderer would be worse still: an upload control an editor can fill
+that changes nothing is §0.1.17's fake control wearing a different widget. **The field is not added.**
+
+§10.1b's *"Video unavailable: image fallback"* is satisfied permanently and trivially — the image is
+the hero.
+
+**Revisit in Phase 23**, which has editorial pages and a reason for a campaign film. `media` already
+accepts MP4 and WebM (**DEV-35**), so the schema is ready when the requirement is.
+
+*Affects Phase 10; to be confirmed in Phase 23.*
+
+### DEV-42 — The newsletter is the footer's column, not a homepage block — discharging DEV-25
+
+**Plan §10.1a lists** *"Newsletter"* among the homepage blocks, and **feature matrix §3** lists it
+among the homepage sections.
+
+**We do:** ship one working signup, in the footer slot **DEV-25** reserved in Phase 3, and define **no
+`newsletter` block** for the homepage.
+
+**Why the footer.** Structure §4's step 8 is a single item — *"Newsletter/**footer**"* — and structure
+§20 lists Newsletter among the footer's five columns. `SiteFooter` has taken a `newsletter` slot since
+Phase 3, with a grid that widens from three columns to four the moment it is filled. A homepage block
+*and* a footer column would put two signup forms on one page, which is a duplicate surface rather than
+a second route into commerce.
+
+**Why it is built now rather than deferred again.** DEV-25's stated reason was that *"a signup field
+rendered now would post nowhere. The subscriber collection is Phase 6.1n."* **Phase 6 built it**, and
+`NewsletterSubscribers.ts` names this phase as the owner: *"the newsletter block is plan §10.1a … the
+phase that builds the form owns the decision."* The premise expired.
+
+Writing a row with an address, a **consent timestamp**, a source and a status is the artefact §6.1n
+specifies — real, durable, defensible consent. The *sending* is Phase 19's, and nothing on the page
+claims an email is coming.
+
+**One departure from the Phase 7 precedent, and it is deliberate.** `register` writes with
+`overrideAccess: false` on the principle that *"the storefront gets no privilege the REST API does not
+have."* The newsletter does the opposite — `create` stays `isStaff` and the Server Action writes with
+`overrideAccess: true` — because this collection has a property `customers` does not: `email` is
+`unique` and `read` is `isStaff`. A publicly creatable endpoint would answer a duplicate address with
+a constraint error and a fresh one with success, turning `POST /api/newsletter-subscribers` into a
+**membership-enumeration oracle over personal data**. An auth collection must be publicly creatable;
+this one must not.
+
+For the same reason a duplicate submission returns the **identical success message**. **DEV-31** has
+the registration form disclose a taken email, correctly — an account either exists or it does not and
+the submitter is the account holder. A mailing-list membership is not the submitter's to learn about;
+anyone can type anyone's address into a footer.
+
+**An unsubscribed address is not silently re-subscribed.** The action reads before it writes and
+leaves an existing row alone whatever its status, because that row exists precisely so *"a later
+import cannot resurrect the address"* (§6.1n). The response is identical either way, so nothing is
+disclosed by the difference.
+
+**What is owed:** the welcome mail and the §19.1b double-opt-in question (**Phase 19** — these rows
+are single opt-in, the only state the Phase 6 schema can represent), and rate limiting plus Turnstile
+(**Phase 26**, §26.1a names the newsletter specifically), recorded as owed rather than improvised
+here — the same words `Customers.ts` uses for registration.
+
+***DEV-25 is discharged.*** Its *"to be confirmed in Phase 19"* clause is answered early: the slot is
+filled and the grid widens as designed. What remains for Phase 19 is the mail, not the column.
+
+*Affects Phases 3, 10, 19 and 26.*
+
+### DEV-43 — "Editorial split" and "Brand story" are one block, not two
+
+**Plan §10.1a lists** ten blocks *"such as"*, among them both *"Editorial split"* and *"Brand story"*.
+
+**We do:** define one — and it is not new. Both are `splitFeature`, which `blocks/editorial.ts`
+already shipped in Phase 6 for the collection and Edit pages.
+
+**Why:** they are the same data. An image, a side, an eyebrow, a heading, a short body, a call to
+action — field for field. The only thing separating them is what an editor writes in them, which is
+content rather than schema. Shipping two identical block definitions so the picker could print two
+names would mean two Postgres tables, two generated interfaces and two renderers to keep in step, for
+a distinction the database cannot see. §A.1.6's rule against duplicate abstractions is the direct
+authority; §10.1a's own *"such as"* is the licence.
+
+The same reasoning kept three more of the ten from being new definitions: *"Shop-the-look"* is the
+existing `shopTheLook`, and *"Product rail/grid"* is served by the existing curated `productGroup`
+**and** a new query-driven `productRail` — because a standing section like "New arrivals" cannot be a
+hand-dragged list, and a curated list cannot be a query. Five of the eleven homepage block types are
+Phase 6 objects imported unchanged, which is what `blocks/editorial.ts` predicted when it wrote
+*"Phase 10 may reuse any of these seven."*
+
+Two of those seven are deliberately **not** offered on the homepage: `gallery`, because `socialGallery`
+is this page's multi-image grid and two grid blocks is a choice with no answer, and `pullQuote`,
+because guide §09's Home direction names image-led and typography-led sections and `editorial` is the
+typography-led one.
+
+**What this costs:** an editor choosing "Image and text" for a brand story rather than a block labelled
+"Brand story". The block's own description carries the guidance instead.
+
+*Affects Phase 10.*
+
+### DEV-44 — The hero is a stacked composition; no type is set over the campaign photograph
+
+**Visual guide §09 says** the home page is a *"hero-first composition"* with a *"large campaign
+statement"*, and the reference image draws the statement **over** the photograph.
+
+**We do:** render the campaign frame full-bleed, then the statement beneath it on the canvas, left
+aligned. Nothing is overlaid, and there is no scrim and no gradient.
+
+**Why, in the order the reasons decided it:**
+
+1. **Guide §10's responsive priority list opens with *"Preserve headline hierarchy."*** An overlay is
+   the first thing that breaks at 320px: the headline either drops out of its own type scale or
+   covers the subject of the photograph.
+2. **Guide §11 lists *"Excessive gradients"* under Avoid.** Legible type over *arbitrary* campaign
+   photography needs a scrim. A crop an art director controls can carry text; a crop an editor
+   uploads next season cannot be relied on to, and the design system cannot inspect an image.
+3. **It removes §10.1b's *"Text too long for selected crop"* edge case by construction** rather than
+   by hoping. The copy sits in a measured column on Obsidian at 17.10:1, at every one of §30.1a's
+   eight widths.
+
+The reference image is directional and explicitly non-authoritative — visual guide §10 and the plan's
+own visual-reference rules — and the written guide beats it, which is the same ruling **C-08** applied
+to the five-item navigation that image also draws.
+
+The result still reads as guide §01: *"high-contrast black surfaces with soft bone typography"*, and
+*"oversized type with tiny metadata"* — the season label being the tiny half.
+
+**Revisit** if art direction ever supplies campaign imagery with a reserved text area, at which point
+the block would need a field saying so rather than a component guessing.
+
+*Affects Phase 10.*
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -4086,4 +4594,6 @@ rather than by widening the list.
 | Phase 9 — post-implementation audit | 2026-08-28 | Note **§1.14.13**: the committed shell re-read adversarially, four defects found and fixed. **The headline is a security defect in Phase 7 code**: one same-site-path rule copied into four files, all four accepting `/\t/evil.example` — which the WHATWG URL parser strips to `//evil.example` — so `/login?next=/%09/evil.example` sent a customer to another domain immediately after they typed their password. Demonstrated end to end against the running application and re-tested after the fix. Closed by `lib/same-site-path.ts`, one rule with no imports, reachable both by alias and by relative path, refusing control characters rather than stripping them. Second: `documentHref`'s object literal answered for `Object.prototype` members — `'toString'` returned a string that **rendered**, `'constructor'` returned a *relative* href, `'isPrototypeOf'` returned a boolean from a function typed `string | null`, and `'__proto__'` **threw**, silently degrading the whole shell; fixed with a `Map`, and slugs are now encoded so a stored `../../admin` cannot climb out of its namespace. Third, and **the same root cause as §1.14.3's focus defect with only half of it fixed at the time**: bypassing `Dialog.Trigger` loses the trigger ARIA as well as the focus restoration, so the search and bag buttons announced no `aria-haspopup` and no `aria-expanded` — invisible to axe, which had swept the markup clean twice. Fourth: `key`/`value` on the href meant two navigation items at one URL shared a mega-menu panel; fixed with positional keys and verified by writing duplicates to the live global. Also **tested two claims the phase had only written down**: the editor-save revalidation round trip (correct, but the README said "next request" where stale-while-revalidate makes it the one after — corrected), and the degraded shell in all four database-failure modes, which layer — a prerendered route serves real content, a dynamic route serves the fallback and logs, a route with its own data access 500s, and a build fails loudly rather than baking a fallback site. `verify:shell` is **100 checks**, up from 83. |
 | Phase 9 — campaigns deferred out of the linkable set | 2026-08-28 | Note **§1.14.11**, deviation **DEV-39**. `campaigns` had a route of `null` *and* remained in `LINKABLE_COLLECTIONS`, which together made an **editor trap**: the admin panel accepted a campaign as a link target and the header silently dropped the item. The evidence that a campaign has no page is tabulated — no `CAMPAIGN` node in structure §2's site map, campaigns on the *homepage* in feature matrix §3 and inside a **collection** page's edge cases in §12, no phase in the plan building a route, and no page-level art direction in visual guide §09 — together with the one line that cuts the other way (structure §4 path C and §22's Journey E draw *Home → Campaign → Lookbook*, in diagrams whose other steps are an overlay and a component). **Zero rows referenced a campaign**, measured rather than assumed: Drizzle's push warning quotes *table* row counts, not reference counts. One migration, `20260828_060719_phase_9_defer_campaign_links` — the only schema change in Phase 9 — applied, rolled back and re-applied, with the catalogue re-seeded afterwards because the rollback reached the data-model tables. Records a workflow hazard: `pnpm migrate` twice printed nothing, applied nothing and exited 0 inside a chained command, then worked when run alone. `verify-shell.ts` now asserts the *invariant* rather than the instance — every collection in `LINKABLE_COLLECTIONS` has a route — 83 checks, up from 76. The `campaigns` collection itself is untouched. Two workflow hazards recorded: a Payload CLI script that prints nothing may have done nothing while exiting 0, and `migrate:down` follows *batch* numbers rather than file order, which on a database with non-monotonic batches rolls back across phases and leaves a chain that reports itself fully applied while missing columns. **§1.14.12** records the Phase 7 harness defect that rebuild exposed: `verify-access.ts` created its editor fixture before its admin, so on an empty `users` table `Users.ts`'s first-account bootstrap silently promoted the editor to admin, every *"an editor cannot …"* assertion tested an admin, and one of them deleted a product and crashed the run on an unrelated foreign key. Fixed by ordering plus two assertions — `verify:access` is now **45 checks**. |
 | Phase 8 — Cloudinary credentials, live verification | 2026-08-28 | Note **§1.13.14**: credentials arrived after the phase was committed and `pnpm verify:media` armed its live half with no edit — **61/61**, up from 48. Confirms the one thing that could not be predicted without an account: **Strict transformations is off**, so the dynamically built delivery URLs this project depends on derive on the fly. Also confirms the storage round trip end to end — public id, asset id, version and resource type stored from Cloudinary's own response, `media.url` pointing at the CDN, Cloudinary's dimensions replacing the local probe's, every `srcset` candidate for a real record resolving, and a deleted record leaving a 404 behind. **The height-limited clamp predicted real data correctly**: a 3000×1200 landscape in the 4:5 gallery context clamps to 960 = `floor(1200 × 0.8)`, a formula derived from an unrelated 864×576 fixture. Recorded that `f_auto` returns **WebP** on this account where the demo cloud returned AVIF — both correct, and noted so the difference is not later read as a regression. One vacuous check name corrected. **§1.5 Cloudinary unblocked**; the live round trip is struck from §1.13.12's owed list. `.env.example` also de-duplicated: the Phase 8 commit added a Cloudinary block while an empty one already existed in the per-provider section. |
+| Phase 10 — homepage / editorial system | 2026-08-28 | Notes **§1.15**: the homepage as a `homepage` **global** of typed blocks, with Phase 9's split reused — a **pure** `lib/home/resolve.ts` holding every drop/keep rule so a CLI can exercise it, and `lib/home/home.ts` holding only caching. **Eleven block types, five of them the Phase 6 objects imported unchanged** (`splitFeature`, `figure`, `editorial`, `shopTheLook`, `productGroup`), which is what `blocks/editorial.ts` predicted; `productRail` (a query) and `productGroup` (a curation) both exist because neither expresses the other. **§1.15.3**: the 63-byte identifier arithmetic done *before* the schema reached the database — `collectionFeature` and `categoryTiles` breach it at 66 and 65 bytes and carry the **function** form of `dbName`; verified afterwards that **no identifier in the database is 63 bytes or longer**, an invariant `verify-home.ts` now holds permanently, because a breach is silent in both directions and only fails when two names truncate alike. **§1.15.4**: `campaigns.mobileHero` had been **unrenderable since Phase 6** — `MediaImage` art-directed one asset at two crops and had no path for a second asset; one backwards-compatible `mobileMedia` prop, with the mobile box reserved from the record that will actually be served. **§1.15.6 records the defect only a browser could find**: `Reveal`'s docblock claimed content could never be stranded invisible, and an `IntersectionObserver` reports *threshold crossings*, so jumping to the foot of the page left **six sections at `opacity: 0` for the rest of the session** — fixed with an upward-only `rootMargin` and re-measured. **§1.15.7 records a Phase 7 defect this phase's schema exposed**: `z.email().trim()` validates the **raw** input, so `"  Ada@Example.COM "` was rejected on the sign-in, registration and reset forms — the exact case `auth/schemas.ts` said the trim existed to handle; both schemas now pipe a trimmed string into the email check. Deviations **DEV-40** (no animation library, reversing DEV-24's deferral on four measurements — 8.64 MiB, ~40 KB gzip on the LCP route, `reducedMotion: "never"`, and a WAAPI path that cannot read the duration tokens), **DEV-41** (no hero video and no field for one), **DEV-42** (the newsletter is the footer's column, **discharging DEV-25**, with `create` kept `isStaff` to avoid a membership-enumeration oracle), **DEV-43** ("Editorial split" and "Brand story" are one block), **DEV-44** (the hero is stacked; no type over the photograph). New decisions **D-33**, **D-34** (amends **D-13**), **D-35**; new gap **G-16**. New script `pnpm verify:home` — **161 checks**; `verify:access` 45/45, `verify:media` 61/61, `verify:shell` 100/100 all unchanged. 54 browser checks across §30.1a's eight widths and **0 axe-core violations** at 1440×900 and 390×844. `/` confirmed prerendered `static` with `home` on its cache tags. **No dependency added**; direct dependencies stay at 22. |
+
 > **Append this table, and the sections above it, at the end of every phase.**

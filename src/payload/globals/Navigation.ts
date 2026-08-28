@@ -2,7 +2,7 @@ import type { GlobalConfig } from 'payload'
 
 import { anyone, isStaff } from '../access'
 import { linkFields } from '../fields/link'
-import { revalidateShell } from '../hooks/revalidateShell'
+import { revalidateGlobal } from '../hooks/revalidateTags'
 
 /**
  * Header navigation, footer navigation and social links — the other three items on plan §6.1a's
@@ -47,10 +47,10 @@ export const Navigation: GlobalConfig = {
 
   /**
    * Saving this global drops the cached shell, so the change reaches the storefront on the next
-   * request rather than on the five-minute floor. See `hooks/revalidateShell.ts`.
+   * request rather than on the five-minute floor. See `hooks/revalidateTags.ts`.
    */
   hooks: {
-    afterChange: [revalidateShell('shell', 'navigation')],
+    afterChange: [revalidateGlobal('shell', 'navigation')],
   },
 
   /**

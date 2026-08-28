@@ -14,13 +14,30 @@ import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, checkPassword } from '@/lib/p
  * `.trim()` on email is not cosmetic. A pasted address routinely carries a leading space, and the
  * unique index does not consider `" ada@example.com"` and `"ada@example.com"` the same address —
  * which would let one person register twice and then fail to sign in as either.
+ *
+ * **The order below is load-bearing, and it was wrong until Phase 10 measured it.** This was
+ * `z.email().trim().toLowerCase()`, which reads as "an email, trimmed" and is not: `z.email()` is
+ * its own schema type, so the **format check runs against the raw input** and the trim only ever
+ * applies to the value it produces. Measured against `zod@4.4.3`:
+ *
+ * | Input | `z.email().trim()` | `z.string().trim().pipe(z.email())` |
+ * |---|---|---|
+ * | `"  Ada@Example.COM "` | **rejected** | `"ada@example.com"` |
+ * | `"Ada@Example.COM"` | `"ada@example.com"` | `"ada@example.com"` |
+ *
+ * So the paragraph above described an intention the code did not implement: a customer pasting an
+ * address with a trailing space was told *"Enter a valid email address."* — on the sign-in form, the
+ * registration form and the password-reset form — for an address that is perfectly valid. Piping a
+ * trimmed string **into** the email schema is what makes the sentence true.
  */
 
 const email = z
-  .email({ error: 'Enter a valid email address.' })
+  .string({ error: 'Enter a valid email address.' })
   .trim()
   .toLowerCase()
-  .max(320, 'That email address is too long.')
+  .pipe(
+    z.email({ error: 'Enter a valid email address.' }).max(320, 'That email address is too long.'),
+  )
 
 /**
  * The password *policy* applies when a password is being chosen. It deliberately does **not** apply

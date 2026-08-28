@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 
 import { SiteFooter } from '@/components/layout/site-footer'
 import { SiteHeader } from '@/components/layout/site-header'
+import { NewsletterSignup } from '@/components/newsletter/newsletter-signup'
 import { CartDrawer } from '@/components/shell/cart-drawer'
 import { ShellOverlayProvider } from '@/components/shell/overlay-context'
 import { SearchOverlay } from '@/components/shell/search-overlay'
@@ -60,7 +61,7 @@ export default async function FrontendLayout({ children }: { children: ReactNode
 
           <main id="main-content">{children}</main>
 
-          <SiteFooter />
+          <SiteFooter newsletter={<NewsletterSignup />} />
 
           <SearchOverlay items={navigation.primary} />
           <CartDrawer items={navigation.primary} />

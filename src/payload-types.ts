@@ -146,10 +146,12 @@ export interface Config {
   globals: {
     'site-settings': SiteSetting;
     navigation: Navigation;
+    homepage: Homepage;
   };
   globalsSelect: {
     'site-settings': SiteSettingsSelect<false> | SiteSettingsSelect<true>;
     navigation: NavigationSelect<false> | NavigationSelect<true>;
+    homepage: HomepageSelect<false> | HomepageSelect<true>;
   };
   locale: null;
   widgets: {
@@ -1387,6 +1389,45 @@ export interface Campaign {
      */
     href?: string | null;
   };
+  secondaryCta: {
+    /**
+     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+     */
+    label?: string | null;
+    kind: 'reference' | 'url';
+    /**
+     * The URL is derived from this document at render time, so renaming it cannot break the link.
+     */
+    reference?:
+      | ({
+          relationTo: 'products';
+          value: number | Product;
+        } | null)
+      | ({
+          relationTo: 'categories';
+          value: number | Category;
+        } | null)
+      | ({
+          relationTo: 'collections';
+          value: number | Collection;
+        } | null)
+      | ({
+          relationTo: 'edits';
+          value: number | Edit;
+        } | null)
+      | ({
+          relationTo: 'lookbooks';
+          value: number | Lookbook;
+        } | null)
+      | ({
+          relationTo: 'journal';
+          value: number | Journal;
+        } | null);
+    /**
+     * A site path such as /shop, or a full https:// address.
+     */
+    href?: string | null;
+  };
   /**
    * The collection this campaign sells. The CTA usually points here — plan §10.1c requires an explicit path from editorial to commerce.
    */
@@ -2539,6 +2580,14 @@ export interface CampaignsSelect<T extends boolean = true> {
         reference?: T;
         href?: T;
       };
+  secondaryCta?:
+    | T
+    | {
+        label?: T;
+        kind?: T;
+        reference?: T;
+        href?: T;
+      };
   collection?: T;
   products?: T;
   seo?:
@@ -3290,6 +3339,314 @@ export interface Navigation {
   createdAt?: string | null;
 }
 /**
+ * The composition of the homepage. Drag sections to reorder them.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "homepage".
+ */
+export interface Homepage {
+  id: number;
+  /**
+   * The order here is the order on the page. Structure §4 composes it as: hero, categories, new arrivals, an editorial moment, best sellers or limited edition, the brand story, community. A section whose subject is unpublished or deleted is dropped rather than rendered empty.
+   */
+  sections?:
+    | (
+        | HeroBlock
+        | PromoStripBlock
+        | CategoryTilesBlock
+        | ProductRailBlock
+        | SplitFeatureBlock
+        | FigureBlock
+        | EditorialBlock
+        | ShopTheLookBlock
+        | ProductGroupBlock
+        | CollectionFeatureBlock
+        | SocialGalleryBlock
+      )[]
+    | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "HeroBlock".
+ */
+export interface HeroBlock {
+  /**
+   * The season’s campaign. Its title, season, story, imagery and calls to action are the hero — edit them on the campaign itself. A draft or future-dated campaign leaves the homepage without a hero rather than showing an unfinished one.
+   */
+  campaign?: (number | null) | Campaign;
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'hero';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "PromoStripBlock".
+ */
+export interface PromoStripBlock {
+  /**
+   * Two to four short statements — "Made in small runs", "Thirty-day returns". Not the announcement bar, which is one line above the header on every page. Do not restate the free-shipping threshold; that number lives in Site Settings and is quoted in the bag.
+   */
+  items: {
+    text: string;
+    link: {
+      /**
+       * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+       */
+      label?: string | null;
+      kind: 'reference' | 'url';
+      /**
+       * The URL is derived from this document at render time, so renaming it cannot break the link.
+       */
+      reference?:
+        | ({
+            relationTo: 'products';
+            value: number | Product;
+          } | null)
+        | ({
+            relationTo: 'categories';
+            value: number | Category;
+          } | null)
+        | ({
+            relationTo: 'collections';
+            value: number | Collection;
+          } | null)
+        | ({
+            relationTo: 'edits';
+            value: number | Edit;
+          } | null)
+        | ({
+            relationTo: 'lookbooks';
+            value: number | Lookbook;
+          } | null)
+        | ({
+            relationTo: 'journal';
+            value: number | Journal;
+          } | null);
+      /**
+       * A site path such as /shop, or a full https:// address.
+       */
+      href?: string | null;
+    };
+    id?: string | null;
+  }[];
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'promoStrip';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "CategoryTilesBlock".
+ */
+export interface CategoryTilesBlock {
+  heading?: string | null;
+  /**
+   * The routes into the shop. A tile whose category is unpublished or deleted is dropped rather than rendered as a dead end.
+   */
+  items: {
+    category?: (number | null) | Category;
+    /**
+     * Optional. Falls back to the category’s own image.
+     */
+    image?: (number | null) | Media;
+    /**
+     * Optional. Falls back to the category’s name.
+     */
+    label?: string | null;
+    id?: string | null;
+  }[];
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'categoryTiles';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ProductRailBlock".
+ */
+export interface ProductRailBlock {
+  heading?: string | null;
+  /**
+   * Which merchandising flag fills this rail. Set the flags on each product. Published products only — and a rail with nothing in it is not rendered.
+   */
+  source: 'new' | 'bestSellers' | 'limited' | 'featured';
+  /**
+   * How many products at most.
+   */
+  limit?: number | null;
+  layout?: ('grid' | 'rail') | null;
+  cta: {
+    /**
+     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+     */
+    label?: string | null;
+    kind: 'reference' | 'url';
+    /**
+     * The URL is derived from this document at render time, so renaming it cannot break the link.
+     */
+    reference?:
+      | ({
+          relationTo: 'products';
+          value: number | Product;
+        } | null)
+      | ({
+          relationTo: 'categories';
+          value: number | Category;
+        } | null)
+      | ({
+          relationTo: 'collections';
+          value: number | Collection;
+        } | null)
+      | ({
+          relationTo: 'edits';
+          value: number | Edit;
+        } | null)
+      | ({
+          relationTo: 'lookbooks';
+          value: number | Lookbook;
+        } | null)
+      | ({
+          relationTo: 'journal';
+          value: number | Journal;
+        } | null);
+    /**
+     * A site path such as /shop, or a full https:// address.
+     */
+    href?: string | null;
+  };
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'productRail';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "CollectionFeatureBlock".
+ */
+export interface CollectionFeatureBlock {
+  /**
+   * The collection this section sells. The link is derived from it, so this section always has a way into the shop.
+   */
+  collection?: (number | null) | Collection;
+  /**
+   * Optional. A short label above the heading.
+   */
+  eyebrow?: string | null;
+  /**
+   * Optional. Falls back to the collection’s hero image.
+   */
+  image?: (number | null) | Media;
+  /**
+   * Optional portrait crop for narrow screens. Falls back to re-cropping the image above.
+   */
+  mobileImage?: (number | null) | Media;
+  /**
+   * One or two lines. The collection page carries the full introduction.
+   */
+  body?: string | null;
+  cta: {
+    /**
+     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+     */
+    label?: string | null;
+    kind: 'reference' | 'url';
+    /**
+     * The URL is derived from this document at render time, so renaming it cannot break the link.
+     */
+    reference?:
+      | ({
+          relationTo: 'products';
+          value: number | Product;
+        } | null)
+      | ({
+          relationTo: 'categories';
+          value: number | Category;
+        } | null)
+      | ({
+          relationTo: 'collections';
+          value: number | Collection;
+        } | null)
+      | ({
+          relationTo: 'edits';
+          value: number | Edit;
+        } | null)
+      | ({
+          relationTo: 'lookbooks';
+          value: number | Lookbook;
+        } | null)
+      | ({
+          relationTo: 'journal';
+          value: number | Journal;
+        } | null);
+    /**
+     * A site path such as /shop, or a full https:// address.
+     */
+    href?: string | null;
+  };
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'collectionFeature';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "SocialGalleryBlock".
+ */
+export interface SocialGalleryBlock {
+  heading?: string | null;
+  /**
+   * Images the team has cleared for use. This is not a live feed — nothing is fetched from a social network, and nothing here is submitted by a customer.
+   */
+  items: {
+    image?: (number | null) | Media;
+    /**
+     * Optional credit — "@northslash01".
+     */
+    handle?: string | null;
+    link: {
+      /**
+       * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+       */
+      label?: string | null;
+      kind: 'reference' | 'url';
+      /**
+       * The URL is derived from this document at render time, so renaming it cannot break the link.
+       */
+      reference?:
+        | ({
+            relationTo: 'products';
+            value: number | Product;
+          } | null)
+        | ({
+            relationTo: 'categories';
+            value: number | Category;
+          } | null)
+        | ({
+            relationTo: 'collections';
+            value: number | Collection;
+          } | null)
+        | ({
+            relationTo: 'edits';
+            value: number | Edit;
+          } | null)
+        | ({
+            relationTo: 'lookbooks';
+            value: number | Lookbook;
+          } | null)
+        | ({
+            relationTo: 'journal';
+            value: number | Journal;
+          } | null);
+      /**
+       * A site path such as /shop, or a full https:// address.
+       */
+      href?: string | null;
+    };
+    id?: string | null;
+  }[];
+  id?: string | null;
+  blockName?: string | null;
+  blockType: 'socialGallery';
+}
+/**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "site-settings_select".
  */
@@ -3384,6 +3741,143 @@ export interface NavigationSelect<T extends boolean = true> {
   updatedAt?: T;
   createdAt?: T;
   globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "homepage_select".
+ */
+export interface HomepageSelect<T extends boolean = true> {
+  sections?:
+    | T
+    | {
+        hero?: T | HeroBlockSelect<T>;
+        promoStrip?: T | PromoStripBlockSelect<T>;
+        categoryTiles?: T | CategoryTilesBlockSelect<T>;
+        productRail?: T | ProductRailBlockSelect<T>;
+        splitFeature?: T | SplitFeatureBlockSelect<T>;
+        figure?: T | FigureBlockSelect<T>;
+        editorial?: T | EditorialBlockSelect<T>;
+        shopTheLook?: T | ShopTheLookBlockSelect<T>;
+        productGroup?: T | ProductGroupBlockSelect<T>;
+        collectionFeature?: T | CollectionFeatureBlockSelect<T>;
+        socialGallery?: T | SocialGalleryBlockSelect<T>;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "HeroBlock_select".
+ */
+export interface HeroBlockSelect<T extends boolean = true> {
+  campaign?: T;
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "PromoStripBlock_select".
+ */
+export interface PromoStripBlockSelect<T extends boolean = true> {
+  items?:
+    | T
+    | {
+        text?: T;
+        link?:
+          | T
+          | {
+              label?: T;
+              kind?: T;
+              reference?: T;
+              href?: T;
+            };
+        id?: T;
+      };
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "CategoryTilesBlock_select".
+ */
+export interface CategoryTilesBlockSelect<T extends boolean = true> {
+  heading?: T;
+  items?:
+    | T
+    | {
+        category?: T;
+        image?: T;
+        label?: T;
+        id?: T;
+      };
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ProductRailBlock_select".
+ */
+export interface ProductRailBlockSelect<T extends boolean = true> {
+  heading?: T;
+  source?: T;
+  limit?: T;
+  layout?: T;
+  cta?:
+    | T
+    | {
+        label?: T;
+        kind?: T;
+        reference?: T;
+        href?: T;
+      };
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "CollectionFeatureBlock_select".
+ */
+export interface CollectionFeatureBlockSelect<T extends boolean = true> {
+  collection?: T;
+  eyebrow?: T;
+  image?: T;
+  mobileImage?: T;
+  body?: T;
+  cta?:
+    | T
+    | {
+        label?: T;
+        kind?: T;
+        reference?: T;
+        href?: T;
+      };
+  id?: T;
+  blockName?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "SocialGalleryBlock_select".
+ */
+export interface SocialGalleryBlockSelect<T extends boolean = true> {
+  heading?: T;
+  items?:
+    | T
+    | {
+        image?: T;
+        handle?: T;
+        link?:
+          | T
+          | {
+              label?: T;
+              kind?: T;
+              reference?: T;
+              href?: T;
+            };
+        id?: T;
+      };
+  id?: T;
+  blockName?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

@@ -205,8 +205,42 @@ sign-in flow: `/login?next=/%09/evil.example` sent a customer to another domain 
 typed their password, because a browser strips the tab and resolves `//evil.example`. One rule had been
 copied into four files and all four had the hole. See notes §1.14.13.
 
-The catalogue is still Phase 11's, so most destinations in that navigation return a 404 — a styled
-one, inside the shell, with a way back.
+**Phase 10 — Homepage / editorial system: complete.** The homepage is a composition an editor
+arranges, not a page a developer wrote.
+
+- **Eleven typed, reorderable block types**, held in a `homepage` global. Five of them are the
+  editorial blocks Phase 6 already shipped for collection and Edit pages, imported unchanged — a
+  brand story and an editorial split are the same shape, and the difference between them is what an
+  editor writes, not what the schema holds.
+- **Product rails are a query, and product groups are a curation.** "New arrivals" stays true without
+  anyone re-dragging it; a curated group keeps the order a merchandiser chose. Both render through
+  one component.
+- **Every section that cannot work is dropped, never disabled.** A hero whose campaign is a draft, a
+  tile pointing at an unpublished category, a rail whose query came back empty, a product with no
+  purchasable price — all removed. An empty homepage is a state the page renders without complaint.
+- **One image is prioritised, and it is chosen by content rather than position.** The largest
+  contentful paint follows the first section that actually has a picture, so a page opening with a
+  promise strip does not waste the hint. Everything else lazy-loads, and every image reserves its box
+  before a byte arrives.
+- **The motion is two CSS declarations.** The animation library this phase was expected to install was
+  measured and declined: it defaults to ignoring `prefers-reduced-motion` for opacity, and animates
+  through an API that cannot read the duration tokens the rest of the system honours.
+- **The newsletter works.** It records an address, a consent timestamp and a source. The welcome mail
+  is Phase 19's, and nothing on the page pretends otherwise.
+
+`pnpm verify:home` proves 161 assertions, including the publication cases against real Payload
+documents and that no generated database identifier has been silently truncated. 55 browser checks
+across eight viewport widths, **0 axe-core violations**.
+
+Two defects worth naming, both found by measuring rather than reading. The editorial reveal stranded
+six sections permanently invisible if you jumped to the foot of the page — an `IntersectionObserver`
+reports threshold *crossings*, and a section that skips past the viewport in one scroll never fires
+one. And a **Phase 7** defect: `z.email().trim()` validates the untrimmed input, so pasting an
+address with a leading space was rejected on the sign-in, registration and reset forms — the exact
+case the code's own comment said the trim existed to handle. See notes §1.15.6 and §1.15.7.
+
+The catalogue is still Phase 11's, so most destinations on that page return a 404 — a styled one,
+inside the shell, with a way back.
 
 Local setup: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
