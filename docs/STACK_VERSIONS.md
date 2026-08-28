@@ -160,6 +160,27 @@ exists)~~ **installed in Phase 6, §8 below**; ~~`sharp` (Phase 8 — image proc
 Phase 6 `media` collection declares no `imageSizes`)~~ **withdrawn — Phase 8 decided against `sharp`
 entirely, see D-27**; and everything in §4. See **DEV-18**.
 
+### Transitive-dependency overrides
+
+Two entries in `pnpm-workspace.yaml`, both closing published advisories in packages this project does
+not depend on directly and cannot reach by upgrading anything it does control. Added after a
+`pnpm audit` during the Phase 8 review, which reported **5 vulnerabilities (2 low, 3 moderate)** and
+now reports none.
+
+| Override | Closes | Reached through | Real exposure |
+|---|---|---|---|
+| `dompurify: '>=3.4.13'` | 4 advisories, worst an XSS | `@payloadcms/ui > @monaco-editor/react > monaco-editor` | Admin panel only. Nothing here uses a `code` or `json` field, so Monaco is bundled but never mounted |
+| `esbuild: '>=0.25.0'` | GHSA-67mh-4wv8-2f99 | `@payloadcms/db-postgres > drizzle-kit > @esbuild-kit/*` (both deprecated) | Build-time only; the advisory is about esbuild's dev server, which drizzle-kit never starts |
+
+Neither is a version *pin* in the sense §2 uses — they are floors. They are also the sort of thing
+that rots quietly: an override kept after the upstream tree has moved past it silently holds a package
+back. **Re-check both whenever `payload` or any `@payloadcms/*` version changes**, and delete either
+one the moment `pnpm audit` stays clean without it.
+
+The esbuild override was verified beyond `audit`, because drizzle-kit is what generates every
+migration: `pnpm migrate:status` and `pnpm migrate:create` both still work, and the full gate suite
+(typecheck, lint, build, `verify:access` 43/43, `verify:media` 61/61) passes unchanged.
+
 ### pnpm 11 build-script gating
 
 pnpm 11 denies package build scripts by default and records allowances under **`allowBuilds`** in

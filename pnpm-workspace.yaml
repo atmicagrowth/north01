@@ -9,3 +9,29 @@
 allowBuilds:
   esbuild: true
   unrs-resolver: true
+
+# Transitive-dependency overrides. Every entry closes a published advisory in a package this project
+# does not depend on directly and cannot upgrade by any other means, and every one is verified by
+# `pnpm audit` returning clean plus the full gate suite still passing.
+#
+# Re-check these whenever `payload` or `@payloadcms/*` moves: an override that is no longer needed is
+# an override that silently pins something older than the tree would otherwise resolve.
+overrides:
+  # 4 advisories (GHSA-c2j3-45gr-mqc4, -cmwh-pvxp-8882, -vxr8-fq34-vvx9, -55q2-fjhq-7xh7), the worst
+  # of them an XSS. Reached only through the admin panel:
+  #   @payloadcms/ui > @monaco-editor/react > monaco-editor > dompurify
+  # The tree resolved 3.4.8; the last advisory needs >=3.4.13. Nothing in this project uses a `code`
+  # or `json` field, so Monaco is bundled but never mounted — the exposure is small and the fix is a
+  # patch bump, which is the wrong trade to skip.
+  dompurify: '>=3.4.13'
+
+  # GHSA-67mh-4wv8-2f99 — esbuild's dev server lets any website read its responses. Reached only
+  # through the migration toolchain, via two packages npm marks DEPRECATED:
+  #   @payloadcms/db-postgres > drizzle-kit > @esbuild-kit/esm-loader > @esbuild-kit/core-utils > esbuild
+  # That chain pinned 0.18.20. It is build-time only and never serves a request, so the practical
+  # exposure is nil — but it is also free to remove, and leaving a known-vulnerable esbuild in the
+  # tree makes every future `pnpm audit` noisy enough to stop being read.
+  #
+  # Verified beyond `audit`: `pnpm migrate:status` and `pnpm migrate:create` both still work, which is
+  # the only thing drizzle-kit is used for.
+  esbuild: '>=0.25.0'
