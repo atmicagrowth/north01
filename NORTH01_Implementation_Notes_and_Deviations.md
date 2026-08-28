@@ -2154,7 +2154,8 @@ account which had never signed in. All three are fixed, and the file is 43 check
 
 ### 1.12.8 What was verified, and how
 
-- **`pnpm verify:access` — 43/43.** Cross-customer reads of orders, addresses, carts, wishlists and
+- **`pnpm verify:access` — 43/43** (45/45 from Phase 9, which added two role-bootstrap assertions —
+  see §1.14.12). Cross-customer reads of orders, addresses, carts, wishlists and
   profiles; ownership forcing; role escalation; an admin's self-delete; `orders.create` refused to
   everyone; review moderation state; the variant/product publication join; disabled accounts; session
   revocation; the password policy; and both directions of the admin-panel boundary through real
@@ -2670,7 +2671,12 @@ derived from this document at render time."* No document in the corpus says what
 The structure document draws the browsing namespaces and never gives a path for a single product; it
 has no `CAMPAIGN` node at all. That is a specification gap of exactly the kind §3.2 records, and it is
 now **G-15**, closed by **D-30**: one route map, following the namespaces the structure document does
-give, with `campaigns` mapping to nothing because nothing gives a campaign a page.
+give.
+
+The first version of that map had a seventh entry, `campaigns: null`, and left campaigns in
+`LINKABLE_COLLECTIONS`. That combination is an **editor trap** — the admin panel offers a campaign as a
+link target and the header then silently drops the item, because the renderer has no URL to build — and
+it was removed the same day it was flagged. See **DEV-39** and §1.14.11.
 
 **What does a broken link render as?** Feature matrix §1 lists *"missing navigation item"*,
 *"unpublished collection"* and *"broken internal route"* as global-shell edge cases and does not say
@@ -2789,7 +2795,7 @@ Three details that were got wrong first and are now deliberate:
 
 ### 1.14.7 What was verified, and how
 
-`pnpm verify:shell` — **76 checks, all passing.** New script, same shape as `verify:access` and
+`pnpm verify:shell` — **83 checks, all passing.** New script, same shape as `verify:access` and
 `verify:media`, behind the same **D-10** database guard.
 
 Its first half needs no database, which is why `lib/navigation/routes.ts` and `resolve.ts` import
@@ -2853,6 +2859,10 @@ The visual review against the guide is §1.14.4 above; both findings were fixed 
   `SearchPanel` and nothing else.
 - **The bag drawer has an empty state and no other state** — Phase 14 fills the `Drawer` primitive's
   pinned `footer` slot, which was built in Phase 3 and is still empty on purpose.
+- **Campaigns are not linkable and have no route** — **DEV-39**. Restoring them is one entry in
+  `LINKABLE_COLLECTIONS`, one in `lib/navigation/routes.ts`, and a migration that puts the four
+  `campaigns_id` columns back. All three belong to the phase that gives a campaign a page; doing any
+  of them earlier re-creates the trap.
 - **The newsletter column is still a slot** — **DEV-25**, unchanged, Phase 19.
 - **A cart count badge on the bag trigger.** Deliberately absent: a badge reading "0" on every page is
   noise. Phase 14 adds it with the number behind it.
@@ -2860,6 +2870,121 @@ The visual review against the guide is §1.14.4 above; both findings were fixed 
   (by design) and no editor has uploaded one. The code path is the same `MediaImage` every other
   surface uses and its placeholder branch is what renders today; the *image* branch is unexercised
   here specifically.
+
+
+### 1.14.11 Campaigns removed from the linkable set, and what it took
+
+Filed as **DEV-39**, and separated here from the rest of the phase because it is the one schema change
+Phase 9 makes.
+
+**The finding.** `campaigns` was in `LINKABLE_COLLECTIONS` and had a route of `null`. Both halves were
+individually defensible and together they were a trap: an editor could point a navigation item at a
+campaign, save it without complaint, and watch the item never appear. That is plan §0.1.17's fake
+control expressed as a relationship field, and the fix is to remove the *choice*, not to make the
+symptom prettier.
+
+**The evidence that a campaign has no page**, gathered before touching anything, because the decision
+turns on it:
+
+| Source | What it says |
+|---|---|
+| Structure §2 — the site map, the only place URLs are drawn | **no `CAMPAIGN` node** |
+| Feature matrix §3 — Homepage | *"Campaign hero"*, *"Editorial campaign"* — homepage sections |
+| Feature matrix §12 — Collections | *"Scheduled/past campaign"* is an edge case a **collection page** handles |
+| Feature matrix §25 — Admin | *"Campaigns"* among the things an editor manages |
+| Plan §6.1g | fields only — and one of them is a **collection** the campaign points at |
+| Plan, phases 1–36 | campaign appears in the entity list, the field list and Phase 28's admin prompt, and **nowhere else**; no phase builds a route |
+| Visual guide §09 | page-level art direction for seven page types; a campaign is not one of them |
+
+**The one line that cuts the other way**, recorded because the reading is not free: structure §4 path C
+and §22's Journey E both draw *Home → Campaign → Lookbook → Shop the Look → Product*. Those are
+*journeys*, in diagrams whose other steps include BAG and SHOP THE LOOK — an overlay and a component.
+The site map is the document that assigns paths, and it has no campaign in it.
+
+**Zero rows were affected, and that was measured rather than assumed.** Drizzle's push warning names
+four tables and quotes row counts — *"about to delete campaigns_id column in collections_rels with 21
+items"* — which counts rows in the **table**, not rows referencing a campaign. Queried directly:
+
+```
+campaigns_rels                 → rows referencing a campaign: 0
+collections_rels               → rows referencing a campaign: 0
+edits_rels                     → rows referencing a campaign: 0
+navigation_rels                → rows referencing a campaign: 0
+payload_locked_documents_rels  → rows referencing a campaign: 0
+```
+
+The fifth is not touched by the migration and should not be: it belongs to the `campaigns`
+**collection** still existing and being editable, which is unchanged.
+
+**The migration.** `20260828_060719_phase_9_defer_campaign_links` — four `DROP CONSTRAINT`, four
+`DROP INDEX`, four `DROP COLUMN`, with the two hand-edits `docs/DATABASE.md` §4 requires (the parameter
+trim and `DROP CONSTRAINT IF EXISTS`). Applied, rolled back and re-applied on the development database;
+the `down` restores every column, constraint and index. The catalogue was re-seeded afterwards, because
+the rollback reached far enough down the chain to remove the data-model tables.
+
+**A workflow hazard, observed and not explained.** Twice in one chained shell command,
+`pnpm migrate` printed nothing, applied nothing and exited **0** — confirmed by `migrate:status`,
+which showed both migrations still pending; run alone immediately afterwards it applied them normally.
+`pnpm seed` did the same once, piped through `tail`. The practical rule until someone reproduces it:
+**run a Payload CLI script on its own, redirect its output to a file rather than piping it, and
+confirm the effect rather than the exit code** — a `migrate` that prints no `Migrating:` line has
+done nothing, and the `&&` after it will happily continue as though it had.
+
+**And a second, sharper one about `migrate:down`.** This database's batch numbers were not monotonic
+with file order — earlier phases had left them at 1, 2, 2, 3, 1, 1 — so a single `migrate:down` rolled
+back a *batch* that spanned migrations older than others still applied. Phase 6's tables went, Phase 7's
+and Phase 8's columns on those tables went with them, and rolling forward again replayed only the
+rolled-back batch, leaving `customers` without `account_status` and `media` without every
+`cloudinary_*` column while `migrate:status` reported a fully applied chain. Nothing was wrong with any
+migration; the *ledger* was the problem. `pnpm migrate:fresh` was the repair — it replayed all seven in
+file order and reset every batch to 1 — and it is also the strongest check the chain gets. **Read the
+batch column before running `migrate:down`**, and prefer `migrate:fresh` on a development database
+whose batches are not monotonic.
+
+**What replaced the special case.** `verify-shell.ts` now asserts the invariant rather than the
+instance: *every collection in `LINKABLE_COLLECTIONS` has a route.* That is the check that fails the
+day someone adds a collection to one list and forgets the other — which is the general form of the bug
+this entry is about. 83 checks, up from 76.
+
+
+### 1.14.12 A Phase 7 harness defect, found by rebuilding the database
+
+Not a Phase 9 defect, and recorded here because Phase 9 is what exposed it and fixed it.
+
+Rebuilding the development database with `migrate:fresh` leaves `users` **empty**, and that is the one
+state `verify-access.ts` could not survive. It created its fixtures in the order alice, mallory,
+**editor**, admin — and `Users.ts` has a `beforeValidate` hook that forces the *first* account on an
+empty database to `admin`, so that `/admin/create-first-user` produces someone who can administer.
+The hook does not care which role the caller asked for.
+
+So on a fresh database the **editor fixture was silently created as an admin**, and every
+*"an editor cannot …"* assertion in the file was quietly testing an admin. That is bad enough as a
+false negative. What made it worse is that one of those assertions deletes a product:
+
+```
+denied('an editor cannot delete a product', () => payload.delete({ id: draft.id, user: editorUser }))
+```
+
+The delete succeeded, the fixture product was destroyed, and the run crashed forty lines later on
+`insert or update on table "reviews" violates foreign key constraint` — an error pointing at a review,
+naming a product id, and saying nothing at all about roles.
+
+**The fix is two lines and one assertion.** The admin fixture is created first, so the bootstrap
+promotes the account that was going to be an admin anyway; and the editor fixture's role is then
+*checked*, so the ordering is asserted rather than assumed:
+
+```
+PASS  the editor fixture is actually an editor — the first-account bootstrap did not promote it
+PASS  the admin fixture is an admin
+```
+
+`pnpm verify:access` is now **45 checks**, up from 43.
+
+It is the same lesson Phase 7 already recorded about this very file in §1.12.7 — *"the first
+`verify-access.ts` counted any thrown error as a passing access check, so a fixture typo would have
+reported a clean run while proving nothing"* — in a second form: **a fixture that is not what the
+script thinks it is must fail loudly.** A harness that only works against a database someone has
+already used is a harness that will mislead the first person to clone the repository.
 
 ### 1.14.10 Confirmation sweep of earlier deviations
 
@@ -3680,6 +3805,33 @@ DPR multiples of them.
 
 ---
 
+### DEV-39 — Campaigns are not a link target, for now
+
+**The schema said** a navigation item, a call to action or an editorial link could point at a campaign:
+`campaigns` was one of the seven entries in `LINKABLE_COLLECTIONS`.
+
+**It no longer can.** A campaign has no public URL in any of the five specification documents — the
+evidence is tabulated in notes §1.14.11 — so a link aimed at one could never resolve, and the header
+dropped it silently. An admin field that accepts a choice which then does nothing is plan §0.1.17's
+fake control in a different coat, and the honest fix is to stop offering the choice rather than to keep
+explaining the outcome.
+
+**What is *not* being claimed.** This is not a ruling that campaigns are permanently unlinkable, and it
+is not a change to the `campaigns` collection, which is untouched: it still exists, is still seeded,
+still holds its hero, story, products, collection and CTA, and is still what Phase 10 renders as the
+homepage hero. **The deferral is only about being a link *target*.**
+
+**Restoring it is three things, and they belong together:** the entry in `LINKABLE_COLLECTIONS`, the
+entry in `lib/navigation/routes.ts`, and a migration putting the four `campaigns_id` columns back —
+the exact inverse of `20260828_060719_phase_9_defer_campaign_links`, whose `down` already contains the
+SQL. The phase that gives a campaign a page does all three in one commit, which is the only order in
+which either half is honest.
+
+**Revisit** when a written requirement gives a campaign a URL. Until then `verify-shell.ts` holds the
+invariant that made this a bug in the first place: every collection a link may point at has a route.
+
+*Affects Phase 9 and whichever later phase gives campaigns a page.*
+
 ### DEV-36 — The mobile drawer has no back button, because it has no nested groups
 
 **Plan §9.1c says** the mobile navigation needs *"a drawer with hierarchical expansion"* and lists,
@@ -3797,5 +3949,6 @@ rather than by widening the list.
 | Phase 7 — access control and authentication | 2026-08-27 | Notes **§1.12**: route protection is **three** layers and only two are checks — the Next 16 `proxy.ts` (renamed from `middleware.ts`) is an optimistic cookie-presence redirect that cannot verify anything, and the real route check lives in the *pages* rather than `account/layout.tsx`, because a layout does not re-render on navigation within its own segment. **§1.12.2**: the role bootstrap needed two answers — a hook forcing the first account on an empty database to `admin`, and a data statement in the migration backfilling existing staff, because `editor` would not have preserved their permissions, it would have removed them from all of them at once with no admin left to grant them back. **§1.12.3**: ownership rules return a `Where`, so a cross-account read is *empty* rather than *forbidden*; and two things a rule cannot do — say whose a new row is (`enforceCustomerOwnership` forces it) and protect one field of a permitted write (field access does). The variant/product publication join `publishedOn('product.status')` was measured both ways, because getting it wrong would have published every unreleased SKU, price and stock count. **§1.12.4–5**: why the reset link's origin comes from `SITE_URL` and never the `Host` header, why the token is not validated on page load, why a reset does not sign you in, and a password policy of twelve characters with no composition rules against Payload's built-in floor of **three**. **§1.12.7 records two defects found by running it**: React **resets** an uncontrolled form once its action resolves, so a rejected sign-in emptied the email field — fixed with echoed `defaultValue`s, password excluded; and the first `verify-access.ts` counted *any* thrown error as a passing access check, so a fixture typo would have reported a clean run while proving nothing. Deviations **DEV-31** (registration names a duplicate email), **DEV-32** (the reset flow exists before email does). New decisions **D-22**–**D-25**. New script `pnpm verify:access` — 43 checks, all passing; 42 further browser checks across dev, production and the admin panel; **0 axe-core violations** on six routes. No dependency added. Step 4 carried out as **§1.12.11**. |
 | Phase 8 — media and Cloudinary | 2026-08-28 | Notes **§1.13**: **D-03/DEV-05 confirmed against the registry** in the phase told to confirm it (`@payloadcms/storage-cloudinary` still 404s; five sibling adapters publish at 3.88.0), and ARCHITECTURE.md's premature *"Confirmed in Phase 8"* marker corrected. **§1.13.2**: Cloudinary transforms at *delivery* and Payload declares **no `imageSizes`** — a delivery URL is pure string concatenation (verified in the SDK source and against the live CDN unsigned), while the `imageSizes` route would have cost 48 columns, 8 indexes and 9 uploads per asset to reproduce it, and would freeze the breakpoints into stored rows. **§1.13.3 records three defects found by measuring rather than reading, all of which would have shipped**: `c_lfill` — the documented "fill but do not enlarge" mode — *silently abandons the aspect ratio* when a request exceeds the source, which is the layout shift §8.1d forbids arriving through the safe-looking option; clamping to the source **width** is insufficient once a crop changes the ratio, because the binding constraint moves to the height (an 864×576 source asked for the 4:5 hero returned 864×**1080**); and `fl_relative` makes Cloudinary's `x_`/`y_` **multiply** the source dimensions, so the first focal-point implementation requested a 345,600 × 432,000 image and got a 400. A fourth was caught in a browser — the art-directed *placeholder* did not change shape at the breakpoint, which mattered because with an empty catalogue the placeholder is the only path that renders. **§1.13.5**: `checkFileRestrictions` has two mutually exclusive branches and without `mimeTypes` there is **no content inspection at all**; setting it is the whole of §8.1b, and SVG and GIF are excluded as verified bypasses (an `<?xml`-prefixed SVG skips `validateSvg`; `file-type` reads offset 0 only, so a `GIF89a`+`MZ` polyglot passes as an image). A size limit without `abortOnLimit` is **worse than none** — Busboy truncates and Payload never reads the flag. **§1.13.9**: the phase is committed with **no Cloudinary credentials**, so the degraded path is what was verified — and the storage plugin is registered *unconditionally* with `alwaysInsertFields: true` because conditional registration would emit two different schemas from one committed migration. Deviations **DEV-33** (no `sharp` — reverses DEV-28's closing clause and three lines of STACK_VERSIONS), **DEV-34** (eight contexts, not six), **DEV-35** (SVG and GIF refused). New decisions **D-26**–**D-29**. New script `pnpm verify:media` — 48 checks, plus a live round trip that arms itself when credentials appear. 15 browser checks at **CLS 0.0000** and 0 axe violations; 25 URL-builder checks against the live CDN; the migration applied, rolled back, re-applied and diffed **identical** against the pushed schema. Two dependencies added, one removed from the plan. Step 4 carried out as **§1.13.13**. |
 | Phase 9 — storefront shell | 2026-08-28 | Notes **§1.14**: the shell mounted in the storefront root layout and driven by the `navigation` and `site-settings` globals, with **no dependency added**. **§1.14.1** answers the two questions that had to precede a component — where a document lives (gap **G-15**, closed by **D-30**: one route map, `campaigns` deliberately mapping to nothing) and what a broken link renders as (**dropped**, never disabled, because a disabled navigation item is §0.1.17's fake control with an apology attached) — and records that publication has to be re-tested at render because the Local API's `overrideAccess: true` bypasses the access rule. **§1.14.2**: one state variable makes a second open overlay *unrepresentable*, the mega menu joins the machine from outside because it is the only overlay with no focus trap, and neither reset is an effect — the React Compiler's `set-state-in-effect` rule failed the build on the first version. **§1.14.3 records the defect only a browser could find**: Radix's modal dialog restores focus to `Dialog.Trigger`, these overlays have none (their triggers are in the header, their dialogs beside the footer, because §9.1d demands they work from every page), so `DialogContentModal` focused a null ref and **dropped focus to `document.body` on every close** — a WCAG 2.4.3 failure invisible to axe, which inspects a static tree. **§1.14.4**: two visual failures fixed against screenshots — equal-fraction mega-menu columns that put two columns at the far ends of a 1440px bar, and a primary row that sat against the top of the bar because Radix's `<nav>` → `<div>` → `<ul>` breaks an `h-full` chain. **§1.14.6**: `revalidateTag`'s single-argument form is deprecated in Next 16, and the hook must survive `pnpm seed` running outside Next, which is why `next/cache` is imported dynamically and a failure warns. Deviations **DEV-36** (no back button — there are no nested groups), **DEV-37** (the search overlay is chrome, with an honest interim panel), **DEV-38** (social links are words: `lucide-react@1.x` ships no brand marks). New decisions **D-30**, **D-31** (`global-not-found.tsx` behind `experimental.globalNotFound`, because **D-08**'s two root layouts leave no layout for a root `not-found`), **D-32**. New script `pnpm verify:shell` — 76 checks including the publication states as **real** Payload documents; 49 browser checks at two widths; **0 axe-core violations** across five route and overlay states. Step 4 carried out as **§1.14.10** — **DEV-01** and **DEV-07** discharged, their *"still to be exercised by Phase 9"* clause closed. |
+| Phase 9 — campaigns deferred out of the linkable set | 2026-08-28 | Note **§1.14.11**, deviation **DEV-39**. `campaigns` had a route of `null` *and* remained in `LINKABLE_COLLECTIONS`, which together made an **editor trap**: the admin panel accepted a campaign as a link target and the header silently dropped the item. The evidence that a campaign has no page is tabulated — no `CAMPAIGN` node in structure §2's site map, campaigns on the *homepage* in feature matrix §3 and inside a **collection** page's edge cases in §12, no phase in the plan building a route, and no page-level art direction in visual guide §09 — together with the one line that cuts the other way (structure §4 path C and §22's Journey E draw *Home → Campaign → Lookbook*, in diagrams whose other steps are an overlay and a component). **Zero rows referenced a campaign**, measured rather than assumed: Drizzle's push warning quotes *table* row counts, not reference counts. One migration, `20260828_060719_phase_9_defer_campaign_links` — the only schema change in Phase 9 — applied, rolled back and re-applied, with the catalogue re-seeded afterwards because the rollback reached the data-model tables. Records a workflow hazard: `pnpm migrate` twice printed nothing, applied nothing and exited 0 inside a chained command, then worked when run alone. `verify-shell.ts` now asserts the *invariant* rather than the instance — every collection in `LINKABLE_COLLECTIONS` has a route — 83 checks, up from 76. The `campaigns` collection itself is untouched. Two workflow hazards recorded: a Payload CLI script that prints nothing may have done nothing while exiting 0, and `migrate:down` follows *batch* numbers rather than file order, which on a database with non-monotonic batches rolls back across phases and leaves a chain that reports itself fully applied while missing columns. **§1.14.12** records the Phase 7 harness defect that rebuild exposed: `verify-access.ts` created its editor fixture before its admin, so on an empty `users` table `Users.ts`'s first-account bootstrap silently promoted the editor to admin, every *"an editor cannot …"* assertion tested an admin, and one of them deleted a product and crashed the run on an unrelated foreign key. Fixed by ordering plus two assertions — `verify:access` is now **45 checks**. |
 | Phase 8 — Cloudinary credentials, live verification | 2026-08-28 | Note **§1.13.14**: credentials arrived after the phase was committed and `pnpm verify:media` armed its live half with no edit — **61/61**, up from 48. Confirms the one thing that could not be predicted without an account: **Strict transformations is off**, so the dynamically built delivery URLs this project depends on derive on the fly. Also confirms the storage round trip end to end — public id, asset id, version and resource type stored from Cloudinary's own response, `media.url` pointing at the CDN, Cloudinary's dimensions replacing the local probe's, every `srcset` candidate for a real record resolving, and a deleted record leaving a 404 behind. **The height-limited clamp predicted real data correctly**: a 3000×1200 landscape in the 4:5 gallery context clamps to 960 = `floor(1200 × 0.8)`, a formula derived from an unrelated 864×576 fixture. Recorded that `f_auto` returns **WebP** on this account where the demo cloud returned AVIF — both correct, and noted so the difference is not later read as a regression. One vacuous check name corrected. **§1.5 Cloudinary unblocked**; the live round trip is struck from §1.13.12's owed list. `.env.example` also de-duplicated: the Phase 8 commit added a Cloudinary block while an empty one already existed in the per-provider section. |
 > **Append this table, and the sections above it, at the end of every phase.**

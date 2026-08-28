@@ -41,6 +41,7 @@ import {
   resolveSettings,
 } from '../src/lib/navigation/resolve'
 import { documentHref, isExternalHref, isInternalHref } from '../src/lib/navigation/routes'
+import { LINKABLE_COLLECTIONS } from '../src/payload/fields/link'
 import { legalNav, utilityNav } from '../src/lib/navigation/utility'
 
 if (!developmentDatabase.ok) {
@@ -81,10 +82,11 @@ const ROUTE_CASES: [string, string, null | string][] = [
   ['edits', 'weekend', '/edit/weekend'],
   ['lookbooks', 'aw26', '/lookbook/aw26'],
   ['journal', 'on-wool', '/journal/on-wool'],
-  // No document gives a campaign a page of its own. It resolves to nothing and is dropped.
-  ['campaigns', 'aw26', null],
-  // A collection that is not linkable at all — the "broken internal route" case at its root.
+  // A collection that is not linkable — the "broken internal route" case at its root.
   ['orders', 'anything', null],
+  // Deferred out of the linkable set in Phase 9 (DEV-39). A row written before that still resolves
+  // to nothing rather than to a guess.
+  ['campaigns', 'aw26', null],
 ]
 
 for (const [collection, slug, expected] of ROUTE_CASES) {
@@ -100,6 +102,28 @@ check(
 check(
   'route: the Lookbook namespace is singular for the same reason',
   documentHref('lookbooks', 'aw26')?.startsWith('/lookbook/') === true,
+)
+
+/*
+ * **The invariant that replaced the campaign special case.**
+ *
+ * Until Phase 9 the route map had a `campaigns: null` entry and the schema still offered campaigns as
+ * a link target — so the admin panel accepted a choice the header then silently dropped. Both halves
+ * were removed together (**DEV-39**), and what has to stay true afterwards is that they cannot drift
+ * apart again: **every collection an editor may point a link at has a route.**
+ *
+ * This is the check that fails the day someone adds a collection to one list and not the other.
+ */
+for (const collection of LINKABLE_COLLECTIONS) {
+  check(
+    `route map is total: a link may point at ${collection}, so ${collection} has a route`,
+    documentHref(collection, 'a-slug') !== null,
+  )
+}
+
+check(
+  'campaigns is not linkable — the schema no longer offers a target with no page (DEV-39)',
+  !(LINKABLE_COLLECTIONS as readonly string[]).includes('campaigns'),
 )
 
 /* -------------------------------------------------------------------------------------------------
@@ -274,7 +298,7 @@ check(
 )
 
 check(
-  'link: a reference to a campaign is dropped — no document gives a campaign a page',
+  'link: a stale reference to a campaign is dropped rather than guessed at (DEV-39)',
   link({
     label: 'AW26',
     kind: 'reference',

@@ -768,10 +768,6 @@ export interface FigureBlock {
       | ({
           relationTo: 'journal';
           value: number | Journal;
-        } | null)
-      | ({
-          relationTo: 'campaigns';
-          value: number | Campaign;
         } | null);
     /**
      * A site path such as /shop, or a full https:// address.
@@ -1069,10 +1065,6 @@ export interface SplitFeatureBlock {
       | ({
           relationTo: 'journal';
           value: number | Journal;
-        } | null)
-      | ({
-          relationTo: 'campaigns';
-          value: number | Campaign;
         } | null);
     /**
      * A site path such as /shop, or a full https:// address.
@@ -1168,128 +1160,6 @@ export interface Journal {
   createdAt: string;
 }
 /**
- * Seasonal statements. One is usually the homepage hero.
- *
- * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "campaigns".
- */
-export interface Campaign {
-  id: number;
-  title: string;
-  /**
-   * Free text — "AW26", "Resort". Used to group campaigns, not to drive layout.
-   */
-  season?: string | null;
-  /**
-   * The campaign image. Desktop crop.
-   */
-  hero?: (number | null) | Media;
-  /**
-   * Optional portrait crop. Falls back to the desktop hero when empty — plan §10.1b.
-   */
-  mobileHero?: (number | null) | Media;
-  /**
-   * The campaign copy. Short — it sits over or beside the image.
-   */
-  story?: {
-    root: {
-      type: string;
-      children: {
-        type: any;
-        version: number;
-        [k: string]: unknown;
-      }[];
-      direction: ('ltr' | 'rtl') | null;
-      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
-      indent: number;
-      version: number;
-    };
-    [k: string]: unknown;
-  } | null;
-  cta: {
-    /**
-     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
-     */
-    label?: string | null;
-    kind: 'reference' | 'url';
-    /**
-     * The URL is derived from this document at render time, so renaming it cannot break the link.
-     */
-    reference?:
-      | ({
-          relationTo: 'products';
-          value: number | Product;
-        } | null)
-      | ({
-          relationTo: 'categories';
-          value: number | Category;
-        } | null)
-      | ({
-          relationTo: 'collections';
-          value: number | Collection;
-        } | null)
-      | ({
-          relationTo: 'edits';
-          value: number | Edit;
-        } | null)
-      | ({
-          relationTo: 'lookbooks';
-          value: number | Lookbook;
-        } | null)
-      | ({
-          relationTo: 'journal';
-          value: number | Journal;
-        } | null)
-      | ({
-          relationTo: 'campaigns';
-          value: number | Campaign;
-        } | null);
-    /**
-     * A site path such as /shop, or a full https:// address.
-     */
-    href?: string | null;
-  };
-  /**
-   * The collection this campaign sells. The CTA usually points here — plan §10.1c requires an explicit path from editorial to commerce.
-   */
-  collection?: (number | null) | Collection;
-  /**
-   * Optional. A handful of hero pieces, in order, for the campaign rail.
-   */
-  products?: (number | Product)[] | null;
-  /**
-   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
-   */
-  seo?: {
-    /**
-     * Around 60 characters renders in full. Longer is truncated by the engine.
-     */
-    title?: string | null;
-    /**
-     * Around 155 characters renders in full.
-     */
-    description?: string | null;
-    /**
-     * Social share card. Landscape, roughly 1200 × 630.
-     */
-    image?: (number | null) | Media;
-  };
-  /**
-   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
-   */
-  slug: string;
-  /**
-   * Drafts are never rendered on the public site.
-   */
-  status: 'draft' | 'published';
-  /**
-   * A future date schedules the page. Set automatically when first published.
-   */
-  publishedAt?: string | null;
-  updatedAt: string;
-  createdAt: string;
-}
-/**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "EditorialBlock".
  */
@@ -1354,10 +1224,6 @@ export interface EditorialBlock {
       | ({
           relationTo: 'journal';
           value: number | Journal;
-        } | null)
-      | ({
-          relationTo: 'campaigns';
-          value: number | Campaign;
         } | null);
     /**
      * A site path such as /shop, or a full https:// address.
@@ -1442,6 +1308,124 @@ export interface ShopTheLookBlock {
   id?: string | null;
   blockName?: string | null;
   blockType: 'shopTheLook';
+}
+/**
+ * Seasonal statements. One is usually the homepage hero.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "campaigns".
+ */
+export interface Campaign {
+  id: number;
+  title: string;
+  /**
+   * Free text — "AW26", "Resort". Used to group campaigns, not to drive layout.
+   */
+  season?: string | null;
+  /**
+   * The campaign image. Desktop crop.
+   */
+  hero?: (number | null) | Media;
+  /**
+   * Optional portrait crop. Falls back to the desktop hero when empty — plan §10.1b.
+   */
+  mobileHero?: (number | null) | Media;
+  /**
+   * The campaign copy. Short — it sits over or beside the image.
+   */
+  story?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  cta: {
+    /**
+     * The words the customer reads. Kept short — the visual guide§06 is strict about this.
+     */
+    label?: string | null;
+    kind: 'reference' | 'url';
+    /**
+     * The URL is derived from this document at render time, so renaming it cannot break the link.
+     */
+    reference?:
+      | ({
+          relationTo: 'products';
+          value: number | Product;
+        } | null)
+      | ({
+          relationTo: 'categories';
+          value: number | Category;
+        } | null)
+      | ({
+          relationTo: 'collections';
+          value: number | Collection;
+        } | null)
+      | ({
+          relationTo: 'edits';
+          value: number | Edit;
+        } | null)
+      | ({
+          relationTo: 'lookbooks';
+          value: number | Lookbook;
+        } | null)
+      | ({
+          relationTo: 'journal';
+          value: number | Journal;
+        } | null);
+    /**
+     * A site path such as /shop, or a full https:// address.
+     */
+    href?: string | null;
+  };
+  /**
+   * The collection this campaign sells. The CTA usually points here — plan §10.1c requires an explicit path from editorial to commerce.
+   */
+  collection?: (number | null) | Collection;
+  /**
+   * Optional. A handful of hero pieces, in order, for the campaign rail.
+   */
+  products?: (number | Product)[] | null;
+  /**
+   * Overrides only. Anything left empty falls back to the value derived from this document and the defaults in Site Settings.
+   */
+  seo?: {
+    /**
+     * Around 60 characters renders in full. Longer is truncated by the engine.
+     */
+    title?: string | null;
+    /**
+     * Around 155 characters renders in full.
+     */
+    description?: string | null;
+    /**
+     * Social share card. Landscape, roughly 1200 × 630.
+     */
+    image?: (number | null) | Media;
+  };
+  /**
+   * The URL segment for this page. Lowercase, hyphenated, and permanent once shared.
+   */
+  slug: string;
+  /**
+   * Drafts are never rendered on the public site.
+   */
+  status: 'draft' | 'published';
+  /**
+   * A future date schedules the page. Set automatically when first published.
+   */
+  publishedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
 }
 /**
  * Server-side bags. Totals are never stored here — they are recalculated from the live catalogue on every request.
@@ -3132,10 +3116,6 @@ export interface Navigation {
           | ({
               relationTo: 'journal';
               value: number | Journal;
-            } | null)
-          | ({
-              relationTo: 'campaigns';
-              value: number | Campaign;
             } | null);
         /**
          * A site path such as /shop, or a full https:// address.
@@ -3184,10 +3164,6 @@ export interface Navigation {
                       | ({
                           relationTo: 'journal';
                           value: number | Journal;
-                        } | null)
-                      | ({
-                          relationTo: 'campaigns';
-                          value: number | Campaign;
                         } | null);
                     /**
                      * A site path such as /shop, or a full https:// address.
@@ -3237,10 +3213,6 @@ export interface Navigation {
             | ({
                 relationTo: 'journal';
                 value: number | Journal;
-              } | null)
-            | ({
-                relationTo: 'campaigns';
-                value: number | Campaign;
               } | null);
           /**
            * A site path such as /shop, or a full https:// address.
@@ -3290,10 +3262,6 @@ export interface Navigation {
                 | ({
                     relationTo: 'journal';
                     value: number | Journal;
-                  } | null)
-                | ({
-                    relationTo: 'campaigns';
-                    value: number | Campaign;
                   } | null);
               /**
                * A site path such as /shop, or a full https:// address.

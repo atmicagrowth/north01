@@ -23,23 +23,22 @@
  * - **A category is a shop route, not a namespace of its own.** `/shop/clothing`, matching the SHOP
  *   subtree the structure document draws and the paths Phase 3 already committed to.
  *
- * ### `campaigns` deliberately resolves to nothing
+ * ### Campaigns are not here, and are expected back
  *
- * A campaign is a *statement* rendered inside another page — the homepage hero, per `Campaigns.ts`
- * and structure §22's Journey E (*Home → Campaign → Lookbook*). No document gives it a page of its
- * own, so inventing `/campaign/<slug>` would be inventing a route, and pointing every campaign at
- * `/` would be a lie for the second one. A navigation item aimed at a campaign therefore resolves to
- * `null` and is **dropped from the rendered navigation** rather than rendered as a dead link — which
- * is the same treatment a deleted or unpublished target gets, and the honest one.
+ * A campaign has no public URL in any document — the reasoning is written out in full at
+ * `payload/fields/link.ts`, beside the list this map has to stay in step with. Phase 9 removed
+ * `campaigns` from *both*, because a route map entry of `null` and a schema that still offered the
+ * target added up to an editor trap: the admin panel accepted the link and the header silently
+ * dropped it.
  *
- * It stays *linkable* in the schema because removing it from `LINKABLE_COLLECTIONS` is a foreign-key
- * change and a migration, and because the phase that builds campaign pages — if one ever does — only
- * has to fill in the entry below.
+ * The map is therefore total — every collection a link may point at has a route — and the `null`
+ * branch below is kept for the collection that arrives without one, not for a case that exists today.
+ * Restoring campaigns is one entry here, one in `LINKABLE_COLLECTIONS`, and a migration. **DEV-39.**
  */
 
 /** The `relationTo` values `payload/fields/link.ts` permits. Kept in step with `LINKABLE_COLLECTIONS`. */
 export type LinkableCollection =
-  'products' | 'categories' | 'collections' | 'edits' | 'lookbooks' | 'journal' | 'campaigns'
+  'products' | 'categories' | 'collections' | 'edits' | 'lookbooks' | 'journal'
 
 /**
  * Slug → path, per collection. `null` means *this document has no page*, and the caller must drop
@@ -56,7 +55,6 @@ const DOCUMENT_ROUTES: Record<LinkableCollection, ((slug: string) => string) | n
   edits: (slug) => `/edit/${slug}`,
   lookbooks: (slug) => `/lookbook/${slug}`,
   journal: (slug) => `/journal/${slug}`,
-  campaigns: null,
 }
 
 /** The public path for a document, or `null` when its collection has no public page. */

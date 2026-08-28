@@ -189,13 +189,39 @@ try {
 
   const alice = await makeCustomer('alice')
   const mallory = await makeCustomer('mallory')
-  const editor = await makeStaff('editor', 'editor')
+
+  /*
+   * **The admin fixture is created first, and the order is load-bearing.**
+   *
+   * `Users.ts` has a `beforeValidate` hook that forces the **first** account on an empty database to
+   * `admin`, so that `/admin/create-first-user` produces someone who can administer. It does not care
+   * which role the caller asked for.
+   *
+   * With the editor created first, that hook silently promoted the *editor* fixture on any database
+   * with no staff in it — a fresh clone, or one just rebuilt with `migrate:fresh`. Every
+   * "an editor cannot …" assertion below then tested an admin, and one of them deletes a product, so
+   * the run did not merely report wrong answers: it destroyed a fixture and crashed forty lines later
+   * on a foreign key, with nothing in the output pointing at the cause.
+   *
+   * Creating the admin first means the hook promotes the account that was going to be an admin
+   * anyway. The check underneath is what stops this being a silent ordering dependency again — it is
+   * the same lesson as the harness defect Phase 7 recorded in §1.12.7: a fixture that is not what the
+   * script thinks it is must fail loudly, not quietly pass.
+   */
   const admin = await makeStaff('admin', 'admin')
+  const editor = await makeStaff('editor', 'editor')
 
   const aliceUser = asUser(alice, 'customers')
   const malloryUser = asUser(mallory, 'customers')
   const editorUser = asUser(editor, 'users')
   const adminUser = asUser(admin, 'users')
+
+  check(
+    'the editor fixture is actually an editor — the first-account bootstrap did not promote it',
+    editor.role === 'editor',
+    `role is ${editor.role}`,
+  )
+  check('the admin fixture is an admin', admin.role === 'admin', `role is ${admin.role}`)
 
   const draft = await fixture('products', {
     name: `${PREFIX} draft product`,

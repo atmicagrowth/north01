@@ -195,7 +195,7 @@ overlay and bag drawer are mounted on every storefront route and driven by the C
   close behaviour are built and verified. Phase 12 fills the panel with Algolia; until then it says so
   and offers the browse routes instead of an input that swallows a query.
 
-`pnpm verify:shell` proves 76 assertions, including the publication cases against real Payload
+`pnpm verify:shell` proves 83 assertions, including the publication cases against real Payload
 documents. 49 browser checks at desktop and phone widths, **0 axe-core violations**.
 
 The catalogue is still Phase 11's, so most destinations in that navigation return a 404 — a styled

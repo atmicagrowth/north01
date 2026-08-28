@@ -98,7 +98,7 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm seed` | Representative demo content — catalogue, editorial, globals. Idempotent, local only, and deliberately creates no customers, orders or media. See `scripts/seed.ts` |
 | `pnpm payload run scripts/baseline-migrations.ts <name…>` | Put a push-built development database onto the migration chain without destroying it. [`DATABASE.md`](DATABASE.md) §10 |
 | `pnpm verify:media` | The Phase 8 media rules — the mime allowlist and magic-byte sniffing, the hostile-upload set, the dimension cap, the delivery-URL grammar and the reserved-box geometry. Adds a live Cloudinary round trip when credentials exist. Generates its own fixtures; local database only |
-| `pnpm verify:shell` | The Phase 9 shell rules — the document route map, href validation, and every one of feature matrix §1’s navigation edge cases. Runs the publication cases against **real** Payload documents, then removes them; local database only |
+| `pnpm verify:shell` | The Phase 9 shell rules — the document route map (including that it is *total* over the linkable collections), href validation, and every one of feature matrix §1’s navigation edge cases. Runs the publication cases against **real** Payload documents, then removes them; local database only |
 | `pnpm verify:access` | The Phase 7 access-control matrix, run against the live rules — cross-customer reads, role escalation, ownership forcing, the disabled account, the password policy. Creates and removes its own fixtures; local database only. Phase 27 lifts these assertions into Vitest |
 | `pnpm test` | Vitest unit/component tests *(pending — Phase 27)* |
 | `pnpm test:e2e` | Playwright *(pending — Phase 27)* |

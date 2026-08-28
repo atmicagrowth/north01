@@ -49,6 +49,28 @@ const validateHref: TextFieldSingleValidation = (value, { req: { t }, required, 
  *
  * `categories` is included because SHOP's children are categories (structure §2) and the mega menu
  * is "driven from Payload" (feature matrix §1).
+ *
+ * ---
+ *
+ * ### `campaigns` is deliberately absent, and is expected back
+ *
+ * A campaign has no public URL. Structure §2's site map has no `CAMPAIGN` node, feature matrix §3
+ * puts campaigns on the *homepage* and §12 lists a *"scheduled/past campaign"* among the edge cases a
+ * **collection** page handles, and no phase in the plan builds a campaign route. Visual guide §09
+ * gives page-level art direction for seven page types and a campaign is not one of them. The two
+ * places the word appears in a flow — structure §4 path C and §22's Journey E, both
+ * *Home → Campaign → Lookbook* — are journeys rather than routes, in diagrams whose other steps
+ * include BAG and SHOP THE LOOK, which are an overlay and a component.
+ *
+ * It was in this list until Phase 9, and being here made it an **editor trap**: the admin panel
+ * offered a campaign as a link target and the resulting navigation item then vanished from the
+ * header, because the renderer had no URL to build. Offering a choice that silently does nothing is
+ * plan §0.1.17 wearing a relationship field, so the choice was removed rather than the symptom.
+ *
+ * **This is a deferral, not a decision that campaigns are unlinkable** — see **DEV-39**. Restoring it
+ * is one entry here, one entry in `lib/navigation/routes.ts`, and the migration that adds the
+ * `campaigns_id` columns back to the four `_rels` tables that lose them here. The phase that gives a
+ * campaign a page does all three together, which is the only order in which either half is honest.
  */
 export const LINKABLE_COLLECTIONS = [
   'products',
@@ -57,7 +79,6 @@ export const LINKABLE_COLLECTIONS = [
   'edits',
   'lookbooks',
   'journal',
-  'campaigns',
 ] as const
 
 type LinkOptions = {

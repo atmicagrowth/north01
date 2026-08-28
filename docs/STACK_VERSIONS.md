@@ -179,7 +179,7 @@ one the moment `pnpm audit` stays clean without it.
 
 The esbuild override was verified beyond `audit`, because drizzle-kit is what generates every
 migration: `pnpm migrate:status` and `pnpm migrate:create` both still work, and the full gate suite
-(typecheck, lint, build, `verify:access` 43/43, `verify:media` 61/61) passes unchanged.
+(typecheck, lint, build, `verify:access` 45/45, `verify:media` 61/61) passes unchanged.
 
 ### pnpm 11 build-script gating
 

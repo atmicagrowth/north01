@@ -725,7 +725,9 @@ single product; it has no `CAMPAIGN` node at all.
 | `edits` | `/edit/<slug>` |
 | `lookbooks` | `/lookbook/<slug>` |
 | `journal` | `/journal/<slug>` |
-| `campaigns` | **none** |
+
+The map is **total**: every collection an editor may point a link at has a route. `verify-shell.ts`
+asserts that, one check per entry in `LINKABLE_COLLECTIONS`, so the two lists cannot drift apart.
 
 Two things worth being explicit about.
 
@@ -735,12 +737,12 @@ the authority ruling that settled **C-03** — and a URL is user-facing. `/produ
 the same reason: it is the plan's own canonical name and it matches the singular namespaces already in
 use. `/collections` stays plural because that is how the document spells it.
 
-**A campaign resolves to nothing and its navigation item is dropped.** A campaign is a statement
-rendered inside another page — `Campaigns.ts`, and structure §22's Journey E — and no document gives it
-a page. Inventing `/campaign/<slug>` would be inventing a route; pointing every campaign at `/` would
-be a lie for the second one. It stays *linkable* in the schema because removing it from
-`LINKABLE_COLLECTIONS` is a foreign-key change and a migration, and because a phase that later builds
-campaign pages only has to fill in the one entry.
+**`campaigns` is absent from both the map and the linkable set** — a deferral, **DEV-39**. A campaign
+has no public URL in any document, and the first version of this decision left it *linkable* with a
+route of `null`, which made the admin panel offer a target the header then silently dropped. Offering a
+choice that does nothing is plan §0.1.17 wearing a relationship field, so the choice was removed. It
+comes back when a campaign has a page: one entry here, one in `LINKABLE_COLLECTIONS`, and the migration
+that restores the `campaigns_id` columns.
 
 This is also why the shell **drops** rather than disables. An item whose target is missing, deleted,
 unpublished, scheduled, or in a collection with no page is removed from the rendered navigation. A dead
@@ -950,7 +952,7 @@ Server Actions and `useActionState`, and validation is the Zod already installed
 | Registration, login, logout, forgot, reset, sessions, protected routes (§7.1e) | **pass** — `/register`, `/login`, `/forgot-password`, `/reset-password`, a POST sign-out, and `/account` behind `requireCustomer()` |
 | Email verification if enabled (§7.1e) | **deliberately off until Phase 19** — see **D-21**; there is no transport to verify with |
 | The §7.1e edge cases | **pass** — all ten, driven in a browser; see notes §1.12 |
-| Automated tests for cross-user access and role escalation (§7.1e prompt) | **pass** — `pnpm verify:access`, 43 checks. The *framework* is Phase 27; the assertions exist now |
+| Automated tests for cross-user access and role escalation (§7.1e prompt) | **pass** — `pnpm verify:access`, 45 checks (43 in Phase 7; two added in Phase 9, see notes §1.14.12). The *framework* is Phase 27; the assertions exist now |
 
 Two defects were found by running the code rather than reading it, and both were fixed here. React
 **resets** an uncontrolled form once its action resolves, so a rejected sign-in emptied the email
@@ -1023,9 +1025,11 @@ from every page. `DialogContentModal`'s own `onCloseAutoFocus` therefore focused
 focus to `document.body` on every close: a WCAG 2.4.3 failure no static check would have reported. The
 shell now owns the restore itself.
 
-`pnpm verify:shell` — **76 checks**, including the publication states as real Payload documents rather
+`pnpm verify:shell` — **83 checks**, including the publication states as real Payload documents rather
 than fixtures. 49 browser checks at 1440×900 and 390×844. New decisions **D-30**, **D-31**, **D-32**;
-gap **G-15** closed; deviations **DEV-36**, **DEV-37**, **DEV-38**.
+gap **G-15** closed; deviations **DEV-36**, **DEV-37**, **DEV-38**, **DEV-39**. One migration —
+`20260828_060719_phase_9_defer_campaign_links` — which drops four `campaigns_id` columns and is the
+only schema change in the phase.
 
 **Next: Phase 10 — homepage / editorial system.**
 
