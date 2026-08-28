@@ -228,11 +228,17 @@ arranges, not a page a developer wrote.
 - **The newsletter works.** It records an address, a consent timestamp and a source. The welcome mail
   is Phase 19's, and nothing on the page pretends otherwise.
 
-`pnpm verify:home` proves 161 assertions, including the publication cases against real Payload
+`pnpm verify:home` proves 173 assertions, including the publication cases against real Payload
 documents and that no generated database identifier has been silently truncated. 55 browser checks
 across eight viewport widths, **0 axe-core violations**.
 
-Two defects worth naming, both found by measuring rather than reading. The editorial reveal stranded
+A post-implementation audit followed and found 36 defects that had passed every gate — including a
+security hole this phase's own decision claimed to have closed. Lexical has *two* link node types,
+and the rich-text sanitiser overrode one of them: an `autolink`, which the editor creates the moment
+someone types something URL-shaped, rendered its stored URL unvalidated. All 36 are fixed, and nine
+of them were comments asserting something the code did not do. See notes §1.15.12.
+
+Two more were found by measuring rather than reading *during* the phase. The editorial reveal stranded
 six sections permanently invisible if you jumped to the foot of the page — an `IntersectionObserver`
 reports threshold *crossings*, and a section that skips past the viewport in one scroll never fires
 one. And a **Phase 7** defect: `z.email().trim()` validates the untrimmed input, so pasting an

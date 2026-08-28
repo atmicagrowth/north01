@@ -43,20 +43,38 @@ import { getHome } from '@/lib/home/home'
  * The absence is a decision, not an oversight. Phase 11's shop page has real filter-driven streaming
  * and is where `Skeleton` earns its place.
  *
- * ### Two states that are not errors
+ * ### An empty homepage renders; a broken one does not
  *
- * An **empty** homepage — no sections, or every section dropped because its subject was unpublished
- * — and a **degraded** one, where the global could not be read at all, both render the brand and the
- * tagline and nothing else. Plan §31: *"never display a generic blank page when a known business
+ * These are two different states and Phase 10's audit found that treating them alike was a real
+ * defect.
+ *
+ * **Empty** — no sections, or every section dropped because its subject was unpublished — renders
+ * the brand and nothing else. Plan §31: *"never display a generic blank page when a known business
  * state can be communicated clearly."* There is no apology and no "coming soon": an unconfigured
  * store legitimately looks like this, and the header and footer still offer every route.
  *
- * `degraded` is **never rendered**. It exists so an operator, and `verify-home.ts`, can tell a
- * database failure from an editor who emptied the page — which are identical on screen and could not
- * be more different in a log. Same contract as `Shell.degraded`.
+ * **Degraded** — the homepage global could not be read at all — **throws**, and that is the whole
+ * point of the flag. `/` is statically prerendered with a 300-second revalidate, so a background
+ * regeneration renders this page and Next caches whatever comes back. Returning a valid empty
+ * homepage would therefore have written a **200 blank page into the route cache**, replacing the good
+ * HTML for five minutes and outliving the database blip that caused it. Throwing fails the
+ * regeneration, and Next keeps serving the last good HTML.
+ *
+ * At build time the same throw fails `pnpm build`, which decision **D-32** already names as the
+ * correct behaviour: *"a deploy against a broken database fails loudly rather than silently baking a
+ * fallback site."*
+ *
+ * (Phase 31 owns error states as a system. Until then this is Next's own error boundary, which is a
+ * correct 500 rather than a convincing blank page.)
  */
 export default async function HomePage() {
   const { content, siteName } = await getHome()
+
+  if (content.degraded) {
+    throw new Error(
+      'The homepage could not be read. Refusing to render an empty page that would be cached in its place.',
+    )
+  }
 
   if (content.sections.length === 0) {
     return (

@@ -27,18 +27,21 @@ import { getShell } from '@/lib/navigation/shell'
  * *"text-first, precise"* — which is what this does instead. Recorded as **DEV-38**; the field
  * description in `Navigation.ts` now says what actually happens.
  *
- * ### The newsletter column is still a slot
+ * ### The newsletter column is filled — **DEV-25 is discharged**
  *
- * **DEV-25.** A signup field here would post nowhere: Phase 6 created the subscriber collection,
- * but the mail is Phase 19's, and a form that silently drops an address is worse than no form. The
- * column exists in the layout so that phase has somewhere to put it.
+ * Phase 3 left this slot empty because *"a signup field here would post nowhere"* — the subscriber
+ * collection did not exist. Phase 6 built it, so **Phase 10 fills the slot** with a real signup that
+ * records an address, a consent timestamp and a source (**DEV-42**). The grid widens from three
+ * columns to four, exactly as this layout was built to do.
+ *
+ * What is still owed is the **mail**, not the column: Phase 19 sends, and Phase 26 adds Turnstile.
  */
 export async function SiteFooter({
   className,
   newsletter,
 }: {
   className?: string
-  /** Filled by the phase that can make a signup actually subscribe someone. */
+  /** Filled by `NewsletterSignup` in the root layout since Phase 10. See the docblock. */
   newsletter?: ReactNode
 }) {
   const { navigation, settings } = await getShell()

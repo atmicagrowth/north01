@@ -787,10 +787,15 @@ try {
    * empty library is a `ValidationError`, not a page of placeholders. (Measured: seven errors, one
    * per required upload.)
    *
-   * So the composition adapts to what is there. On an empty library the seed writes the seven
-   * sections that need no asset; on a library with images it writes all ten and attaches the
-   * campaign's own hero. Both are valid homepages, and neither invents a media id the seed did not
-   * create.
+   * So the composition adapts to what is there. With no media it writes the **six** sections that
+   * need no asset — hero, category tiles, two product rails, collection feature, promise strip; with
+   * media it writes **ten**, adding the two split features, shop-the-look and the community gallery,
+   * and attaching the campaign's own desktop and mobile frames. Both are valid homepages, and
+   * neither invents a media id the seed did not create.
+   *
+   * (Those two counts are the ones the code actually produces. An earlier version of this comment
+   * said "seven" and "eleven", which were the block *types* in the picker rather than the sections
+   * written here — the sort of number that is right when written and wrong by the next commit.)
    */
   const { docs: mediaDocs } = await payload.find({
     collection: 'media',
@@ -1206,7 +1211,8 @@ try {
 
   // -------------------------------------------------------------- homepage
   /**
-   * **The homepage composition**, in structure §4's order:
+   * **The homepage composition**, in structure §4's order — see the media lookup above for why four
+   * of these ten sections are conditional:
    *
    * > 1. Hero campaign. 2. Featured categories. 3. New arrivals. 4. Editorial / Shop the Look
    * > moment. 5. Best sellers or limited edition. 6. Brand story. 7. Community/social.

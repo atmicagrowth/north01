@@ -525,6 +525,17 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+
+    /*
+     * The header is `sticky`, so a control the browser scrolls to — Shift+Tab backwards, or a
+     * fragment link — can land underneath it. Measured at 375x700 before this line: "Journal" and
+     * "The Edit" were 100% covered while focused. `scroll-padding-top` is the one-property fix, and
+     * axe cannot see the problem because it needs a scroll position only keyboard traversal
+     * produces (WCAG 2.2 SC 2.4.11, Focus Not Obscured). Found by Phase 10's audit.
+     *
+     * The value is the header's own height; it is not a token because nothing else needs it.
+     */
+    scroll-padding-top: 4.5rem;
   }
 
   body {
@@ -606,6 +617,18 @@
   [data-reveal='closed'] {
     opacity: 0;
     transform: translateY(12px);
+  }
+
+  /*
+   * A keyboard user can reach a control inside a section that has not been revealed yet — Tab moves
+   * focus and scrolls the element into view, but the IntersectionObserver callback lands a frame
+   * later, so for ~250ms the focused control AND its focus ring are invisible. WCAG 2.4.7 does not
+   * have a grace period. `:focus-within` reveals the section the instant focus enters it, whatever
+   * the observer is doing. Found by Phase 10's audit.
+   */
+  [data-reveal='closed']:focus-within {
+    opacity: 1;
+    transform: none;
   }
 }
 

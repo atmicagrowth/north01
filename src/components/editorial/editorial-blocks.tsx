@@ -30,7 +30,17 @@ import type { HomeCta, SectionOf } from '@/lib/home/resolve'
 /** The shared call-to-action treatment: a quiet Meta link with a rule, never a third button style. */
 function Cta({ cta }: { cta: HomeCta }) {
   return (
-    <Link href={cta.href} variant="meta" external={cta.external} className="mt-s inline-block">
+    /*
+      `self-start` matters: `EditorialBlock`'s body is a flex column, which **blockifies**
+      `inline-block` and stretches the link to the full column width — hundreds of pixels of
+      invisible clickable area, and a focus ring to match. Measured by Phase 10's audit.
+    */
+    <Link
+      href={cta.href}
+      variant="meta"
+      external={cta.external}
+      className="mt-s inline-block self-start"
+    >
       {cta.label}
       {cta.external ? <NewTabHint /> : null}
     </Link>

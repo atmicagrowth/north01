@@ -34,11 +34,17 @@ export function SocialGallery({ section }: { section: SectionOf<'socialGallery'>
           {section.items.map((item, index) => {
             const frame = (
               <>
+                {/*
+                  `alt=""` because a linked tile's accessible name comes from the link, and the
+                  media's own alt would be concatenated with the handle and the visually hidden
+                  label into one run-on announcement. Phase 10's audit heard it.
+                */}
                 <MediaImage
                   media={item.image}
                   context="productCard"
                   sizes={HOME_IMAGE_SIZES.socialTile}
                   priority={section.lcp && index === 0}
+                  alt=""
                   imageClassName="object-cover transition-opacity duration-(--duration-base) ease-editorial group-hover:opacity-85"
                 />
 
@@ -64,7 +70,8 @@ export function SocialGallery({ section }: { section: SectionOf<'socialGallery'>
                     {item.link.external ? <NewTabHint /> : null}
                   </Link>
                 ) : (
-                  <div className="group">{frame}</div>
+                  // No `group`: a tile that is not a link must not answer to hover like one.
+                  <div>{frame}</div>
                 )}
               </li>
             )

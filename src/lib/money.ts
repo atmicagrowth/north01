@@ -49,7 +49,15 @@ export function formatMinorUnits(
 
   try {
     return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(minor / 100)
-  } catch {
+  } catch (error) {
+    /*
+     * Logged, not merely swallowed. A `null` here is indistinguishable on screen from a product with
+     * no active variant, and the resolver drops both — so a single malformed `defaultLocale` empties
+     * every rail on the homepage with no other symptom. `SiteSettings` now refuses to save such a
+     * value; this is the backstop for a row written before that validator existed.
+     */
+    console.error(`[money] Cannot format ${currency} for locale "${locale}".`, error)
+
     return null
   }
 }

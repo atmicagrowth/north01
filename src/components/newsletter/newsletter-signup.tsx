@@ -45,19 +45,39 @@ export function NewsletterSignup() {
 
   return (
     <div>
-      <h2 className="font-sans text-meta uppercase text-foreground-muted">Newsletter</h2>
+      <h2 id="newsletter-heading" className="font-sans text-meta uppercase text-foreground-muted">
+        Newsletter
+      </h2>
 
+      {/*
+        **The copy must not promise a send.** "No more than twice a month" is a cadence, and Phase 19
+        owns email — nothing in this application can send anything today, so that sentence was the
+        one thing on the page contradicting three written claims that it promises nothing. What is
+        true right now is that the address is recorded; say that.
+      */}
       <p className="mt-m max-w-measure font-sans text-body-sm text-foreground-muted">
-        Collection releases and campaign stories. No more than twice a month.
+        Add your address for collection releases and campaign stories.
       </p>
 
-      <form action={action} className="mt-m flex flex-col gap-4" noValidate>
+      <form
+        action={action}
+        aria-labelledby="newsletter-heading"
+        className="mt-m flex flex-col gap-4"
+        noValidate
+      >
         <FormStatus state={state} />
 
+        {/*
+          The label is "Email address for the newsletter", not "Email". The footer renders on every
+          route, so on `/login` and `/register` a bare "Email" produced **two textboxes with the
+          same accessible name** — legal HTML, and unusable in a screen reader's form-controls list,
+          where the two are indistinguishable. The `name` was already disambiguated for the `id`
+          collision; this disambiguates it for a listener.
+        */}
         <Field
           name="newsletterEmail"
           defaultValue={state.values.newsletterEmail ?? ''}
-          label="Email"
+          label="Email address for the newsletter"
           type="email"
           autoComplete="email"
           required

@@ -79,7 +79,7 @@ import {
  * the same 63 bytes. Arithmetic before the schema reaches the database is the only defence.
  */
 
-/** Shared by three blocks. A short label above a heading — a season, a chapter, a promise. */
+/** A short label above a heading — a season, a chapter, a promise. Used by `collectionFeature`. */
 const eyebrow: Block['fields'][number] = {
   name: 'eyebrow',
   type: 'text',

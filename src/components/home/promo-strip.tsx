@@ -11,9 +11,10 @@ import type { SectionOf } from '@/lib/home/resolve'
  * no colour, because a promotional band that shouts is the *"nothing should feel promotional unless
  * the design intentionally calls for it"* of guide §01 being ignored.
  *
- * Deliberately **not** a list of `<li>` with bullets suppressed: these are peer statements, not an
- * ordered set, and the semantic that matters is that they are separate — which the rules and the
- * grid carry. A screen reader hearing three sentences in a row is the correct experience.
+ * It **is** a list, and the markup says so: these are two to four peer statements, which is exactly
+ * what `<ul>` means, and a screen reader announcing "list, 3 items" before them is more useful than
+ * three unannounced sentences. (An earlier version of this comment claimed the opposite of the
+ * markup directly beneath it — the kind of drift Phase 10's audit went looking for.)
  */
 export function PromoStrip({ section }: { section: SectionOf<'promoStrip'> }) {
   return (

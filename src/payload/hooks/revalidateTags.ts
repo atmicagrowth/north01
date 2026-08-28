@@ -16,9 +16,16 @@ import type { PayloadRequest } from 'payload'
  * ### Three things this has to survive, and how
  *
  * **1. It runs outside Next.** `payload run scripts/seed.ts` writes globals from a CLI process where
- * there is no Next server and no cache to invalidate. `next/cache` is therefore imported
- * *dynamically, inside the try*, so the module is never even resolved on that path — a static import
- * would be evaluated when `payload.config.ts` loads, which is every CLI command and every migration.
+ * there is no Next server and no cache to invalidate.
+ *
+ * The import is dynamic and inside the `try`, and it is worth being precise about what that buys —
+ * an earlier version of this paragraph credited it with the wrong thing. It does **not** stop the
+ * module resolving: under the Payload CLI `next/cache` resolves fine, `revalidateTag` is called, and
+ * it throws *"Invariant: static generation store missing"* from inside Next. What actually saves the
+ * seed is the `catch` below. What the dynamic import buys is that a *resolution* failure — a context
+ * where `next/cache` is not on the path at all — is caught by the same `try` rather than exploding
+ * when `payload.config.ts` is first evaluated, which is every CLI command and every migration. Both
+ * matter; only the second is about the import.
  *
  * **2. A failed revalidation must not fail the save.** The write has already committed by the time
  * an `afterChange` hook runs; throwing here would report failure for a change that happened, which

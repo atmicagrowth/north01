@@ -33,10 +33,11 @@ the project owner's job, not this repository's. Nothing in the workflow below as
 
 ### The tables today
 
-**Seventy-three.** Nine belong to Payload's own machinery — `users`, `users_sessions`,
+**Ninety.** Nine belong to Payload's own machinery — `users`, `users_sessions`,
 `customers_sessions`, `payload_preferences`, `payload_preferences_rels`, `payload_locked_documents`,
 `payload_locked_documents_rels`, `payload_migrations`, `payload_kv` — and the rest are Phase 6's data
-model: twenty-two collections, **three** globals, and the array, block and relationship tables beneath them.
+model: twenty-two collections, **three** globals, and the array, block and relationship tables beneath
+them — seventeen of which arrived with the `homepage` global in Phase 10.
 
 Phase 5's fixture, `schema_probes`, is gone. Removing it was this project's first destructive
 migration, deliberately rehearsed on something worthless before the same shape of migration is ever

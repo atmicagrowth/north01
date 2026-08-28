@@ -44,16 +44,34 @@ import { DEFAULT_CURRENCY, type CurrencyCode } from '@/payload/fields/money'
  * *untagged* one would make an editor's save invisible for five minutes. Nothing in here may read
  * `cookies()` or `headers()` — it is forbidden inside a cache scope and would do the same damage.
  *
- * ### Failure is an empty page, and it is not cached
+ * ### Failure degrades one section, or fails the render — never a cached blank page
  *
- * The `try` is around the **call**, not inside the cached function. A function that throws stores
- * nothing, so a database blip degrades one request rather than pinning an empty homepage in the data
- * cache for five minutes.
+ * There are two failure scales here and they are handled differently on purpose.
+ *
+ * **One rail, or the settings read.** Each is caught individually, so a single failing query costs
+ * that rail and nothing else. This is the same rule `home-sections.tsx` applies to an unrecognised
+ * block — *"must cost that section and not the homepage"* — and the settings read has literal
+ * fallbacks three lines below it anyway.
+ *
+ * **The homepage global itself.** `getHome` returns `degraded: true`, and `page.tsx` **throws** on
+ * it. That is deliberate and it is a correction: the first version of this module documented "never
+ * throws" as a virtue, and it was the opposite.
+ *
+ * `/` is a statically prerendered route with a 300-second revalidate, so a *background regeneration*
+ * renders the page and ISR stores whatever came back. A function that cannot throw therefore returns
+ * a perfectly valid empty homepage, Next caches that **200**, and the blank page replaces the good
+ * HTML for the next five minutes — outliving the database blip that caused it. A render that throws
+ * fails the regeneration, and Next keeps serving the last good HTML instead. The `try` around the
+ * *call* still does its job for the data cache; the route cache is a second cache the original
+ * reasoning did not account for.
+ *
+ * At build time the same throw fails `pnpm build`, which is already the documented behaviour in
+ * decision **D-32**'s table: *"a deploy against a broken database fails loudly rather than silently
+ * baking a fallback site."*
  *
  * There is no fallback *content* here, and that is the difference from the shell. `fallback.ts`
  * reproduces the site's information architecture, which is a fact about the site; a homepage is
- * entirely merchandising, and inventing a campaign would put words in an editor's mouth. The header
- * and footer above and below still offer every route.
+ * entirely merchandising, and inventing a campaign would put words in an editor's mouth.
  */
 
 export const HOME_CACHE_TAG = 'home'
@@ -85,9 +103,18 @@ const loadHome = unstable_cache(
   async (): Promise<LoadedHome> => {
     const payload = await getPayloadClient()
 
+    /*
+     * The homepage read is allowed to reject — it is the page. The settings read is not: every value
+     * it supplies has a literal fallback below, so losing it should cost the currency format, not
+     * the storefront.
+     */
     const [homepage, settings] = await Promise.all([
       payload.findGlobal({ slug: 'homepage', depth: GLOBAL_DEPTH }),
-      payload.findGlobal({ slug: 'site-settings', depth: 0 }),
+      payload.findGlobal({ slug: 'site-settings', depth: 0 }).catch((error) => {
+        console.error('[home] Site settings could not be read; using defaults.', error)
+
+        return null
+      }),
     ])
 
     const currency = (settings?.defaultCurrency ?? DEFAULT_CURRENCY) as CurrencyCode
@@ -109,14 +136,25 @@ const loadHome = unstable_cache(
     const rails: RailProducts = new Map(
       await Promise.all(
         requests.map(async ({ key, source, limit }) => {
-          const { docs } = await payload.find({
-            collection: 'products',
-            depth: RAIL_DEPTH,
-            limit,
-            pagination: false,
-            sort: ['sortOrder', '-publishedAt'],
-            where: railWhere(source, now),
-          })
+          /*
+           * One rail failing must not take the page. The resolver drops a rail whose product list is
+           * empty, so an empty array degrades to exactly one missing section.
+           */
+          const docs = await payload
+            .find({
+              collection: 'products',
+              depth: RAIL_DEPTH,
+              limit,
+              pagination: false,
+              sort: ['sortOrder', '-publishedAt'],
+              where: railWhere(source, now),
+            })
+            .then((result) => result.docs)
+            .catch((error) => {
+              console.error(`[home] The ${source} rail could not be read; dropping it.`, error)
+
+              return []
+            })
 
           return [key, docs] as const
         }),

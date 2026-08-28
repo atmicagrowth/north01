@@ -70,9 +70,16 @@ export const SiteSettings: GlobalConfig = {
     update: isStaff,
   },
 
-  /** The header reads `siteName`, `logo` and `announcement` on every page. See `Navigation.ts`. */
+  /**
+   * The header reads `siteName`, `logo` and `announcement` on every page. See `Navigation.ts`.
+   *
+   * **`home` is in the list too**, and it has to be: from Phase 10 the homepage's own cached read
+   * takes `defaultCurrency`, `defaultLocale` and `siteName` from this global. Without the tag the
+   * shell re-rendered with the new values while the page body underneath it kept formatting prices
+   * with the old ones, for up to five minutes. Found by Phase 10's audit.
+   */
   hooks: {
-    afterChange: [revalidateGlobal('shell', 'site-settings')],
+    afterChange: [revalidateGlobal('shell', 'site-settings', 'home')],
   },
 
   fields: [
@@ -144,6 +151,29 @@ export const SiteSettings: GlobalConfig = {
               admin: {
                 description:
                   'A BCP 47 tag, used for date and number formatting. This build is single-locale; Payload localisation is not enabled.',
+              },
+              /**
+               * Validated by *constructing a formatter with it*, because that is the only thing that
+               * knows whether `Intl` accepts it.
+               *
+               * A malformed tag makes `Intl.NumberFormat` throw, `formatMinorUnits` returns `null`,
+               * every product loses its price, and the resolver — correctly — drops every product
+               * from the homepage. The store would have emptied its merchandise silently, with
+               * `degraded: false` and nothing in the log. One typo in a text field, and the failure
+               * surfaces nowhere near its cause. Refusing the save is where this belongs.
+               */
+              validate: (value: unknown) => {
+                if (typeof value !== 'string' || value.trim() === '') {
+                  return 'A BCP 47 tag, such as en-US.'
+                }
+
+                try {
+                  new Intl.NumberFormat(value, { style: 'currency', currency: 'USD' }).format(1)
+
+                  return true
+                } catch {
+                  return 'Not a locale this runtime recognises. Use a BCP 47 tag such as en-US or en-GB.'
+                }
               },
             },
             minorUnits({

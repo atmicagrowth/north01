@@ -99,6 +99,15 @@ export type RichTextValue = unknown
 
 export type HomeHero = {
   type: 'hero'
+  /**
+   * `h1` for the first surviving hero, `h2` for any after it.
+   *
+   * Computed here rather than in the component because nothing stops an editor adding a second
+   * campaign hero — the block's own plural label is "Campaign heroes" — and two `<h1>`s is a WCAG
+   * 1.3.1 heading-structure failure that axe does **not** report, because `page-has-heading-one`
+   * only requires *at least* one. Phase 10's audit found exactly that.
+   */
+  headingLevel: 'h1' | 'h2'
   season: null | string
   headline: string
   story: RichTextValue
@@ -230,10 +239,12 @@ export type SectionOf<T extends HomeBody['type']> = Extract<HomeSection, { type:
 export type HomeContent = {
   sections: HomeSection[]
   /**
-   * A surviving hero will carry the page's `<h1>`.
+   * At least one hero survived, so a section carries the page's `<h1>`.
    *
-   * When it is `false` — an empty homepage, a dropped hero, a degraded read — `page.tsx` supplies a
-   * visually hidden `<h1>` instead, so the document outline stays valid in every reachable state.
+   * When it is `false` — an empty homepage, or every hero dropped — `page.tsx` supplies a visually
+   * hidden `<h1>` instead, so the document outline stays valid in every reachable state. The
+   * *upper* bound is enforced separately, by `HomeHero.headingLevel`: a boolean can say "at least
+   * one" and cannot say "exactly one", which is how two `<h1>`s got past this in the first place.
    */
   hasHeading: boolean
   /** The globals could not be read. Never rendered; it exists so an operator can tell this from an
@@ -293,6 +304,35 @@ export function railWhere(source: RailSource, now: string): Where {
  * ---------------------------------------------------------------------------------------------- */
 
 const text = (value: null | string | undefined): null | string => value?.trim() || null
+
+/**
+ * Does this Lexical document contain anything a reader would see?
+ *
+ * An editor who selects a body and deletes it does **not** leave `null` behind — Lexical stores a
+ * root with one empty paragraph, which is truthy. Without this, `editorial` and `splitFeature`
+ * blocks stayed on the page as a heading with an invisible gap under it, contradicting this module's
+ * own drop/keep table. Found by Phase 10's audit.
+ *
+ * The walk is shallow-recursive over `children` and stops at the first non-empty text node, so it
+ * costs nothing on a real document.
+ */
+function hasProseContent(value: unknown): boolean {
+  const walk = (node: unknown): boolean => {
+    if (!node || typeof node !== 'object') {
+      return false
+    }
+
+    const { text: nodeText, children } = node as { children?: unknown[]; text?: unknown }
+
+    if (typeof nodeText === 'string' && nodeText.trim() !== '') {
+      return true
+    }
+
+    return Array.isArray(children) && children.some(walk)
+  }
+
+  return walk((value as { root?: unknown })?.root)
+}
 
 /** An `upload` or `relationship` holds a populated document or a bare id; only the first renders. */
 const asDocument = <T extends object>(value: number | null | T | undefined): T | null =>
@@ -468,9 +508,11 @@ function resolveSection(
 
       return {
         type: 'hero',
+        // Overwritten below, once the whole list is known — see `resolveHome`.
+        headingLevel: 'h1',
         season: text(campaign.season),
         headline,
-        story: campaign.story ?? null,
+        story: hasProseContent(campaign.story) ? campaign.story : null,
         media: asMedia(campaign.hero),
         mobileMedia: asMedia(campaign.mobileHero),
         primary: resolveLink(campaign.cta),
@@ -611,7 +653,7 @@ function resolveSection(
       }
 
       const heading = text(section.heading)
-      const body = section.body ?? null
+      const body = hasProseContent(section.body) ? section.body : null
 
       // An image with no words is a `figure`, and the editor has that block.
       if (!heading && !body) {
@@ -631,7 +673,7 @@ function resolveSection(
 
     case 'editorial': {
       const heading = text(section.heading)
-      const body = section.body ?? null
+      const body = hasProseContent(section.body) ? section.body : null
 
       if (!heading && !body) {
         return null
@@ -710,16 +752,23 @@ function hasMedia(section: HomeBody): boolean {
   switch (section.type) {
     case 'hero':
     case 'collectionFeature':
-      return section.media !== null
+      // Either frame is a picture. A hero given only a mobile crop still paints one full-bleed.
+      return section.media !== null || section.mobileMedia !== null
     case 'figure':
     case 'splitFeature':
     case 'shopTheLook':
       return true
+    /*
+     * The *first* tile, not `.some()`. The renderers pass `priority` to index 0 only, so a section
+     * whose first tile is a placeholder and whose third has a photograph would claim the page's one
+     * priority hint and then spend it on an empty box. The two must ask the same question.
+     */
     case 'categoryTiles':
-      return section.tiles.some((tile) => tile.image !== null)
+      return section.tiles[0]?.image != null
     case 'productRail':
-      return section.products.some((product) => product.image !== null)
+      return section.products[0]?.image != null
     case 'socialGallery':
+      // `items[].image` is required by the resolver, so the first tile always has one.
       return true
     case 'promoStrip':
     case 'editorial':
@@ -752,9 +801,27 @@ export function resolveHome({ homepage, rails, currency, locale }: ResolveHomeAr
     resolved[lcpIndex] = { ...resolved[lcpIndex]!, lcp: true }
   }
 
+  /*
+   * Exactly one `<h1>`, guaranteed here rather than hoped for in a component.
+   *
+   * The first surviving hero keeps `h1`; every hero after it is demoted. Nothing in the schema stops
+   * an editor adding a second one, and two `<h1>`s is a heading-structure failure that axe cannot
+   * see — `page-has-heading-one` is satisfied by the first.
+   */
+  let heroSeen = false
+
+  for (const [index, section] of resolved.entries()) {
+    if (section.type !== 'hero') {
+      continue
+    }
+
+    resolved[index] = { ...section, headingLevel: heroSeen ? 'h2' : 'h1' }
+    heroSeen = true
+  }
+
   return {
     sections: resolved,
-    hasHeading: resolved.some((section) => section.type === 'hero'),
+    hasHeading: heroSeen,
     degraded: false,
   }
 }
@@ -781,8 +848,12 @@ export function railRequests(
 
     requests.push({
       key: section.id ?? String(index),
-      // The block's `min`/`max` bound the field; this bounds a row written before they existed.
-      limit: Math.min(Math.max(section.limit ?? 4, 1), 12),
+      /*
+       * The block's `min`/`max` bound the field; this bounds a row written before they existed —
+       * and `Math.trunc` is not decoration. A stored `4.5` survives a clamp unchanged and reaches
+       * Postgres as `LIMIT 4.5`, which is a syntax error that rejects the whole rail query.
+       */
+      limit: Math.min(Math.max(Math.trunc(section.limit ?? 4) || 4, 1), 12),
       source: section.source,
     })
   })

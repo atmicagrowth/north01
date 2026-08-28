@@ -23,9 +23,14 @@ import { useEffect, useRef, type ReactNode } from 'react'
  * animation (`animation-timeline: view()`), where a subject inside an `overflow: hidden` ancestor
  * binds its timeline to an unscrollable container and sits at `opacity: 0` permanently.
  *
- * The second guard is `boundingClientRect.top > 0`: only a section **below** the reader's current
- * position is ever hidden. A block already on screen at load — which on a short page may be all of
- * them — is left alone rather than faded in over content the reader is looking at.
+ * The second guard is `boundingClientRect.top >= window.innerHeight`: only a section **entirely
+ * below the fold** is ever hidden. A block already on screen at load — which on a short page may be
+ * all of them — is left alone rather than faded out from under a reader who is looking at it.
+ *
+ * That comparison was `top > 0` until Phase 10's audit, and the difference is not pedantic: a
+ * section whose top edge is above the fold but whose 8% threshold has not yet been met satisfied
+ * `top > 0`, so a partially-visible section was armed `closed` and **faded out** while on screen.
+ * "Below the reader" and "below the fold" are different tests, and only the second one is safe.
  *
  * `disconnect()` on first intersection makes it one-shot. Scrolling back up does not fade a section
  * out again; §08's *"avoid motion that competes with the subject"* rules that out, and it is the
@@ -44,7 +49,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
  *
  * Wrap a block-level section in normal document flow. `IntersectionObserver` clips against the
  * nearest scrollable ancestor, so a `Reveal` inside an `overflow: hidden` or `overflow: auto`
- * container measures against that box rather than the viewport. The `top > 0` guard covers the
+ * container measures against that box rather than the viewport. The below-the-fold guard covers the
  * common case; nothing covers a caller who nests one inside a horizontal rail.
  *
  * The LCP section is never wrapped — see `home-sections.tsx`. Fading in the largest contentful paint
@@ -90,11 +95,11 @@ export function Reveal({ children }: { children: ReactNode }) {
         }
 
         /*
-         * Still below the reader. `dataset.reveal` being unset is what makes this happen at most
-         * once: after the first observation the section is either open or armed, and a later
+         * Still entirely below the fold. `dataset.reveal` being unset is what makes this happen at
+         * most once: after the first observation the section is either open or armed, and a later
          * callback must never re-hide it.
          */
-        if (!element.dataset.reveal) {
+        if (!element.dataset.reveal && entry.boundingClientRect.top >= window.innerHeight) {
           element.dataset.reveal = 'closed'
         }
       },

@@ -53,7 +53,13 @@ export function ProductRail({ section }: { section: SectionOf<'productRail'> }) 
   return (
     <Section data-section="product-rail">
       <PageContainer>
-        {section.heading || section.cta ? (
+        {/*
+          `SectionHeading` always renders its tag, so passing it an absent heading emitted an
+          **empty `<h2>`** — a real axe `empty-heading` violation, reachable simply by an editor
+          adding a "View all" link and no title. The 0-violation sweep missed it because the seeded
+          composition happens to give every rail a heading. Found by Phase 10's audit.
+        */}
+        {section.heading ? (
           <SectionHeading
             className="mb-l"
             action={
@@ -67,6 +73,13 @@ export function ProductRail({ section }: { section: SectionOf<'productRail'> }) 
           >
             {section.heading}
           </SectionHeading>
+        ) : section.cta ? (
+          <div className="mb-l flex justify-end">
+            <Link href={section.cta.href} variant="meta" external={section.cta.external}>
+              {section.cta.label}
+              {section.cta.external ? <NewTabHint /> : null}
+            </Link>
+          </div>
         ) : null}
 
         {section.intro ? (
@@ -86,9 +99,15 @@ export function ProductRail({ section }: { section: SectionOf<'productRail'> }) 
           tabIndex={0}
           role="group"
           aria-label={section.heading ? `${section.heading} — scrollable` : 'Products — scrollable'}
-          className="overflow-x-auto focus-visible:outline-offset-4"
+          /*
+            `snap-x` belongs on the SCROLLER, not on the list inside it — on a non-scrolling `<ul>`
+            it is inert, so the snapping the docblock describes did nothing until Phase 10's audit
+            measured it. The `-my-1 py-1` gives the focus ring vertical room: without it
+            `overflow-x-auto` clipped the ring to two disconnected vertical bars.
+          */
+          className="-my-1 snap-x overflow-x-auto py-1 focus-visible:outline-offset-4"
         >
-          <ul className="flex snap-x gap-m px-[clamp(1.25rem,4vw,4rem)] lg:gap-l">{tiles}</ul>
+          <ul className="flex gap-m px-[clamp(1.25rem,4vw,4rem)] lg:gap-l">{tiles}</ul>
         </div>
       ) : (
         <PageContainer>

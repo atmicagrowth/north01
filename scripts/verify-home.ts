@@ -159,6 +159,23 @@ check(
       JSON.stringify(where.and[1]).includes('exists'),
     JSON.stringify(where.and[1]),
   )
+
+  /*
+   * The clause that actually distinguishes one rail from another, and the one this harness did not
+   * assert until Phase 10's audit pointed out that inverting it left 161/161 passing — the seeded
+   * catalogue happens to carry enough products under either reading.
+   */
+  for (const [source, column] of RAIL_CASES) {
+    const clause = (
+      railWhere(source, '2026-08-28T00:00:00.000Z') as { and: Record<string, unknown>[] }
+    ).and[2]
+
+    check(
+      `rail: the ${source} query really filters on ${column} = true`,
+      JSON.stringify(clause) === JSON.stringify({ [column]: { equals: true } }),
+      JSON.stringify(clause),
+    )
+  }
 }
 
 {
@@ -707,6 +724,127 @@ check(
 )
 
 /* -------------------------------------------------------------------------------------------------
+ * E2 — regressions for the defects the Phase 10 audit confirmed
+ *
+ * Each of these passed every gate once. A harness that only tests what its author already believed
+ * is the gap the audit named, so each confirmed finding gets an assertion that would have caught it.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** RC5 — two heroes must not both claim `<h1>`. Axe cannot see this: it requires *at least* one. */
+{
+  const { sections, hasHeading } = resolve([
+    { blockType: 'hero', campaign: publishedCampaign({ id: 1 }) },
+    { blockType: 'hero', campaign: publishedCampaign({ id: 2, slug: 'second' }) },
+  ])
+
+  const levels = sections.map((section) => (section.type === 'hero' ? section.headingLevel : '-'))
+
+  check(
+    'RC5: the first hero is h1 and every hero after it is h2',
+    levels.join(',') === 'h1,h2',
+    levels.join(','),
+  )
+  check('RC5: hasHeading is still true with two heroes', hasHeading)
+}
+
+/** RC3 — a cleared rich-text body is a root with one empty paragraph, not `null`. */
+{
+  const emptied = {
+    root: {
+      type: 'root',
+      format: '',
+      indent: 0,
+      version: 1,
+      direction: 'ltr',
+      children: [{ type: 'paragraph', version: 1, children: [] }],
+    },
+  }
+
+  check(
+    'RC3: an editorial block whose body was cleared is dropped, not rendered as a gap',
+    one({ blockType: 'editorial', body: emptied }) === undefined,
+  )
+  check(
+    'RC3: a split feature with an image and a cleared body is dropped',
+    one({ blockType: 'splitFeature', image: { id: 1, alt: 'x' }, body: emptied }) === undefined,
+  )
+  check(
+    'RC3: a body with real text survives',
+    one({
+      blockType: 'editorial',
+      body: {
+        root: {
+          type: 'root',
+          format: '',
+          indent: 0,
+          version: 1,
+          direction: 'ltr',
+          children: [
+            {
+              type: 'paragraph',
+              version: 1,
+              children: [{ type: 'text', text: 'Real copy', version: 1 }],
+            },
+          ],
+        },
+      },
+    })?.type === 'editorial',
+  )
+}
+
+/** RC6 — a stored non-integer limit reaches Postgres as `LIMIT 4.5` and rejects the whole query. */
+{
+  const requests = railRequests({
+    sections: [
+      { blockType: 'productRail', id: 'a', source: 'new', limit: 4.5 },
+      { blockType: 'productRail', id: 'b', source: 'new', limit: 0 },
+      { blockType: 'productRail', id: 'c', source: 'new', limit: -3 },
+    ],
+  } as unknown as HomepageFixture)
+
+  check(
+    'RC6: every rail limit is a positive integer, whatever is stored',
+    requests.every((request) => Number.isInteger(request.limit) && request.limit >= 1),
+    requests.map((request) => request.limit).join(','),
+  )
+}
+
+/** RC2 — a hero with only a mobile frame is still a picture, and must be able to claim the LCP. */
+{
+  const { sections } = resolve([
+    { blockType: 'hero', campaign: publishedCampaign({ mobileHero: { id: 1, alt: 'x' } }) },
+    { blockType: 'figure', image: { id: 2, alt: 'y' } },
+  ])
+
+  check('RC2: a mobile-only hero counts as imagery for the LCP choice', sections[0]?.lcp === true)
+}
+
+/** RC4 — `hasMedia` must ask the question the renderer answers: the FIRST tile, not any tile. */
+{
+  const rails = new Map([
+    [
+      'r',
+      [
+        product({ id: 1, slug: 'a', gallery: [] }),
+        product({ id: 2, slug: 'b', gallery: [{ image: { id: 9, alt: 'z' } }] }),
+      ],
+    ],
+  ])
+  const { sections } = resolve(
+    [
+      { blockType: 'productRail', id: 'r', source: 'new' },
+      { blockType: 'figure', image: { id: 3, alt: 'y' } },
+    ],
+    rails,
+  )
+
+  check(
+    'RC4: a rail whose FIRST tile has no image does not claim the page priority',
+    sections[0]?.lcp === false && sections[1]?.lcp === true,
+  )
+}
+
+/* -------------------------------------------------------------------------------------------------
  * F — money
  * ---------------------------------------------------------------------------------------------- */
 
@@ -1029,16 +1167,38 @@ try {
 
 const failed = results.filter((result) => !result.ok)
 
-for (const result of results) {
-  payload.logger.info(
-    `${result.ok ? 'PASS' : 'FAIL'}  ${result.name}${result.detail ? ` — ${result.detail}` : ''}`,
-  )
-}
+/*
+ * **The report is one awaited write, not 175 logger calls followed by `process.exit`.**
+ *
+ * Two mechanisms were measured breaking this harness's own output, and both are the "exited 0 while
+ * doing less than it looked like" hazard `docs/DATABASE.md` records:
+ *
+ * - `process.exit()` terminates without draining a pending stdout write, and stdout is asynchronous
+ *   whenever it is a **pipe or a file** — which it is in CI and under `> log.txt`. At this harness's
+ *   size the report was cut off mid-run while the command still exited `0`.
+ * - `payload.destroy()` tears the logger's transport down, so anything not yet flushed through
+ *   `payload.logger` is lost entirely.
+ *
+ * So the whole report is assembled as one string and handed to `process.stdout.write` with its
+ * completion callback awaited. The verdict line comes **first**, where a truncated tail cannot hide
+ * it, and the connection is closed only after the bytes are gone.
+ */
+const report = [
+  `${results.length - failed.length}/${results.length} homepage checks passed.`,
+  ...failed.map((result) => `FAIL  ${result.name}${result.detail ? ` — ${result.detail}` : ''}`),
+  '',
+  ...results.map(
+    (result) =>
+      `${result.ok ? 'PASS' : 'FAIL'}  ${result.name}${result.detail ? ` — ${result.detail}` : ''}`,
+  ),
+].join('\n')
 
-payload.logger.info(`${results.length - failed.length}/${results.length} homepage checks passed.`)
+await new Promise<void>((resolve, reject) => {
+  process.stdout.write(`${report}\n`, (error) => (error ? reject(error) : resolve()))
+})
+
+await payload.destroy()
 
 if (failed.length > 0) {
   throw new Error(`${failed.length} homepage check(s) failed.`)
 }
-
-process.exit(0)

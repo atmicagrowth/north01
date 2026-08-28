@@ -203,13 +203,41 @@ export function MediaImage({
   const record = asRecord(media) ?? asRecord(mobileMedia)
   const mobileRecord = asRecord(mobileMedia) ?? record
 
+  /**
+   * Is there a genuinely different photograph for narrow screens?
+   *
+   * **Record identity, never Cloudinary metadata.** This test was `mobileAsset === null` — an asset
+   * being derived from `cloudinaryPublicId` — which is `null` for *both* records whenever Cloudinary
+   * is unconfigured. So the art-directed `<picture>` collapsed to a single `<img>` in precisely the
+   * state the docblock above says it survives, and the state this project is committed in. Phase
+   * 10's audit rendered it and found no `<picture>` at all.
+   */
+  const hasDistinctMobile = mobileRecord !== null && mobileRecord !== record
+
   const resolved = resolveContext(context, record?.role as MediaRole | undefined)
-  /* A distinct mobile asset may carry a different `role`, so its context is resolved from itself. */
-  const mobileResolved = mobileContext ?? (mobileRecord === record ? null : resolved)
+
+  /**
+   * The mobile delivery context, or `null` for "no `<picture>` at all".
+   *
+   * A distinct mobile asset may carry its own `role`, so when the caller names no `mobileContext`
+   * the context is resolved **from that record** rather than inherited from the desktop one. (The
+   * comment here used to claim exactly that while the code inherited `resolved`.)
+   */
+  const mobileResolved: MediaContext | null =
+    mobileContext ??
+    (hasDistinctMobile
+      ? resolveContext(undefined, mobileRecord?.role as MediaRole | undefined)
+      : null)
 
   const box = reserveBox(resolved, record)
-  // Reserve from the record that will actually be delivered — see the docblock.
-  const mobileBox = mobileResolved ? reserveBox(mobileResolved, mobileRecord) : null
+  /*
+   * Reserve from the record that will actually be delivered. For an uncropped context `reserveBox`
+   * reads the asset's own dimensions, so reserving from the desktop record while serving the mobile
+   * one is the letterboxing defect Phase 8 measured, arriving through a different door.
+   */
+  const mobileBox = mobileResolved
+    ? reserveBox(mobileResolved, hasDistinctMobile ? mobileRecord : record)
+    : null
 
   /**
    * The box is reserved with `aspect-ratio` rather than fixed pixels, so the image is fluid but its
@@ -269,7 +297,7 @@ export function MediaImage({
      * still gets the photograph shot for it. This is the state the project is committed in, so the
      * branch is not hypothetical.
      */
-    const mobileUrl = mobileAsset === null ? null : (mobileRecord?.url ?? null)
+    const mobileUrl = hasDistinctMobile ? (mobileRecord?.url ?? null) : null
 
     return (
       <div
@@ -328,12 +356,27 @@ export function MediaImage({
    * the browser paints the alt text over the blur inside an already-reserved box, which is a
    * deliberate-looking absence rather than a broken-image icon and a jump.
    */
+  /*
+   * The blur follows the photograph that will actually be served. With a distinct mobile asset the
+   * desktop blur is the wrong colours entirely, so the mobile one travels as a second custom
+   * property and is switched at the same 768px breakpoint as the source and the reserved box.
+   */
+  const mobileLqip =
+    mobileAsset && mobileResolved
+      ? buildLqipUrl({ cloudName, asset: mobileAsset, context: mobileResolved })
+      : null
+
   const blur: CSSProperties = {
     ...frame,
-    backgroundImage: `url("${buildLqipUrl({ cloudName, asset, context: resolved })}")`,
+    ['--media-lqip' as string]: `url("${buildLqipUrl({ cloudName, asset, context: resolved })}")`,
+    ...(mobileLqip ? { ['--media-lqip-mobile' as string]: `url("${mobileLqip}")` } : {}),
     backgroundSize: 'cover',
     backgroundPosition: 'center',
   }
+
+  const blurClass = mobileLqip
+    ? 'bg-[image:var(--media-lqip)] max-md:bg-[image:var(--media-lqip-mobile)]'
+    : 'bg-[image:var(--media-lqip)]'
 
   const image = (
     <img
@@ -353,7 +396,7 @@ export function MediaImage({
   return (
     <div
       data-slot="media-image"
-      className={cn('relative w-full overflow-hidden bg-surface', frameClass, className)}
+      className={cn('relative w-full overflow-hidden bg-surface', frameClass, blurClass, className)}
       style={blur}
     >
       {mobileResolved ? (
@@ -364,15 +407,23 @@ export function MediaImage({
             PHOTOGRAPH — not a smaller copy. Visual guide §10. It comes first because a browser
             takes the first matching `<source>`.
           */}
-          <source
-            media="(max-width: 767.98px)"
-            srcSet={buildSrcSet({
-              cloudName,
-              asset: mobileAsset ?? asset,
-              context: mobileResolved,
-            })}
-            sizes={sizes}
-          />
+          {/*
+            Only when the mobile source actually differs. With a distinct `mobileMedia` record that
+            has no Cloudinary id yet, `mobileAsset` is null and the same crop is requested from the
+            same asset — two byte-identical `<source>`s over one file, which costs markup and buys
+            nothing. Falling through to the desktop source is the same picture, honestly labelled.
+          */}
+          {mobileAsset || mobileResolved !== resolved ? (
+            <source
+              media="(max-width: 767.98px)"
+              srcSet={buildSrcSet({
+                cloudName,
+                asset: mobileAsset ?? asset,
+                context: mobileResolved,
+              })}
+              sizes={sizes}
+            />
+          ) : null}
           <source srcSet={desktopSrcSet} sizes={sizes} />
           {image}
         </picture>

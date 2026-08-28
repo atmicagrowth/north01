@@ -3420,7 +3420,7 @@ prerendered with the hero in the first HTML chunk).
 
 ### 1.15.10 What was verified, and how
 
-**`pnpm verify:home` — 161 checks, all passing.** Two halves, in `verify-shell.ts`'s shape: pure
+**`pnpm verify:home` — 173 checks, all passing.** Two halves, in `verify-shell.ts`'s shape: pure
 fixtures for every edge case in feature matrix §3, then **real Payload documents** for the states that
 matter. The database half creates a draft campaign, a scheduled one and a product with no active
 variant, and proves the resolver drops exactly those — a fixture proves the function, a real document
@@ -3430,7 +3430,7 @@ proves the function is being fed what it thinks it is, which is the difference t
 No regression elsewhere: `verify:access` **45/45**, `verify:media` **61/61**, `verify:shell`
 **100/100**. Total **367** checks across the four harnesses.
 
-**Browser pass — 54 checks** at 320, 375, 430, 768, 1024, 1280, 1440 and 1920px (§30.1a's eight):
+**Browser pass — 55 checks** at 320, 375, 430, 768, 1024, 1280, 1440 and 1920px (§30.1a's eight):
 
 - no horizontal overflow at any width, and the Display XL headline stays inside guide §03's 48–72px
   range at every one of them;
@@ -3475,6 +3475,143 @@ test frames carrying edge ticks and printed dimensions — not photography, and 
 - **The seed's composition adapts to the media library.** On an empty library it writes seven sections
   rather than ten, because three blocks carry `validateRequiredUpload`. Phase 29's demo catalogue
   should ship assets and make the full composition unconditional.
+
+
+### 1.15.12 Post-implementation audit
+
+The committed, green Phase 10 was re-read adversarially — seven auditors along separate dimensions,
+then a verifier instructed to **refute** every claim and to reproduce anything it could not refute.
+**39 claims verified: 3 refuted, 36 confirmed** (2 high, 8 medium, 26 low), plus 11 duplicates. All
+36 are fixed.
+
+This is the fifth phase to run this exercise and the fifth to find defects that had passed every
+gate. The headline is not any single finding — it is *what kind* of thing survived 367 harness
+checks, a clean `--max-warnings 0` lint, a strict typecheck and two zero-violation axe sweeps.
+
+#### The two high-severity findings
+
+**1. `Prose` sanitised one of Lexical's two link node types.** Decision **D-35** says every rich-text
+href is re-validated at render, and the converter map spread `defaultConverters` and overrode `link`.
+Lexical also has **`autolink`** — created by the editor's own plugin the moment someone types
+something URL-shaped — and `LinkJSXConverter` renders it as `<a href={node.fields.url}>` with no
+validation at all.
+
+Reproduced end to end: a campaign story written through the Local API rendered
+`<a href="//evil.example/phish">` and `<a href="data:text/html;base64,…">` on the live homepage,
+while the identical URLs as `link` nodes correctly degraded to text. The save side cannot catch it
+either — `AutoLinkNode`'s server config declares no `getSubFields`, so the `url` field's own hooks
+and validators never run on it. An unregistered `upload` node also stored and rendered, with an
+editor-controlled `src` and a `<link rel="preload">`.
+
+Fixed by listing every converter by name instead of spreading: `link` and `autolink` share one
+sanitised implementation, and the node types this editor does not enable (`upload`, `table`,
+`horizontalrule`, `tab`) render nothing. Re-verified against the running application with six
+hostile URL shapes on both node types — `evil.example`, `javascript:` and `data:text/html` now
+appear nowhere in the HTML, and safe links still render, now with the new-tab announcement they were
+missing.
+
+**2. A failed regeneration cached a blank homepage over the good one.** `getHome` was documented as
+*"Never throws"*, and that was the defect rather than the virtue. `/` is prerendered with a
+300-second revalidate, so a **background regeneration** renders the page and ISR stores whatever
+comes back. A loader that cannot throw returns a perfectly valid *empty* homepage, Next caches that
+**200**, and the blank page replaces the real one for five minutes — outliving the database blip that
+caused it. A throw would have failed the regeneration and left the last good HTML in place.
+
+The `try` around the *call* was reasoned about correctly for the **data** cache; the **route** cache
+is a second cache the reasoning never accounted for. `page.tsx` now throws on `degraded`, which also
+makes the flag load-bearing rather than computed-and-never-read. Per-read `catch`es were added so a
+single failing rail costs that rail — which is the rule `home-sections.tsx` already stated for
+unknown block types and the loader did not follow.
+
+#### The rest, by what they teach
+
+**Two `<h1>`s.** Nothing stops an editor adding a second campaign hero — the block's plural label is
+literally "Campaign heroes" — and `hasHeading: boolean` can say *at least one* and cannot say
+*exactly one*. Axe agreed, because `page-has-heading-one` requires at least one. The resolver now
+demotes every hero after the first to `h2`.
+
+**An empty `<h2>`, reachable by an editor and not by the seed.** A product rail with a "View all"
+link and no heading rendered `SectionHeading` with nothing in it — a real `empty-heading` violation
+that axe reports immediately *once the markup exists*. The seeded composition gives every rail a
+heading, so the zero-violation sweep never met it.
+
+**The newsletter announced nothing on a validation failure.** `FormStatus` renders nothing without a
+form-level `message`, and `Field` deliberately clears `role="alert"` on its own message — correct,
+and only correct when a summary exists. With `message: null` there was no live region on the page at
+all, and `Button`'s real `disabled` attribute had already dropped focus to `<body>`.
+
+**Two protections that were not protections.** The action's docblock credited Next's Origin check and
+a 320-character column cap. Replaying a captured Server Action request showed a request that simply
+*omits* the `Origin` header is accepted (a wrong origin is rejected; no origin is not), and
+`information_schema` shows the column is `varchar` with no length. Both claims are now stated
+accurately, and the open write path is recorded as owed to Phase 26 rather than described as covered.
+The read-then-create shape was also replaced with an unconditional insert that swallows the unique
+violation — the read-first version had reintroduced, as a *timing* oracle, the very enumeration the
+design set out to prevent, and could double-insert under concurrency.
+
+**`MediaImage` discarded the mobile photograph in exactly the state three docblocks said it
+survived.** The `<picture>` branch keyed off `mobileAsset === null` — an asset derived from
+`cloudinaryPublicId`, which is `null` for *both* records whenever Cloudinary is unconfigured. So the
+art direction collapsed to a single `<img>` in the state this project is committed in, while still
+reserving the mobile box. The test is now record identity. Two smaller ones went with it: a distinct
+mobile record with no Cloudinary id emitted two byte-identical `<source>`s, and the LQIP blur was
+built from the desktop asset even when a different photograph was served.
+
+**`sizes` strings measure the viewport, not the container.** `58vw` and `25vw` described fractions of
+a *container* that stops growing at 1440px. Corrected with fixed-pixel tiers above 1440, and
+`productTileGrid` lost a three-column tier the product grid never had — it was describing the
+*category* grid. The browser pass now asserts that no image is delivered smaller than its box, which
+is the check that had already caught shop-the-look during the phase.
+
+**Two accessibility defects axe structurally cannot see.** A sticky header covered 100% of the
+focused control on backward keyboard traversal at 375×700 (WCAG 2.2 SC 2.4.11) — it needs a scroll
+position only Shift+Tab produces; fixed with one `scroll-padding-top`. And keyboard focus could land
+inside a section still at `opacity: 0`, invisible along with its focus ring for the length of the
+transition; `[data-reveal='closed']:focus-within` reveals it the instant focus enters. Also: the rail's
+focus ring was clipped to two bars by its own `overflow-x-auto`, `snap-x` sat on a non-scrolling
+`<ul>` and did nothing, and a CTA marked `inline-block` inside a flex column was blockified into a
+505px hit target.
+
+**The harness could not see its own gaps.** `verify-home` asserted that `railWhere` returns three
+clauses and inspected two of them — invert the merchandising flag and 161/161 still passed, because
+the seeded catalogue carries enough products either way. It also never built a rail with a CTA and no
+heading, a homepage with two heroes, or a body an editor had cleared (which is a root with one empty
+paragraph, not `null`). Every confirmed finding the pure module can hold now has a regression test;
+the harness is **173 checks**, up from 161.
+
+And the harness could truncate its own verdict: at 173 checks the report was cut off mid-run while
+the command still exited `0`, because `process.exit()` does not drain an asynchronous stdout write to
+a pipe or a file — and `payload.destroy()` tears the logger down before it flushes. The report is now
+one awaited `process.stdout.write`, verdict line first.
+
+#### What the gates cannot see, stated for the phases that follow
+
+Four categories, and every confirmed finding sits in one of them.
+
+1. **Types describe shape, never meaning.** `section.body ?? null` is perfectly typed and asks the
+   wrong question. `Math.min(Math.max(x, 1), 12)` takes a number and returns a number, and `4.5`
+   survives it into a Postgres `LIMIT`. `hasMedia`'s `.some()` and a renderer's `index === 0` are both
+   valid and disagree. `mobileAsset === null` compiles identically whether it means "no distinct
+   record" or "no Cloudinary id" — and those two meanings diverge in precisely the branch that exists
+   because Cloudinary is absent.
+2. **A harness meets the fixtures its author imagined, and one seeded composition.** States an editor
+   reaches by dragging and deleting — two heroes, a CTA without a heading, a cleared body — were
+   never constructed.
+3. **axe reads one static DOM at one scroll position, with no keyboard and no clock.** It cannot fire
+   a Server Action, so a form state that only exists after a failed submit never existed while it ran.
+   It has no scroll position produced by Shift+Tab. It does not measure opacity 120 ms later.
+4. **The gates run inside the machine and cannot check the machine's account of itself.** The largest
+   single class of confirmed findings — nine of thirty-six — was **prose asserting a property the code
+   does not have**. `Prose` said *"every href is re-validated"* while inheriting a converter that
+   validated none. `MediaImage` said the phone *"still gets the photograph shot for it"* in the one
+   state where it did not. `PromoStrip` said it was *"deliberately not a list of `<li>`"* while
+   rendering a list of `<li>`. `revalidateTags` credited its safety to an import strategy a stack
+   trace shows is not what saves it.
+
+   This phase had already caught one such docblock by measuring, fixed it, and shipped nine more.
+   **The docblock is the specification the next phase will trust, and it is the only artefact in this
+   repository that nothing executes.** That is the standing argument for running this audit every
+   time.
 
 
 # 2. Deviations
@@ -4594,6 +4731,8 @@ the block would need a field saying so rather than a component guessing.
 | Phase 9 — post-implementation audit | 2026-08-28 | Note **§1.14.13**: the committed shell re-read adversarially, four defects found and fixed. **The headline is a security defect in Phase 7 code**: one same-site-path rule copied into four files, all four accepting `/\t/evil.example` — which the WHATWG URL parser strips to `//evil.example` — so `/login?next=/%09/evil.example` sent a customer to another domain immediately after they typed their password. Demonstrated end to end against the running application and re-tested after the fix. Closed by `lib/same-site-path.ts`, one rule with no imports, reachable both by alias and by relative path, refusing control characters rather than stripping them. Second: `documentHref`'s object literal answered for `Object.prototype` members — `'toString'` returned a string that **rendered**, `'constructor'` returned a *relative* href, `'isPrototypeOf'` returned a boolean from a function typed `string | null`, and `'__proto__'` **threw**, silently degrading the whole shell; fixed with a `Map`, and slugs are now encoded so a stored `../../admin` cannot climb out of its namespace. Third, and **the same root cause as §1.14.3's focus defect with only half of it fixed at the time**: bypassing `Dialog.Trigger` loses the trigger ARIA as well as the focus restoration, so the search and bag buttons announced no `aria-haspopup` and no `aria-expanded` — invisible to axe, which had swept the markup clean twice. Fourth: `key`/`value` on the href meant two navigation items at one URL shared a mega-menu panel; fixed with positional keys and verified by writing duplicates to the live global. Also **tested two claims the phase had only written down**: the editor-save revalidation round trip (correct, but the README said "next request" where stale-while-revalidate makes it the one after — corrected), and the degraded shell in all four database-failure modes, which layer — a prerendered route serves real content, a dynamic route serves the fallback and logs, a route with its own data access 500s, and a build fails loudly rather than baking a fallback site. `verify:shell` is **100 checks**, up from 83. |
 | Phase 9 — campaigns deferred out of the linkable set | 2026-08-28 | Note **§1.14.11**, deviation **DEV-39**. `campaigns` had a route of `null` *and* remained in `LINKABLE_COLLECTIONS`, which together made an **editor trap**: the admin panel accepted a campaign as a link target and the header silently dropped the item. The evidence that a campaign has no page is tabulated — no `CAMPAIGN` node in structure §2's site map, campaigns on the *homepage* in feature matrix §3 and inside a **collection** page's edge cases in §12, no phase in the plan building a route, and no page-level art direction in visual guide §09 — together with the one line that cuts the other way (structure §4 path C and §22's Journey E draw *Home → Campaign → Lookbook*, in diagrams whose other steps are an overlay and a component). **Zero rows referenced a campaign**, measured rather than assumed: Drizzle's push warning quotes *table* row counts, not reference counts. One migration, `20260828_060719_phase_9_defer_campaign_links` — the only schema change in Phase 9 — applied, rolled back and re-applied, with the catalogue re-seeded afterwards because the rollback reached the data-model tables. Records a workflow hazard: `pnpm migrate` twice printed nothing, applied nothing and exited 0 inside a chained command, then worked when run alone. `verify-shell.ts` now asserts the *invariant* rather than the instance — every collection in `LINKABLE_COLLECTIONS` has a route — 83 checks, up from 76. The `campaigns` collection itself is untouched. Two workflow hazards recorded: a Payload CLI script that prints nothing may have done nothing while exiting 0, and `migrate:down` follows *batch* numbers rather than file order, which on a database with non-monotonic batches rolls back across phases and leaves a chain that reports itself fully applied while missing columns. **§1.14.12** records the Phase 7 harness defect that rebuild exposed: `verify-access.ts` created its editor fixture before its admin, so on an empty `users` table `Users.ts`'s first-account bootstrap silently promoted the editor to admin, every *"an editor cannot …"* assertion tested an admin, and one of them deleted a product and crashed the run on an unrelated foreign key. Fixed by ordering plus two assertions — `verify:access` is now **45 checks**. |
 | Phase 8 — Cloudinary credentials, live verification | 2026-08-28 | Note **§1.13.14**: credentials arrived after the phase was committed and `pnpm verify:media` armed its live half with no edit — **61/61**, up from 48. Confirms the one thing that could not be predicted without an account: **Strict transformations is off**, so the dynamically built delivery URLs this project depends on derive on the fly. Also confirms the storage round trip end to end — public id, asset id, version and resource type stored from Cloudinary's own response, `media.url` pointing at the CDN, Cloudinary's dimensions replacing the local probe's, every `srcset` candidate for a real record resolving, and a deleted record leaving a 404 behind. **The height-limited clamp predicted real data correctly**: a 3000×1200 landscape in the 4:5 gallery context clamps to 960 = `floor(1200 × 0.8)`, a formula derived from an unrelated 864×576 fixture. Recorded that `f_auto` returns **WebP** on this account where the demo cloud returned AVIF — both correct, and noted so the difference is not later read as a regression. One vacuous check name corrected. **§1.5 Cloudinary unblocked**; the live round trip is struck from §1.13.12's owed list. `.env.example` also de-duplicated: the Phase 8 commit added a Cloudinary block while an empty one already existed in the per-provider section. |
-| Phase 10 — homepage / editorial system | 2026-08-28 | Notes **§1.15**: the homepage as a `homepage` **global** of typed blocks, with Phase 9's split reused — a **pure** `lib/home/resolve.ts` holding every drop/keep rule so a CLI can exercise it, and `lib/home/home.ts` holding only caching. **Eleven block types, five of them the Phase 6 objects imported unchanged** (`splitFeature`, `figure`, `editorial`, `shopTheLook`, `productGroup`), which is what `blocks/editorial.ts` predicted; `productRail` (a query) and `productGroup` (a curation) both exist because neither expresses the other. **§1.15.3**: the 63-byte identifier arithmetic done *before* the schema reached the database — `collectionFeature` and `categoryTiles` breach it at 66 and 65 bytes and carry the **function** form of `dbName`; verified afterwards that **no identifier in the database is 63 bytes or longer**, an invariant `verify-home.ts` now holds permanently, because a breach is silent in both directions and only fails when two names truncate alike. **§1.15.4**: `campaigns.mobileHero` had been **unrenderable since Phase 6** — `MediaImage` art-directed one asset at two crops and had no path for a second asset; one backwards-compatible `mobileMedia` prop, with the mobile box reserved from the record that will actually be served. **§1.15.6 records the defect only a browser could find**: `Reveal`'s docblock claimed content could never be stranded invisible, and an `IntersectionObserver` reports *threshold crossings*, so jumping to the foot of the page left **six sections at `opacity: 0` for the rest of the session** — fixed with an upward-only `rootMargin` and re-measured. **§1.15.7 records a Phase 7 defect this phase's schema exposed**: `z.email().trim()` validates the **raw** input, so `"  Ada@Example.COM "` was rejected on the sign-in, registration and reset forms — the exact case `auth/schemas.ts` said the trim existed to handle; both schemas now pipe a trimmed string into the email check. Deviations **DEV-40** (no animation library, reversing DEV-24's deferral on four measurements — 8.64 MiB, ~40 KB gzip on the LCP route, `reducedMotion: "never"`, and a WAAPI path that cannot read the duration tokens), **DEV-41** (no hero video and no field for one), **DEV-42** (the newsletter is the footer's column, **discharging DEV-25**, with `create` kept `isStaff` to avoid a membership-enumeration oracle), **DEV-43** ("Editorial split" and "Brand story" are one block), **DEV-44** (the hero is stacked; no type over the photograph). New decisions **D-33**, **D-34** (amends **D-13**), **D-35**; new gap **G-16**. New script `pnpm verify:home` — **161 checks**; `verify:access` 45/45, `verify:media` 61/61, `verify:shell` 100/100 all unchanged. 54 browser checks across §30.1a's eight widths and **0 axe-core violations** at 1440×900 and 390×844. `/` confirmed prerendered `static` with `home` on its cache tags. **No dependency added**; direct dependencies stay at 22. |
+| Phase 10 — homepage / editorial system | 2026-08-28 | Notes **§1.15**: the homepage as a `homepage` **global** of typed blocks, with Phase 9's split reused — a **pure** `lib/home/resolve.ts` holding every drop/keep rule so a CLI can exercise it, and `lib/home/home.ts` holding only caching. **Eleven block types, five of them the Phase 6 objects imported unchanged** (`splitFeature`, `figure`, `editorial`, `shopTheLook`, `productGroup`), which is what `blocks/editorial.ts` predicted; `productRail` (a query) and `productGroup` (a curation) both exist because neither expresses the other. **§1.15.3**: the 63-byte identifier arithmetic done *before* the schema reached the database — `collectionFeature` and `categoryTiles` breach it at 66 and 65 bytes and carry the **function** form of `dbName`; verified afterwards that **no identifier in the database is 63 bytes or longer**, an invariant `verify-home.ts` now holds permanently, because a breach is silent in both directions and only fails when two names truncate alike. **§1.15.4**: `campaigns.mobileHero` had been **unrenderable since Phase 6** — `MediaImage` art-directed one asset at two crops and had no path for a second asset; one backwards-compatible `mobileMedia` prop, with the mobile box reserved from the record that will actually be served. **§1.15.6 records the defect only a browser could find**: `Reveal`'s docblock claimed content could never be stranded invisible, and an `IntersectionObserver` reports *threshold crossings*, so jumping to the foot of the page left **six sections at `opacity: 0` for the rest of the session** — fixed with an upward-only `rootMargin` and re-measured. **§1.15.7 records a Phase 7 defect this phase's schema exposed**: `z.email().trim()` validates the **raw** input, so `"  Ada@Example.COM "` was rejected on the sign-in, registration and reset forms — the exact case `auth/schemas.ts` said the trim existed to handle; both schemas now pipe a trimmed string into the email check. Deviations **DEV-40** (no animation library, reversing DEV-24's deferral on four measurements — 8.64 MiB, ~40 KB gzip on the LCP route, `reducedMotion: "never"`, and a WAAPI path that cannot read the duration tokens), **DEV-41** (no hero video and no field for one), **DEV-42** (the newsletter is the footer's column, **discharging DEV-25**, with `create` kept `isStaff` to avoid a membership-enumeration oracle), **DEV-43** ("Editorial split" and "Brand story" are one block), **DEV-44** (the hero is stacked; no type over the photograph). New decisions **D-33**, **D-34** (amends **D-13**), **D-35**; new gap **G-16**. New script `pnpm verify:home` — **173 checks**; `verify:access` 45/45, `verify:media` 61/61, `verify:shell` 100/100 all unchanged. 55 browser checks across §30.1a's eight widths and **0 axe-core violations** at 1440×900 and 390×844. `/` confirmed prerendered `static` with `home` on its cache tags. **No dependency added**; direct dependencies stay at 22. |
+
+| Phase 10 — post-implementation audit | 2026-08-28 | Note **§1.15.12**: the committed phase re-read by seven auditors with adversarial verification — **39 claims, 3 refuted, 36 confirmed** (2 high, 8 medium, 26 low), all fixed. **The headline is a security defect this phase's own decision D-35 claimed to have closed**: `Prose` spread `defaultConverters` and overrode only `link`, while Lexical's **`autolink`** node — created by the editor's plugin whenever someone types something URL-shaped — renders `node.fields.url` unvalidated. `//evil.example/phish` and a `data:text/html` payload rendered as live anchors on the homepage; the save side cannot catch it either, because `AutoLinkNode` declares no `getSubFields` so the `url` field's hooks never run. Closed by listing every converter by name, sharing one sanitised implementation between both link types, and rendering nothing for the four node types this editor does not enable. Second: **`getHome`'s documented "never throws" was the defect** — `/` is prerendered with a 300-second revalidate, so a failed *background regeneration* returned a valid empty homepage that ISR cached over the good HTML for five minutes; the `try` had been reasoned about for the data cache and the route cache is a second one. `page.tsx` now throws on `degraded`. Also: two `<h1>`s from two heroes (axe requires *at least* one); an empty `<h2>` from a rail with a CTA and no heading; the newsletter announcing nothing and dropping focus on a validation failure; a sticky header covering 100% of the focused control on Shift+Tab (WCAG 2.4.11); focus landing inside an `opacity: 0` section; `MediaImage` discarding the mobile photograph in exactly the no-Cloudinary state three docblocks said it survived; a read-then-create newsletter path that was a timing oracle for the enumeration it set out to prevent; and two `sizes` strings measuring the viewport where they meant the container. **Nine of the thirty-six were docblocks asserting a property the code does not have** — the report's own conclusion is that the docblock is the specification the next phase trusts and the only artefact nothing executes. `verify-home` is **173 checks**, up from 161, with a regression for every confirmed finding the pure module can hold — and its report is now one awaited `stdout.write`, because `process.exit()` was truncating the verdict while still exiting 0. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

@@ -1151,13 +1151,28 @@ Phase 6 editorial blocks imported unchanged. **No dependency added**; direct dep
 | Empty / missing media and incomplete blocks handled gracefully | **pass** — every edge case in feature matrix §3 asserted in `verify-home.ts` |
 | Accessibility | **0 axe-core violations** at 1440×900 and 390×844; the scrollable rail is keyboard-operable, which axe cannot see |
 
-`pnpm verify:home` — **161 checks**, including the publication states as real Payload documents and
+`pnpm verify:home` — **173 checks**, including the publication states as real Payload documents and
 the invariant that **no generated identifier has been truncated at 63 bytes**. 55 browser checks
 across §30.1a's eight widths. `verify:access` 45/45, `verify:media` 61/61, `verify:shell` 100/100 all
 unchanged. New decisions **D-33**, **D-34** (amending **D-13**), **D-35**; gap **G-16** closed;
 deviations **DEV-40**–**DEV-44**, discharging **DEV-24** and **DEV-25**.
 
-**Two defects found by measuring rather than reading.** The editorial reveal stranded six sections
+**A post-implementation audit followed the phase and found 36 defects of 39 claims** (2 high, 8
+medium, 26 low; 3 refuted), all fixed. The first is a security defect **decision D-35 claimed to have
+closed**: `Prose` spread `defaultConverters` and overrode only `link`, while Lexical's `autolink`
+node — created by the editor's own plugin whenever someone types something URL-shaped — rendered its
+stored URL unvalidated, so `//evil.example/phish` and a `data:text/html` payload became live anchors
+on the homepage. The save side could not catch it either: `AutoLinkNode` declares no `getSubFields`,
+so the `url` field's hooks and validators never run on it. The second: `getHome`'s documented *"never
+throws"* was itself the defect, because a failed **background regeneration** then returned a valid
+empty homepage that ISR cached over the good HTML for five minutes — the `try` had been reasoned
+about for the data cache, and the route cache is a second one.
+
+Nine of the thirty-six were **docblocks asserting a property the code does not have**, which is the
+audit's own conclusion: the docblock is the specification the next phase trusts, and it is the only
+artefact in the repository that nothing executes. Notes §1.15.12.
+
+**Two defects found by measuring rather than reading** *during* the phase. The editorial reveal stranded six sections
 permanently invisible when the reader jumped to the foot of the page — an `IntersectionObserver`
 reports threshold *crossings*, and a section that skips past the viewport in one scroll never fires
 one; the component's own docblock had claimed this could not happen. And a **Phase 7** defect the

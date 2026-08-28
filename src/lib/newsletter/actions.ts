@@ -50,9 +50,23 @@ import { NewsletterSchema } from './schemas'
  *
  * **Rate limiting — Phase 26**, in the same words `Customers.ts` uses for registration: it is
  * *"recorded as owed rather than improvised here."* §26.1a puts Turnstile on the newsletter
- * specifically. Until then the protections are Next's own: a Server Action is a POST to the route it
- * is used on with an Origin/Host check and a 1 MB body cap, and the field is capped at 320
- * characters by the schema and by the column.
+ * specifically.
+ *
+ * **What protects this today, stated accurately.** An earlier version of this paragraph named two
+ * protections that are not ones, and Phase 10's audit disproved both by replaying a captured Server
+ * Action request:
+ *
+ * - Next's **Origin/Host check is a browser-CSRF defence, not authentication.** A request that
+ *   simply omits the `Origin` header is accepted and the row is written. A *wrong* origin is
+ *   rejected; no origin is not.
+ * - **There is no 320-character column cap.** `newsletter_subscribers.email` is `varchar` with no
+ *   length. The only cap is Zod's, in this action.
+ *
+ * So the honest position is: this is an unauthenticated write endpoint with a Zod-shaped body, and
+ * the only thing standing between it and a script is that nobody has pointed one at it. That is the
+ * same exposure `Customers.ts` records for registration, and it is owed to the same phase. It is
+ * written down here rather than papered over, because a security note that overstates its
+ * protections is worse than none.
  */
 
 /** Zod's field errors, first message per field — a control can only point at one. */
@@ -85,6 +99,24 @@ function parse(formData: FormData) {
  */
 const CONFIRMATION = 'Thank you — you are on the list.'
 
+/**
+ * Is this the `unique` index on `email` refusing a second row?
+ *
+ * Payload surfaces a constraint violation as a `ValidationError` whose issue path names the field.
+ * The check is deliberately narrow: anything else must not be mistaken for "already subscribed" and
+ * reported to the customer as success.
+ */
+function isDuplicateEmail(error: unknown): boolean {
+  const data = (error as { data?: { errors?: { path?: unknown }[] } })?.data
+
+  if (Array.isArray(data?.errors) && data.errors.some((issue) => issue?.path === 'email')) {
+    return true
+  }
+
+  // The raw Postgres path, in case the write ever bypasses Payload's own validation.
+  return (error as { code?: unknown })?.code === '23505'
+}
+
 export async function subscribe(
   previous: NewsletterFormState,
   formData: FormData,
@@ -96,9 +128,19 @@ export async function subscribe(
   const parsed = parse(formData)
 
   if (!parsed.ok) {
+    /*
+     * The message is not optional, and `null` here was a real accessibility defect.
+     *
+     * `FormStatus` renders nothing without one, so on a validation failure there was no live region
+     * on the page at all — and because `Button` uses a real `disabled` attribute for its busy state,
+     * focus had already fallen to `<body>`. The customer got a red field they were not looking at
+     * and no announcement. `Field` deliberately clears `role="alert"` on its own message
+     * (`field.tsx`: *"summary announces, fields describe"*), which is right — and only works when
+     * there is a summary. `lib/auth/actions.ts` supplies one for exactly this reason.
+     */
     return {
       status: 'error',
-      message: null,
+      message: 'Check the highlighted field.',
       fieldErrors: parsed.fieldErrors,
       values,
       submissionCount: previous.submissionCount + 1,
@@ -111,20 +153,21 @@ export async function subscribe(
     const payload = await getPayloadClient()
 
     /*
-     * Read before write, so the ordinary "already subscribed" case is not an exception path — and
-     * so an address that was previously unsubscribed is *not* silently re-subscribed. That row
-     * exists precisely so a later import cannot resurrect the address (`NewsletterSubscribers.ts`),
-     * and honouring an unsubscribe matters more than the convenience of a one-click return. The
-     * response is identical either way, so nothing is disclosed.
+     * **Attempt the write unconditionally, and swallow the duplicate.**
+     *
+     * The obvious shape — read, then create only if absent — is the one this action had, and it
+     * reintroduced as a *timing* oracle the very thing the design set out to prevent: an unknown
+     * address cost a SELECT plus an INSERT, a known one cost a SELECT, and the difference is
+     * measurable. It was a concurrency bug too, since two submissions of the same new address could
+     * both find nothing and both insert.
+     *
+     * Attempting the insert every time makes both paths cost the same work, and the `unique` index
+     * on `email` — not application logic — is what makes the second one a no-op. Honouring a prior
+     * unsubscribe falls out of the same mechanism: the row already exists, so the insert fails and
+     * nothing is changed. That row exists precisely so *"a later import cannot resurrect the
+     * address"* (`NewsletterSubscribers.ts`).
      */
-    const existing = await payload.find({
-      collection: 'newsletter-subscribers',
-      where: { email: { equals: email } },
-      limit: 1,
-      overrideAccess: true,
-    })
-
-    if (existing.docs.length === 0) {
+    try {
       await payload.create({
         collection: 'newsletter-subscribers',
         overrideAccess: true,
@@ -140,6 +183,15 @@ export async function subscribe(
           status: 'subscribed',
         },
       })
+    } catch (error) {
+      /*
+       * A duplicate is the expected outcome for an address already on the list, and it must be
+       * indistinguishable from a fresh signup. Anything else is a real failure and is rethrown to
+       * the outer handler.
+       */
+      if (!isDuplicateEmail(error)) {
+        throw error
+      }
     }
 
     return {

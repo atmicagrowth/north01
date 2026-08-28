@@ -3272,7 +3272,7 @@ export interface Navigation {
       }[]
     | null;
   /**
-   * Structure §20: Shop, Help, About/editorial, and the legal links. The newsletter column is a form, not navigation — it is built in Phase 19 (DEV-25).
+   * Structure §20: Shop, Help, About/editorial, and the legal links. The newsletter column is a form rather than navigation, so it is not edited here — it was built in Phase 10 (DEV-42).
    */
   footer?:
     | {

@@ -72,7 +72,11 @@ export function Hero({ section }: { section: SectionOf<'hero'> }) {
 
       <PageContainer>
         <div className="py-l lg:py-xl">
-          <PageTitle eyebrow={section.season} size="display-xl">
+          {/*
+            `as` comes from the resolver, which demotes every hero after the first. A component
+            cannot know how many siblings it has, and an editor may add a second campaign hero.
+          */}
+          <PageTitle eyebrow={section.season} size="display-xl" as={section.headingLevel}>
             {section.headline}
           </PageTitle>
 
