@@ -3,6 +3,7 @@ import type { CollectionConfig } from 'payload'
 import { isAdmin, isStaff, publishedOnly } from '../access'
 import { seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
+import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
 
 /**
  * The product taxonomy. Plan §6.1d gives the shape by example — Clothing, Tops, Shirts, Hoodies,
@@ -36,6 +37,23 @@ export const Categories: CollectionConfig = {
     defaultColumns: ['name', 'parent', 'status', 'sortOrder', 'updatedAt'],
     group: 'Catalogue',
     description: 'The shop taxonomy. Only create a category that navigation or a filter uses.',
+  },
+
+  /**
+   * The taxonomy *is* the shop's navigation and its category filter, so a save here changes both.
+   *
+   * `shell` and `navigation` are the mega menu and the mobile navigation, which Phase 9 already
+   * drives from this collection; `catalog` is Phase 11's filter vocabulary. A category renamed in
+   * the CMS should read the same in the header and in the filter panel, and without this hook the
+   * two would disagree for up to five minutes.
+   *
+   * **It does not re-index.** A slug change alters the `categorySlugs` of every product filed under
+   * it, which is a bulk operation rather than a hook's job — `pnpm reindex` is the documented answer,
+   * and `docs/DATABASE.md` records slug changes as the case that needs it.
+   */
+  hooks: {
+    afterChange: [revalidateCollection('catalog', 'shell', 'navigation')],
+    afterDelete: [revalidateCollectionDelete('catalog', 'shell', 'navigation')],
   },
 
   /**

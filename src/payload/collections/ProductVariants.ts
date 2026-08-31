@@ -1,5 +1,7 @@
 import type { CollectionConfig, NumberFieldSingleValidation } from 'payload'
 
+import { COLOR_FAMILY_OPTIONS } from '@/lib/catalog/colors'
+
 import { isAdmin, isStaff, publishedOn } from '../access'
 import { minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
@@ -221,19 +223,12 @@ export const ProductVariants: CollectionConfig = {
       type: 'select',
       required: true,
       index: true,
-      options: [
-        { label: 'Black', value: 'black' },
-        { label: 'Charcoal', value: 'charcoal' },
-        { label: 'Grey', value: 'grey' },
-        { label: 'Bone', value: 'bone' },
-        { label: 'White', value: 'white' },
-        { label: 'Tan', value: 'tan' },
-        { label: 'Brown', value: 'brown' },
-        { label: 'Navy', value: 'navy' },
-        { label: 'Blue', value: 'blue' },
-        { label: 'Green', value: 'green' },
-        { label: 'Rust', value: 'rust' },
-      ],
+      /*
+       * The list itself lives in `lib/catalog/colors.ts`, because Phase 11's filter panel has to
+       * render these labels and a second copy of them would drift: a colour added here would be
+       * missing from the shop filter, which is a field an editor fills in that changes nothing.
+       */
+      options: [...COLOR_FAMILY_OPTIONS],
       admin: {
         description:
           'What the colour filter groups this under. The swatch name above is what is displayed.',

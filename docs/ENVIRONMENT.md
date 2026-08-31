@@ -318,9 +318,9 @@ placeholder — correct for development, and *broken* on a serverless platform w
 ephemeral and often read-only. `reportEnvironment` therefore warns whenever `appEnv` is not `local` and
 the group is unconfigured. It warns rather than throws: `ARCHITECTURE.md` §2 requires an unavailable
 optional service to degrade rather than stop the shop.
-| `NEXT_PUBLIC_ALGOLIA_APP_ID` | **public** | 12 | Algolia → API Keys |
-| `NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY` **†** | **public** | 12 | Algolia → **Search-Only** key. Never the admin key |
-| `ALGOLIA_ADMIN_API_KEY` **†** | server | 12 | Algolia → Admin API Key. Development index only |
+| `NEXT_PUBLIC_ALGOLIA_APP_ID` | **public** | 11 | Algolia → API Keys (shown at signup) |
+| `NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY` **†** | **public** | 11 | Algolia → **Search API Key**. Read-only; a write through it is 403 |
+| `ALGOLIA_WRITE_API_KEY` **†** | server | 11 | Algolia → **Write API Key**, *not* the Admin key. Development index only — see below |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | **public** | 17 | Stripe → Developers → API keys. `pk_test_…` |
 | `STRIPE_SECRET_KEY` | server | 17 | same. `sk_test_…` or a restricted `rk_test_…`; **never a `_live_` key outside production** |
 | `STRIPE_WEBHOOK_SECRET` | server | 17 | Stripe → Webhooks → signing secret, `whsec_…` |

@@ -6,6 +6,8 @@ import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
 import { validateRequiredUpload } from '../fields/required'
 import { cascadeDelete } from '../hooks/cascadeDelete'
+import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
+import { syncSearchIndexAfterChange, syncSearchIndexAfterDelete } from '../hooks/syncSearchIndex'
 
 /**
  * The merchandising entity. Plan §2.1 is explicit about what that means: *"A product is the
@@ -82,6 +84,38 @@ export const Products: CollectionConfig = {
   defaultSort: '-updatedAt',
 
   hooks: {
+    /**
+     * **Phase 11 gave products an `afterChange`, and two things depend on it.**
+     *
+     * `syncSearchIndexAfterChange` keeps the Algolia record in step, and `revalidateCollection`
+     * expires the two caches a product save can invalidate.
+     *
+     * It fires on *every* product write, including the ones `syncProductDerived` performs on the
+     * product's behalf whenever a variant changes — `recalculateProductDerived` always calls
+     * `payload.update`, with no equality check to skip it. That is exactly what is wanted: a variant
+     * going out of stock or changing colour changes the product's facets, and routing all of it
+     * through the product means one synchronisation path rather than two that can disagree.
+     *
+     * **`home` is here now, and Phase 10 deliberately left it out.** `revalidateTags.ts` recorded the
+     * reason — a product rail is *"a 300-second-stale merchandising surface by design"* — and named
+     * this phase as the owner of a tighter guarantee. The listings this phase builds are where a
+     * five-minute delay stops being acceptable: a merchandiser who unpublishes a product expects it
+     * gone from the shop, not gone in five minutes. `catalog` is the filter vocabulary; `home` is the
+     * rails. `revalidateTag(…, 'max')` is stale-while-revalidate, so this costs the *next* request a
+     * background refresh rather than a database read in a customer's critical path.
+     *
+     * Neither hook can recurse. `syncSearchIndex` only reads from Payload and writes to Algolia, and
+     * `revalidateCollection` writes nothing at all.
+     */
+    afterChange: [syncSearchIndexAfterChange, revalidateCollection('catalog', 'home')],
+
+    /**
+     * Reached only by a permanent delete from the trash view. The ordinary admin delete is an update
+     * (`trash: true`), which goes through `afterChange` above — where `payload.find` no longer
+     * returns the soft-deleted row, so the index entry is removed just the same.
+     */
+    afterDelete: [syncSearchIndexAfterDelete, revalidateCollectionDelete('catalog', 'home')],
+
     /**
      * Four dependants carry a **required** reference to a product, which Postgres stores as
      * `NOT NULL` with `ON DELETE SET NULL` — a combination that makes the delete fail rather than

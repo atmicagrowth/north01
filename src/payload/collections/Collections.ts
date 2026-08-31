@@ -4,6 +4,8 @@ import { isAdmin, isStaff, publishedOnly } from '../access'
 import { editorialBlocks } from '../blocks/editorial'
 import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
+import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
+import { syncSearchIndexForCollection } from '../hooks/syncSearchIndex'
 
 /**
  * Merchandising sets — Current Season, Essentials, Limited, Archive (structure document §2).
@@ -49,6 +51,24 @@ export const Collections: CollectionConfig = {
    * Deletion is admin-only across every collection in this project: §7.1c withholds it from editors,
    * and an editor who no longer wants a document sets it back to draft.
    */
+
+  /**
+   * **Membership lives here, so the index has to be told from here.**
+   *
+   * `Products.ts` puts collection membership on the collection — *"an order is a property of the
+   * list, not of its members"* — which means adding a product to "Essentials" changes *that
+   * product's* `collectionSlugs` facet and fires no product hook at all. Without
+   * `syncSearchIndexForCollection`, a curated set would only become filterable after the next
+   * unrelated save on each of its members.
+   *
+   * `catalog` is the filter vocabulary: publishing, renaming or unpublishing a collection changes
+   * the options the shop's filter panel offers.
+   */
+  hooks: {
+    afterChange: [syncSearchIndexForCollection, revalidateCollection('catalog')],
+    afterDelete: [revalidateCollectionDelete('catalog')],
+  },
+
   access: {
     read: publishedOnly,
     create: isStaff,

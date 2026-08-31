@@ -135,8 +135,14 @@ export const recalculateProductDerived = async ({
      * operation, and a bulk variant edit shares one request across every matched row: the first
      * variant would refresh its product and every later one would skip.
      *
-     * Nothing needs suppressing anyway. Updating a product fires the *product's* hooks, and products
-     * have no `afterChange` — the only hook they carry is `beforeDelete`. There is no cycle to break.
+     * Nothing needs suppressing anyway. Updating a product fires the *product's* hooks, and neither
+     * of them writes: Phase 11 added `afterChange` to `products`, and it does two things — push a
+     * record to Algolia and expire a cache tag. Neither touches Postgres, so there is still no cycle
+     * to break.
+     *
+     * (This paragraph said products had *no* `afterChange` until Phase 11 gave them one. The
+     * conclusion held; the premise did not, and a docblock nothing executes is exactly the artefact
+     * Phase 10's audit found wrong nine times.)
      */
     await payload.update({
       collection: 'products',

@@ -893,6 +893,54 @@ tab-prefixed `/	/evil.example` forms Phase 9's audit found accepted in four sepa
 
 *Recorded in Phase 10.*
 
+### D-36 — The engine is chosen per query, not per route
+
+Plan §11.1d says *"use Algolia as the query/facet engine"*; plan §0 says Postgres is the source of truth;
+plan §A.5 says the catalogue must stay usable when Algolia is down. All three hold once the question stops
+being *"which engine runs the shop"* and becomes **"which engine can answer this query"**.
+
+`lib/catalog/query.ts`'s `requiresSearchIndex` is that predicate, and it states a fact about the schema
+rather than a preference. Three of feature matrix §5's six facets are not columns on `products`:
+
+| Facet | Stored on | Engine |
+|---|---|---|
+| Category, Price, Availability, every sort, the page | indexed columns on `products` | **Postgres** |
+| Size, Colour | `product-variants` — reached through a Payload `join`, which has no column | **Algolia** |
+| Collection | `collections.products` — membership is owned by the list | **Algolia** |
+
+Answering *"products with an active Black variant in M"* from Postgres means querying the variant table,
+collecting distinct product ids and paginating over that — the *"expensive full-catalog scan on every
+request"* §11.1d forbids by name.
+
+The consequence is the one **D-04** predicted: an Algolia outage cannot take the shop down. `/shop`,
+`/shop/<category>`, all five sorts, the price filter and the in-stock filter keep working. Only the three
+variant-and-membership facets degrade, into §11.1d's stated fallback — a controlled state offering category
+navigation, never an empty grid implying the shop has nothing. **Measured** in Phase 11 against a
+deliberately unreachable Algolia application: unfiltered 10 products, `/shop/clothing` 8, `?priceMax=150`
+2, `?availability=in-stock` 10, `?sort=price-desc` 10, and `?color=black` the unavailable state.
+
+*Recorded in Phase 11.*
+
+### D-37 — The search index stores no customer-visible data
+
+An Algolia record here carries facets, ranking attributes, a name and a slug — and **no price, no image,
+no description**. A query returns `objectID` and nothing else (`attributesToRetrieve: ['objectID']`), and
+`lib/catalog/catalog.ts` reads those ids back from Postgres through the ordinary access-controlled
+`payload.find`.
+
+That is the opposite of the usual Algolia record, and it is what makes *"Algolia is a derived search
+index"* true at render rather than only in principle. An index is a copy and a copy is stale between the
+write and the sync; a grid rendered from one would show the name and price of a product unpublished thirty
+seconds ago, and a price edit would be visible in a listing before it was true in the database.
+
+The cost is one extra indexed round trip on a filtered query. What it buys: a stale id costs one missing
+card and can never cost a wrong price, a draft product, or a garment deleted an hour ago — so plan §12.1d's
+*"deleted product still in index"* and *"product unpublished after index update"* are handled by
+construction. It also means **one** card resolver for both engines, rather than two rendering paths that
+drift.
+
+*Recorded in Phase 11.*
+
 ---
 
 ## 5. Current position

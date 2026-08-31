@@ -157,8 +157,21 @@ const ServerEnvSchema = PublicEnvSchema.extend({
     })
     .optional(),
 
-  /** Phase 12 — Algolia write key. Never exposed to the browser. *(named here — DEV-26)* */
-  ALGOLIA_ADMIN_API_KEY: z.string().min(1).optional(),
+  /**
+   * Phase 11 — Algolia write key. Never exposed to the browser. *(named here — DEV-26)*
+   *
+   * **Write, not admin, and the distinction is the point.** Algolia's signup screen issues a
+   * pre-scoped *Write API Key* alongside the search key. It can add and delete objects, edit
+   * settings and delete indices — everything indexing needs — and it **cannot list or create API
+   * keys**, which the Admin key can. Measured against a live application: `GET /1/keys` with this
+   * key returns **403**. Putting an Admin key in this variable would hand account-root to anything
+   * that reads the environment, for no capability the indexer uses.
+   *
+   * This variable was called `ALGOLIA_ADMIN_API_KEY` until Phase 11. The name was wrong twice over
+   * — against Algolia's own label and against the key's actual ACLs — and it was corrected before
+   * anything read it.
+   */
+  ALGOLIA_WRITE_API_KEY: z.string().min(1).optional(),
 
   /**
    * Phase 17 — Stripe. Restricted keys (`rk_…`) are accepted alongside secret keys (`sk_…`): Stripe
@@ -543,11 +556,16 @@ const INTEGRATIONS = {
     keys: ['NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'],
   },
   algolia: {
-    phase: 12,
+    /*
+     * Phase 11, not 12. The search *UI* is Phase 12, but plan §11.1d makes the shop's colour, size
+     * and collection filters run on the index — those three facets live on `product-variants` and
+     * `collections`, where no product column can answer them. See `lib/catalog/catalog.ts`.
+     */
+    phase: 11,
     keys: [
       'NEXT_PUBLIC_ALGOLIA_APP_ID',
       'NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY',
-      'ALGOLIA_ADMIN_API_KEY',
+      'ALGOLIA_WRITE_API_KEY',
     ],
   },
   stripe: {

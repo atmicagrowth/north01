@@ -3614,6 +3614,294 @@ Four categories, and every confirmed finding sits in one of them.
    time.
 
 
+## 1.16 Phase 11 — product catalogue and discovery
+
+Plan §11.1a–§11.1e. The shop page, the product card's nine states, URL-backed filters through nuqs,
+five sorts, pagination, the empty state — and the search index that three of the six required facets
+cannot be answered without.
+
+**Two dependencies added**, both this phase's own and both on the approved list (tech stack §1):
+`nuqs@2.10.1` (plan §11.1d names it) and `algoliasearch@5.57.0`. Direct dependencies go from 22 to 24.
+
+### 1.16.1 The engine is chosen per query, and that is what makes three documents agree
+
+Three instructions look incompatible until the question is narrowed:
+
+- plan §11.1d — *"use Algolia as the query/facet engine after the catalog is seeded"*;
+- plan §0 and the master directive — Postgres is the source of truth, Algolia is *"a derived search
+  index"*;
+- plan §A.5 — when Algolia is down, *"catalog remains usable through curated category navigation."*
+
+They agree the moment the question stops being *which engine runs the shop* and becomes **which engine
+can answer this query**. `requiresSearchIndex` is that predicate, and it states a fact about the
+schema rather than a preference:
+
+| Facet | Stored on | Engine |
+|---|---|---|
+| Category | `products.categories` — indexed relationship | Postgres |
+| Price | `products.derived.priceFromMinor` — indexed | Postgres |
+| Availability | `products.derived.inventoryTotal` — indexed | Postgres |
+| Every sort, and the page | indexed columns | Postgres |
+| **Size** | `product-variants.size` | **Algolia** |
+| **Colour** | `product-variants.colorFamily` | **Algolia** |
+| **Collection** | `collections.products` | **Algolia** |
+
+The last three are not columns on `products` at all. `products.variants` and `products.collections`
+are Payload **`join`** fields — virtual, no column — so a product cannot be filtered by one. Answering
+*"products with an active Black variant in M"* from Postgres means querying the variant table,
+collecting distinct product ids and paginating over that set, which is precisely the *"expensive
+full-catalog scan on every request"* §11.1d forbids by name. Decision **D-36**.
+
+`Products.ts` predicted the collection half of this in Phase 6 and gave the reason: membership is
+owned by the collection because *"an order is a property of the list, not of its members."*
+
+**The consequence is the one D-04 already committed to**, now true rather than aspirational: an
+Algolia outage cannot take the shop down. Measured against a deliberately unreachable application —
+`.env` pointed at `BROKENAPPID`, dev server restarted:
+
+| Request | During the outage |
+|---|---|
+| `/shop` | **10 products** |
+| `/shop/clothing` | **8 products** |
+| `/shop?priceMax=150` | **2 products** |
+| `/shop?availability=in-stock` | **10 products** |
+| `/shop?sort=price-desc` | **10 products** |
+| `/shop?color=black` | the controlled unavailable state, with the two top-level categories |
+
+Only the three variant-and-membership facets degrade, and they degrade into §11.1d's stated fallback
+rather than into an empty grid.
+
+### 1.16.2 The index stores no price, no image and no name a customer reads
+
+Decision **D-37**, and it is the single most consequential choice in the phase.
+
+An Algolia record here carries facets and ranking attributes. A query asks for `objectID` **and
+nothing else**, and `catalog.ts` reads those ids back from Postgres through the ordinary
+access-controlled `payload.find`.
+
+This is the opposite of the usual Algolia record, and the argument is the same one that governs the
+browser: *a copy is not authoritative*. A grid rendered from the index would show the name and price
+of a product unpublished thirty seconds ago, and a price edit would be visible in a listing before it
+was true in the database — the exact failure *"the browser is never authoritative … recalculate
+server-side"* exists to prevent, moved one layer out.
+
+The cost is one extra indexed round trip on a filtered query. What it buys is that plan §12.1d's
+*"deleted product still in index"* and *"product unpublished after index update"* are handled **by
+construction**: the row is not returned, so the card is not rendered. A stale id costs one missing
+card and can never cost a wrong price. It also means **one** card resolver for both engines rather
+than two rendering paths that drift — the property `verify:catalog` asserts directly.
+
+### 1.16.3 What Phase 11 took from Phase 12, and what it left
+
+§11.1d cannot be built without an index, and an index cannot exist without a record shape, settings,
+sort replicas, a rebuild and synchronisation. So this phase owns the parts of §12.1a and §12.1b that
+a *facet* needs, and Phase 12 owns everything *searching* means:
+
+| | Phase |
+|---|---|
+| Record shape, filterable attributes, sort replicas | **11** |
+| Full rebuild (`pnpm reindex`), sync on write, removal on unpublish | **11** |
+| Searchable attributes *declared* (§12.1a) but never queried | **11** — an index whose records lack them cannot be made searchable later without a rebuild |
+| The search overlay, autocomplete, suggestions, recent and popular queries, the results page, §12.1d's query edge cases | **12** |
+
+`ALGOLIA_ADMIN_API_KEY` was corrected to **`ALGOLIA_WRITE_API_KEY`** on the way — the reasoning is in
+the naming table in §1.9, and the short version is that Algolia's signup screen issues a pre-scoped
+*Write* key which is measurably not the Admin key (`GET /1/keys` → **403**). The old name invited
+someone to paste an account-root credential into it. `env.core.ts`'s integration group moves from
+phase 12 to phase 11 with it.
+
+**There is deliberately no `ALGOLIA_INDEX_NAME`.** The index is `catalogIndexName(appEnv)` —
+`north01_products` in production, `north01_products_local` on a laptop. `.env.example` states the rule
+(*"use a DEVELOPMENT index locally, never the production one"*); a variable would make it a request
+rather than a guarantee.
+
+### 1.16.4 Sorting by a nullable column, and the `NULLS FIRST` that would have topped the grid
+
+`price-desc` sorts on `derived.priceFromMinor`, which is `null` exactly when a product has no active
+variant. Drizzle emits a bare `ORDER BY x DESC` — verified in
+`@payloadcms/drizzle/dist/queries/buildOrderBy.js`, which maps a `-` prefix onto `desc()` with **no
+nulls-ordering control of any kind** — and Postgres sorts `NULL` **first** under `DESC`.
+
+So every withdrawn product would have headed the "Price: high to low" grid, priceless, above the most
+expensive garment in the shop.
+
+The fix is a clause, not a sort: `publishedProductWhere` requires `derived.priceFromMinor` to exist.
+That is a merchandising rule with a second benefit rather than a workaround — a product whose every
+colour and size is switched off has been *withdrawn from sale*, and listing it is *"a dead end dressed
+as an offer"*, which is the judgement `resolveProductTile` already makes on the homepage.
+
+Every sort also ends in **`slug`**, which is unique. Postgres guarantees no order for equal keys, so
+without a tiebreaker page 1 and page 2 of a `sortOrder = 0` run can interleave between two requests:
+one product appears twice and another never appears at all.
+
+### 1.16.5 The nine card states, and the three that are not data
+
+Plan §11.1b lists nine. Three of them are not props and pretending otherwise grows a model nothing
+reads:
+
+| §11.1b | Where it lives |
+|---|---|
+| Normal, New, Sale, Low stock, Sold out, Out-of-season | the model — one `state` plus two booleans |
+| **Hover** | CSS. A `group-hover` opacity settle, no state, no JavaScript |
+| **Loading** | `ProductCardSkeleton` — a different component; a card with data is never loading |
+| **Image unavailable** | `MediaImage`, which solved it in Phase 8 by reserving the box from the context |
+
+Availability is **derived, never stored**, copying gap **G-05**'s table from `ProductVariants.ts`
+rather than re-inventing it, and the threshold is passed in because `SiteSettings.ts` is explicit that
+`lowStockThreshold` must be *"applied at render"* — a stored flag would be stale on every product the
+moment an editor changed the number.
+
+**One badge, by precedence**, never a row of stickers: availability outranks merchandising, always. A
+NEW badge on a product that cannot be bought is an advertisement for a disappointment. The sale state
+is not lost when it loses the badge — `compareAtLabel` still renders as a struck price, which is where
+a saving is legible anyway.
+
+`unavailable` never appears in the shop grid, and that asymmetry is deliberate rather than dead code:
+the listing filters those products out, and the state exists because Phase 20's wishlist, Phase 23's
+curated collections and a recently-viewed rail all link to a *specific* product regardless.
+
+### 1.16.6 Pagination rather than load-more, and one parser rather than two
+
+**Pagination**, and every reason is the same reason. Feature matrix §5 requires a shareable URL and
+Back/Forward restoring state; a load-more button accumulates results in client memory, so page 3 is a
+state no URL describes, Back returns to an empty list, and a crawler sees the first twenty-four
+products and stops. Numbered pages are server-rendered, addressable and work with JavaScript off —
+which the browser pass measures directly.
+
+**One parser map.** `CATALOG_PARSERS` is imported by the server loader *and* by `useQueryStates`. The
+standing trap with URL state is two parsers that disagree by one character — a separator, a default, a
+clamp — so the page renders one thing while the controls claim another. `nuqs/server` is the import on
+both sides because the package's main entry carries `'use client'`.
+
+Three write options are each a departure from a nuqs default and each is load-bearing:
+`shallow: false` (without it the address bar changes and **nothing else** — the classic fake control),
+`history: 'push'` (feature matrix §5's Back requirement; the default `replace` makes Back leave the
+shop), and `scroll: false`. Every write also clears `page`: standing on page 3 and ticking a colour
+otherwise lands the customer on an empty grid that says nothing matched.
+
+### 1.16.7 The Suspense boundary is around the results, not the page
+
+Phase 10 recorded that a homepage `loading.tsx` would be theatre and named this page as where
+streaming earns its place. It does — `/shop` is a function of nine URL parameters and cannot be
+prerendered.
+
+The boundary wraps the **results only**, keyed on the serialized query. The title and the filter panel
+stay outside it, because the panel is a client component reading URL state and reflects a ticked box
+*instantly*; putting it inside would replace the control the customer is using with a skeleton of
+itself at the moment they use it. The key matters too: without it React reuses the boundary and leaves
+the **previous** products on screen, which is worse than a spinner because stale results that look
+settled are indistinguishable from an answer.
+
+Confirmed in a browser rather than assumed: the fallback is observed painting during a sort
+transition.
+
+`NuqsAdapter` is scoped to `app/(frontend)/shop/layout.tsx` rather than the frontend root. It is a
+client component, and mounting it at the root would put a client boundary around `/` — the route Phase
+10 measured as `"compute": "static"` and whose whole performance argument is that it ships almost no
+client JavaScript. The build confirms `/` is still static with a 300-second revalidate.
+
+### 1.16.8 Three defects a browser found, and one axe did
+
+**The sort control overflowed a 320px viewport.** `min-w-[11rem]` on the select, in a row with the
+product count and the Filter trigger: measured at a **376px `scrollWidth` against a 320px
+viewport** — a shop that scrolls sideways on the narrowest of §30.1a's eight widths. A flex item's
+default `min-width` is `auto`, so it refused to shrink rather than narrowing. The controls now take
+their own row below the count on a phone and the select gives up its width where there is none.
+
+**The category vocabulary was flat, and it should have been a tree.** `loadVocabulary` read
+`doc.parent` as a document — but the query runs at `depth: 0`, where it is an **id** — so every
+category resolved to `parent: null`. `expandCategory` therefore built an empty child map and
+`/shop/clothing` quietly stopped meaning *"everything under Clothing"*. The visible symptom was
+smaller and is what caught it: the degraded and empty states offer top-level categories as the way
+back in, and were listing *Hoodies*, *Shirts*, *Sweatshirts* and *Tops* beside *Clothing* as though
+they were siblings.
+
+The harness could not have found it. `verify-catalog`'s category fixtures are hand-written with the
+parents already resolved, so they proved `expandCategory` correct while the thing feeding it was
+wrong — Phase 10's *"a harness meets the fixtures its author imagined"*, exactly. The fix moved the
+shaping into the pure module as `toCategoryOptions`, so the harness now runs it against **real
+documents**; four checks were added, and one of them asserts the live vocabulary is a tree.
+
+**A chip per descendant.** Ticking *Clothing* rendered three chips — *Clothing*, *Tops*, *Hoodies* —
+because `activeFilterChips` read `query.categories`, which is the **expanded subtree**, not what the
+customer chose. Three controls for one decision, two of which they never made and could not
+meaningfully remove one at a time. `CatalogQuery` now carries `requestedCategories` beside
+`categories` precisely so the distinction can be made. Found by `verify:catalog`, not by the browser.
+
+**The struck-through compare-at price used the disabled tone.** `text-foreground-disabled` is
+Muted Stone at **4.15:1** and axe-core called it, correctly. `Badge`'s own docblock had already
+written the rule that was broken: *"'Sold out' is information a customer reads, so it keeps Stone's
+7.91:1 rather than dropping to the 4.15:1 tone reserved for disabled."* A former price is information
+a customer reads. It is Stone now, and the payable price went one step brighter, which is hierarchy
+rather than decoration — the number a customer will be charged should not be the quieter one.
+
+There was also a defect in the code before any of that: `TIMEOUTS` was written as
+`{ connect: 2, read: 3, write: 30 }` under a comment saying *"in seconds"*. Algolia's are
+**milliseconds** (`@algolia/client-common` exports `DEFAULT_CONNECT_TIMEOUT_NODE = 2000`), so every
+request timed out after two milliseconds and the client reported *"Unreachable hosts — your
+application id may be incorrect"*: a message about credentials for a fault that had nothing to do with
+them.
+
+### 1.16.9 What was verified, and how
+
+**`pnpm verify:catalog` — 122 checks, all passing.** Three parts, extending `verify-home.ts`'s shape:
+
+- **Pure fixtures** for the URL contract, all six §11.1d edge cases, the nine §11.1b card states,
+  badge precedence, category expansion (including the two-save parent cycle `Categories.ts` says the
+  schema permits) and the index-record rules.
+- **Real Payload documents** — a draft, one scheduled a week out, one whose every variant is inactive,
+  and a sold-out one — proving the listing query drops exactly the first three and keeps the fourth.
+- **Both engines, compared.** For every query Postgres can answer, the same query goes to the index
+  and the id lists are compared for membership *and*, on the price sorts, for **order**. No earlier
+  harness has an analogue, because no earlier phase answered one question two ways. It also asserts
+  the property that makes the comparison honest: a **CLI write does not reach the index**, which is
+  why `pnpm reindex` exists.
+
+No regression elsewhere: `verify:access` **45/45**, `verify:media` **61/61**, `verify:shell`
+**100/100**, `verify:home` **173/173**. Total **501** checks across five harnesses.
+
+**Browser pass — 34 checks plus 9 interaction checks**, at 320, 375, 430, 768, 1024, 1280, 1440 and
+1920px:
+
+- no horizontal overflow at any of the eight widths (after §1.16.8's fix), one `<h1>`, no duplicate ids;
+- the sort control re-orders the grid, and Back and Forward restore the previous and next results —
+  feature matrix §5's requirement, measured rather than assumed;
+- a facet narrows the grid, unticking restores it, ticking from `?page=2` **resets the page**, and a
+  facet is operable by keyboard with Space;
+- a size facet — which only the index can answer — returns products;
+- every §11.1d edge case in a real URL: an unknown value reported rather than silently dropped, a
+  reversed range swapped, `?page=99999999` rendering the empty state, junk parameters not crashing
+  the page, duplicates collapsing to one chip;
+- **JavaScript disabled**: the shop renders and a filter chip is still removable, because the chips
+  and the pagination are real anchors;
+- a focused card is 1% covered by the sticky header at 375×700 (WCAG 2.4.11).
+
+**0 axe-core violations** on `/shop` at 1440×900 and 390×844, `/shop/clothing`, the ignored-filter
+notice, the empty state and the open mobile filter drawer — WCAG 2.0/2.1/2.2 A + AA.
+
+**Media.** The library is still empty, so all ten cards paint `MediaImage`'s reserved placeholder and
+there is no `<img>` on the page. The LCP assertion is therefore vacuous today and the harness says so
+rather than passing quietly; it becomes meaningful with Phase 29's assets.
+
+### 1.16.10 What is now owed
+
+- **Quick View, Quick Add and the wishlist control are deferred** — **DEV-45**. Every one of them
+  needs a service that does not exist yet, and §0.1.17 forbids the alternative.
+- **`/product/<slug>` still 404s** (Phase 13), so every card links somewhere that does not exist yet.
+  The same accepted state Phase 9 and Phase 10 shipped, answered by **D-31**'s global 404.
+- **`best-sellers` sorts by a merchandising flag, not by sales.** There is no order history until
+  Phase 18, which is where it can become a measured sort.
+- **No rating sort** — Phase 21 owns reviews. **DEV-46.**
+- **Shop SEO is the layout's default.** No `metadata`, no canonical, no `generateStaticParams` on
+  `/shop/[category]` — Phase 24, exactly as Phase 10 deferred the homepage's.
+- **The listing itself is uncached** and the vocabulary is cached under the `catalog` tag. Phase 30
+  owns performance polish and is where a measurement, rather than an intuition, decides whether the
+  listing needs more.
+- **A category slug change does not re-index**, by design — it rewrites the `categorySlugs` of every
+  product beneath it, which is a bulk operation. `pnpm reindex` is the documented answer.
+- **Facet counts are not rendered**, so every indexed attribute is `filterOnly`. Phase 12 can widen
+  any of them when the search UI wants counts.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -4131,7 +4419,7 @@ Most follow an unambiguous provider convention. These did not, and are this proj
 | Variable | Why it needed deciding |
 |---|---|
 | `NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY` | Algolia's own templates use `_SEARCH_API_KEY`, `_SEARCH_KEY` and `_API_KEY` interchangeably |
-| `ALGOLIA_ADMIN_API_KEY` | `ALGOLIA_ADMIN_KEY` and `ALGOLIA_WRITE_API_KEY` are both in circulation |
+| ~~`ALGOLIA_ADMIN_API_KEY`~~ → **`ALGOLIA_WRITE_API_KEY`** | `ALGOLIA_ADMIN_KEY` and `ALGOLIA_WRITE_API_KEY` are both in circulation. Phase 4 picked *admin* and **Phase 11 corrected it**: Algolia's signup screen issues a pre-scoped **Write API Key**, and it is not the Admin key — measured against a live application, it can add/delete objects, edit settings and delete indices, but `GET /1/keys` returns **403**. The old name was wrong against both the vendor's label and the key's real ACLs, and would have invited someone to paste an account-root credential into it. Corrected before anything read the variable. |
 | `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST` / `POSTHOG_API_KEY` | PostHog documents several spellings |
 | `NEXT_PUBLIC_GA_MEASUREMENT_ID` | GA4 has no canonical environment-variable name |
 | `DATABASE_PUSH_TARGET` | Entirely this project's — it exists for **D-10** and has no upstream analogue |
@@ -4708,6 +4996,123 @@ the block would need a field saying so rather than a component guessing.
 
 *Affects Phase 10.*
 
+### DEV-45 — Quick View, Quick Add and the wishlist control are deferred to the phases that own their services
+
+**Plan §11.1c says** a product card supports four interactions: click → PDP, click wishlist (*"prevent
+card navigation"*), Quick View (*"→ dialog"*) and Quick Add (*"variant selection if required"*).
+Feature matrix §6 details what a Quick View dialog contains.
+
+**We do:** ship the card link, and **none of the other three**.
+
+**Why:** every one of them needs a service that does not exist yet, and building the control without
+it is the thing §0.1.17 forbids outright — *"never create fake UI for unsupported functionality."*
+
+| Control | Needs | Phase |
+|---|---|---|
+| Quick Add | the cart service — a line item, a server-side price re-check, a bag | **14** |
+| Wishlist heart | `wishlist-items`, guest identity and the merge on sign-in | **20** |
+| Quick View | feature matrix §6's dialog is *"variants, availability, **add to cart**, **wishlist**, link to full product"* — two of its five actions are the rows above, and the fifth links to a PDP that does not exist | **13/14** |
+
+A Quick Add button that opens nothing is worse than no button: it costs a customer a decision and
+their attention before telling them nothing. A Quick View whose only working affordance is a link to a
+404 is the same trade with more markup. §11.1c's own **critical edge case** — *"if a product has
+multiple sizes/colors and no default purchasable variant, Quick Add must NOT guess an invalid
+variant"* — is a rule about a cart write, and it belongs in the phase that performs one.
+
+This is the shape **DEV-25** and **DEV-37** already established twice in this repository: Phase 3
+deferred the newsletter field because *"a signup field rendered now would post nowhere"* and Phase 10
+filled it; Phase 9 shipped the search overlay as chrome and Phase 12 fills it. The card is built so
+none of the three needs it re-plumbed — `ProductCard` takes one model, and the states they read
+(`state`, `isNew`, `compareAtLabel`) are already on it.
+
+**What this costs:** a customer must open the product page to add to their bag, which is one
+navigation rather than none — and today that page 404s anyway.
+
+*Affects Phase 11. Discharged by Phases 13, 14 and 20.*
+
+### DEV-46 — There is no rating sort, and there are five sort options rather than six
+
+**Feature matrix §5 lists six sorts:** Featured, Newest, Best selling, Price low-high, Price high-low,
+and *"Rating **where enough real review data exists**."*
+
+**We do:** ship five. Rating is absent.
+
+**Why:** the qualifier is the matrix's own, and it is not satisfied. Reviews are **Phase 21**; the
+`reviews` collection exists but nothing writes to it, and `Products.ts` deliberately declined to cache
+a review aggregate in `derived` for exactly this reason — *"a column that no phase yet writes is a
+column that quietly reads zero on every product card in the meantime."*
+
+A rating sort today would order every product by the same absent number. That is not a limited sort,
+it is a control that does nothing — and plan §11.1e's instruction is to *"keep sort options
+intentionally limited"*, which argues for the same answer from the other direction.
+
+**`best-sellers` is shipped, and it is worth being precise about what it means**, because its name
+promises more than the data holds. There is no order history until **Phase 18**, so it orders by the
+`isBestSeller` merchandising flag — the merchandiser's own declaration of what sells — and then by
+curated order. That is a real, editorially owned answer rather than a fabricated metric, and it is
+recorded here so nobody later reads the label as measured.
+
+**Revisit** in Phase 21 (rating) and Phase 18 (a measured best-selling sort). Both are one entry in
+`CATALOG_SORTS`, one line in `CATALOG_SORT_FIELDS` and one replica.
+
+*Affects Phase 11.*
+
+### DEV-47 — Phase 11 builds the search index, which plan §12 owns
+
+**The plan puts Algolia in Phase 12.** Plan §11.1d nonetheless requires it in Phase 11: *"use Algolia
+as the query/facet engine after the catalog is seeded."*
+
+**We do:** build the minimum index a **facet** needs in Phase 11 — the record shape, the filterable
+attributes, the four sort replicas, a full rebuild (`pnpm reindex`) and synchronisation on write — and
+leave everything *searching* means to Phase 12.
+
+**Why it cannot be deferred:** three of feature matrix §5's six facets are not columns on `products`.
+`size` and `colorFamily` live on `product-variants`, and collection membership lives on `collections`
+— both reached through Payload `join` fields, which are virtual and have no column. There is no
+Postgres query for *"products with an active Black variant in M"* that is not a walk of the variant
+table, and §11.1d forbids that by name.
+
+**Why it is not simply "Phase 12 early":** the phase boundary moves to where the work actually
+divides. Phase 12 keeps §12.1c's overlay, autocomplete, category and collection suggestions, recent
+and popular searches, the full results page, and every one of §12.1d's *query* edge cases — none of
+which this phase touches. What moved is the derived store those features will read.
+
+Searchable attributes are **declared** in the index settings and never queried here, which is
+deliberate: an index whose records lack them cannot be made searchable later without a full rebuild.
+
+`env.core.ts`'s `algolia` integration group moves from `phase: 12` to `phase: 11`, and
+`docs/ENVIRONMENT.md` with it.
+
+*Affects Phases 11 and 12.*
+
+### DEV-48 — A product withdrawn from sale is not listed, though the card can render it
+
+**Plan §11.1b lists nine card states**, the eighth being *"out-of-season/inactive"*.
+
+**We do:** implement the state on the card and **exclude those products from every listing**.
+
+**Why:** `derived.priceFromMinor` is `null` exactly when a product has no active variant — every
+colour and size switched off, which is `ProductVariants.ts`'s *"merchandising switch"* thrown for all
+of them. That is a product **withdrawn from sale**, not one temporarily out of stock, and a shop grid
+is a merchandising surface: listing it is *"a dead end dressed as an offer"*, which is the judgement
+`resolveProductTile` already reached on the homepage in Phase 10.
+
+**Sold out is a different answer and is listed**, with its badge — a customer looking at a sold-out
+garment is looking at something the shop intends to sell again.
+
+The state is not dead code. Phase 20's wishlist, Phase 23's curated collections and any
+recently-viewed rail link to a *specific* product regardless of whether a listing would have offered
+it, and those surfaces must be able to say "not available" rather than render a card with no price and
+no explanation.
+
+**A second benefit, and it is not incidental.** The same clause removes the only `null` that could
+reach a price sort. Drizzle emits a bare `ORDER BY x DESC` — verified in
+`@payloadcms/drizzle/dist/queries/buildOrderBy.js`, which has no nulls-ordering control — and Postgres
+sorts `NULL` **first** under `DESC`, so without it every withdrawn product would head the "Price: high
+to low" grid, priceless, above the most expensive garment in the shop.
+
+*Affects Phase 11.*
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -4734,5 +5139,6 @@ the block would need a field saying so rather than a component guessing.
 | Phase 10 — homepage / editorial system | 2026-08-28 | Notes **§1.15**: the homepage as a `homepage` **global** of typed blocks, with Phase 9's split reused — a **pure** `lib/home/resolve.ts` holding every drop/keep rule so a CLI can exercise it, and `lib/home/home.ts` holding only caching. **Eleven block types, five of them the Phase 6 objects imported unchanged** (`splitFeature`, `figure`, `editorial`, `shopTheLook`, `productGroup`), which is what `blocks/editorial.ts` predicted; `productRail` (a query) and `productGroup` (a curation) both exist because neither expresses the other. **§1.15.3**: the 63-byte identifier arithmetic done *before* the schema reached the database — `collectionFeature` and `categoryTiles` breach it at 66 and 65 bytes and carry the **function** form of `dbName`; verified afterwards that **no identifier in the database is 63 bytes or longer**, an invariant `verify-home.ts` now holds permanently, because a breach is silent in both directions and only fails when two names truncate alike. **§1.15.4**: `campaigns.mobileHero` had been **unrenderable since Phase 6** — `MediaImage` art-directed one asset at two crops and had no path for a second asset; one backwards-compatible `mobileMedia` prop, with the mobile box reserved from the record that will actually be served. **§1.15.6 records the defect only a browser could find**: `Reveal`'s docblock claimed content could never be stranded invisible, and an `IntersectionObserver` reports *threshold crossings*, so jumping to the foot of the page left **six sections at `opacity: 0` for the rest of the session** — fixed with an upward-only `rootMargin` and re-measured. **§1.15.7 records a Phase 7 defect this phase's schema exposed**: `z.email().trim()` validates the **raw** input, so `"  Ada@Example.COM "` was rejected on the sign-in, registration and reset forms — the exact case `auth/schemas.ts` said the trim existed to handle; both schemas now pipe a trimmed string into the email check. Deviations **DEV-40** (no animation library, reversing DEV-24's deferral on four measurements — 8.64 MiB, ~40 KB gzip on the LCP route, `reducedMotion: "never"`, and a WAAPI path that cannot read the duration tokens), **DEV-41** (no hero video and no field for one), **DEV-42** (the newsletter is the footer's column, **discharging DEV-25**, with `create` kept `isStaff` to avoid a membership-enumeration oracle), **DEV-43** ("Editorial split" and "Brand story" are one block), **DEV-44** (the hero is stacked; no type over the photograph). New decisions **D-33**, **D-34** (amends **D-13**), **D-35**; new gap **G-16**. New script `pnpm verify:home` — **173 checks**; `verify:access` 45/45, `verify:media` 61/61, `verify:shell` 100/100 all unchanged. 55 browser checks across §30.1a's eight widths and **0 axe-core violations** at 1440×900 and 390×844. `/` confirmed prerendered `static` with `home` on its cache tags. **No dependency added**; direct dependencies stay at 22. |
 
 | Phase 10 — post-implementation audit | 2026-08-28 | Note **§1.15.12**: the committed phase re-read by seven auditors with adversarial verification — **39 claims, 3 refuted, 36 confirmed** (2 high, 8 medium, 26 low), all fixed. **The headline is a security defect this phase's own decision D-35 claimed to have closed**: `Prose` spread `defaultConverters` and overrode only `link`, while Lexical's **`autolink`** node — created by the editor's plugin whenever someone types something URL-shaped — renders `node.fields.url` unvalidated. `//evil.example/phish` and a `data:text/html` payload rendered as live anchors on the homepage; the save side cannot catch it either, because `AutoLinkNode` declares no `getSubFields` so the `url` field's hooks never run. Closed by listing every converter by name, sharing one sanitised implementation between both link types, and rendering nothing for the four node types this editor does not enable. Second: **`getHome`'s documented "never throws" was the defect** — `/` is prerendered with a 300-second revalidate, so a failed *background regeneration* returned a valid empty homepage that ISR cached over the good HTML for five minutes; the `try` had been reasoned about for the data cache and the route cache is a second one. `page.tsx` now throws on `degraded`. Also: two `<h1>`s from two heroes (axe requires *at least* one); an empty `<h2>` from a rail with a CTA and no heading; the newsletter announcing nothing and dropping focus on a validation failure; a sticky header covering 100% of the focused control on Shift+Tab (WCAG 2.4.11); focus landing inside an `opacity: 0` section; `MediaImage` discarding the mobile photograph in exactly the no-Cloudinary state three docblocks said it survived; a read-then-create newsletter path that was a timing oracle for the enumeration it set out to prevent; and two `sizes` strings measuring the viewport where they meant the container. **Nine of the thirty-six were docblocks asserting a property the code does not have** — the report's own conclusion is that the docblock is the specification the next phase trusts and the only artefact nothing executes. `verify-home` is **173 checks**, up from 161, with a regression for every confirmed finding the pure module can hold — and its report is now one awaited `stdout.write`, because `process.exit()` was truncating the verdict while still exiting 0. |
+| Phase 11 — product catalogue and discovery | 2026-08-30 | Notes §1.16: the per-query engine choice (**D-36**) that reconciles §11.1d, §0 and §A.5, measured against a real Algolia outage; the index that stores no customer-visible data (**D-37**); the `NULLS FIRST` that would have topped the price-desc grid; the nine card states; pagination over load-more; one nuqs parser map for server and client; and four defects — a 320px overflow, a taxonomy flattened by reading `parent` at `depth: 0`, a chip per descendant, and a struck price at 4.15:1. New harness `pnpm verify:catalog` (**122 checks**, including that both engines agree) and `pnpm reindex`. Deviations **DEV-45** through **DEV-48**. Two dependencies added: `nuqs`, `algoliasearch`. |
 
 > **Append this table, and the sections above it, at the end of every phase.**
