@@ -97,27 +97,46 @@ export function CatalogEmpty({
   categories,
   isFiltered,
   sort,
+  total = 0,
 }: {
   basePath: string
   /** A handful of top-level categories, as the way back into a catalogue that is not empty. */
   categories: CategoryOption[]
   isFiltered: boolean
   sort: CatalogParams['sort']
+  /**
+   * What the engine said the result size was.
+   *
+   * Normally `0`, and the copy assumes so. A **non-zero** total with nothing to render is the one
+   * state where the old copy was actively false: it claimed the shop had no published products
+   * while the toolbar counted them. It survives only as plan §12.1d's *"deleted product still in
+   * index"* — ids the search index still holds that Postgres has stopped returning — so it gets a
+   * sentence that says what actually happened.
+   */
+  total?: number
 }) {
+  const isStale = total > 0
+
   return (
     <div className="flex flex-col items-start gap-m py-xl" data-slot="catalog-empty">
       <p className="font-display text-heading-m text-foreground">
-        {isFiltered ? 'Nothing matches those filters.' : 'Nothing here yet.'}
+        {isStale
+          ? 'Those products are no longer available.'
+          : isFiltered
+            ? 'Nothing matches those filters.'
+            : 'Nothing here yet.'}
       </p>
 
       <p className="max-w-measure font-sans text-body text-foreground-muted">
-        {isFiltered
-          ? 'Try removing a filter, or start from a category below.'
-          : 'This part of the shop has no published products at the moment.'}
+        {isStale
+          ? 'They were withdrawn moments ago and the search index has not caught up. Try again, or start from a category below.'
+          : isFiltered
+            ? 'Try removing a filter, or start from a category below.'
+            : 'This part of the shop has no published products at the moment.'}
       </p>
 
       <div className="flex flex-wrap items-center gap-m">
-        {isFiltered ? (
+        {isFiltered || isStale ? (
           <Link href={catalogHref(basePath, { sort })} variant="meta">
             Clear filters
           </Link>

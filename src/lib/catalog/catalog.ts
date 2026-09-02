@@ -14,6 +14,7 @@ import {
   CATALOG_PAGE_SIZE,
   CATALOG_SORT_FIELDS,
   catalogWhere,
+  listableVariantWhere,
   normaliseCatalogQuery,
   publishedProductWhere,
   requiresSearchIndex,
@@ -216,13 +217,27 @@ const loadVocabulary = unstable_cache(
        * Every active variant, for the size and colour vocabularies. Two columns and a filter on an
        * indexed boolean; the result is cached for five minutes and shared by every visitor.
        */
+      /*
+       * Every active variant **of a listable product**, for the size and colour vocabularies.
+       *
+       * `active: true` alone was not enough, and the gap was measurable: a draft product carrying a
+       * size nothing published stocks put that size in the filter panel, where ticking it returned
+       * zero products with nothing on screen explaining why. Verified with a draft product sized
+       * `AUDIT-ONLY` — offered by the panel, 0 results.
+       *
+       * That contradicted this function's own docblock, which claims only stocked values are
+       * offered *because* "a facet that can only ever return nothing is worse than a missing facet".
+       * The three clauses below are `publishedProductWhere`'s, reached through the `product.` join
+       * — the same dotted path `access/publishedOn` resolves, so the vocabulary and the listing now
+       * agree on what "listable" means instead of each deciding separately.
+       */
       payload.find({
         collection: 'product-variants',
         depth: 0,
         limit: 0,
         pagination: false,
         select: { colorFamily: true, size: true, sizeSortOrder: true },
-        where: { active: { equals: true } },
+        where: listableVariantWhere(now),
       }),
       payload.find({
         collection: 'products',
@@ -420,8 +435,7 @@ async function runSearch(
 export const getCatalog = cache(
   async (params: CatalogParams, routeCategory: null | string = null): Promise<CatalogView> => {
     const payload = await getPayloadClient()
-    const vocabulary = await getVocabulary()
-    const settings = await readSettings(payload)
+    const [vocabulary, settings] = await Promise.all([getVocabulary(), getCatalogSettings()])
 
     const { ignored, query } = normaliseCatalogQuery(params, vocabulary, routeCategory)
 
@@ -473,7 +487,15 @@ export const getCatalog = cache(
   },
 )
 
-/** The formatter the chips and the price facet need, bound to the site's currency and locale. */
+/**
+ * The formatter the chips and the price facet need, bound to the site's currency and locale.
+ *
+ * **`cache()` wraps the read itself, not each caller.** `getCatalog` and this export both need the
+ * settings, and each used to call the un-memoised `readSettings` — two `findGlobal('site-settings')`
+ * round trips on every shop render, for one small document that cannot change between them. React's
+ * `cache` is per-render, so hoisting it here makes the second caller free and keeps the two callers
+ * looking at literally the same object.
+ */
 export const getCatalogSettings = cache(async (): Promise<CatalogSettings> => {
   const payload = await getPayloadClient()
 

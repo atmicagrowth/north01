@@ -342,6 +342,26 @@ export function FilterPanel({
 
       <FacetGroup label="Price">
         <PriceFacet
+          /*
+           * **The key is the fix, and it is not decoration.**
+           *
+           * `PriceFacet` holds the two boxes as local draft state so a customer can type "1", "12",
+           * "120" without firing three server round trips. That state was seeded from these props
+           * and then never updated, so it went stale the moment the URL changed underneath it —
+           * measured: loading `?priceMin=100&priceMax=200` and removing the price chip left `/shop`
+           * in the address bar and **100 / 200 still in the inputs**, and pressing Back after
+           * applying a maximum left the old maximum sitting there too.
+           *
+           * That is worse than cosmetic. The panel is the only thing on screen claiming what is
+           * applied, and a customer who then edits just the minimum and presses Apply silently
+           * re-applies a maximum they believe they cleared.
+           *
+           * Keying on the URL values remounts the component whenever they change, which is React's
+           * own documented answer for resetting state on a prop change — and it resets *only* on a
+           * real change, so typing is untouched. A `useEffect` that copied props into state would be
+           * the same thing with a render of lag and a dependency array to get wrong.
+           */
+          key={`${filters.priceMin ?? ''}-${filters.priceMax ?? ''}`}
           max={filters.priceMax}
           min={filters.priceMin}
           onApply={({ max, min }) => {

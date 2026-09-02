@@ -541,9 +541,25 @@ try {
       care: ['Dry clean. Store folded, not hung.'],
       tags: ['accessory', 'gift'],
       priceMinor: 21000,
+      /*
+       * **Deliberately sold out — both colours at zero.**
+       *
+       * Plan §11.1b requires a product card that can say "Sold out", and until Phase 11's audit the
+       * seeded catalogue could not produce one: all ten products were in stock, so that state, the
+       * low-stock state and the badge precedence between them had only ever been exercised by
+       * fixtures. Three of the nine card states were unreachable in a browser, which meant no
+       * browser pass and no axe sweep had ever covered them.
+       *
+       * It has to be *every* colour, because `derived.inventoryTotal` is the sum across active
+       * variants — zeroing one colour and leaving the other would still total four.
+       *
+       * The product stays published and keeps its price, which is exactly the distinction
+       * `ProductVariants.ts` draws: sold out is "active && inventoryQuantity === 0", a temporary
+       * state the customer is told about, and it is not the same as withdrawn.
+       */
       colors: [
-        { name: 'Oat', hex: '#D6CFC0', family: 'bone', stock: [7] },
-        { name: 'Rust', hex: '#8A4B32', family: 'rust', stock: [4] },
+        { name: 'Oat', hex: '#D6CFC0', family: 'bone', stock: [0] },
+        { name: 'Rust', hex: '#8A4B32', family: 'rust', stock: [0] },
       ],
       sizes: [{ size: 'ONE SIZE', sizeSortOrder: 10 }],
       flags: { featured: true, isBestSeller: true, isLimitedEdition: true },
@@ -564,7 +580,12 @@ try {
       care: ['Wipe with a dry cloth. It will darken. That is the point.'],
       tags: ['accessory', 'gift', 'leather'],
       priceMinor: 9500,
-      colors: [{ name: 'Espresso', hex: '#43302B', family: 'brown', stock: [11] }],
+      /*
+       * **Deliberately low stock.** Two units against `siteSettings.lowStockThreshold` of 5, so the
+       * catalogue permanently carries a card reading "Only 2 left" — plan §11.1b's low-stock state,
+       * and the other half of the coverage gap the scarf above closes. See that comment.
+       */
+      colors: [{ name: 'Espresso', hex: '#43302B', family: 'brown', stock: [2] }],
       sizes: [{ size: 'ONE SIZE', sizeSortOrder: 10 }],
       sortOrder: 100,
     },

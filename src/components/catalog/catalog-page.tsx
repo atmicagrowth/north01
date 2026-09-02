@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation'
 import { Suspense } from 'react'
 
 import { ActiveFilters } from '@/components/catalog/active-filters'
@@ -14,7 +15,13 @@ import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
 import { getCatalog, getCatalogSettings, getCatalogVocabulary } from '@/lib/catalog/catalog'
-import { catalogHref, isFilteredQuery, type CatalogParams } from '@/lib/catalog/query'
+import {
+  canonicaliseParams,
+  catalogHref,
+  isFilteredQuery,
+  outOfRangePage,
+  type CatalogParams,
+} from '@/lib/catalog/query'
 import { formatMinorUnits } from '@/lib/money'
 
 /**
@@ -69,6 +76,22 @@ export async function CatalogPage({
 }) {
   const vocabulary = await getCatalogVocabulary()
 
+  /*
+   * **One spelling per query.** `?size=m` becomes `?size=M` before a single element is rendered, so
+   * every comparison downstream is normalised-against-normalised by construction — see
+   * `canonicaliseParams` for the dead filter chip that made this necessary rather than merely tidy.
+   *
+   * `redirect()` throws, so it must run outside any `try`. It is here rather than in
+   * `CatalogResults` deliberately: redirecting from inside the suspense boundary would paint a shell
+   * and a grid of skeletons first, then throw them away.
+   */
+  const canonical = canonicaliseParams(params, vocabulary)
+  const canonicalHref = catalogHref(basePath, canonical)
+
+  if (canonicalHref !== catalogHref(basePath, params)) {
+    redirect(canonicalHref)
+  }
+
   return (
     <Section spacing="tight">
       <PageContainer>
@@ -91,7 +114,7 @@ export async function CatalogPage({
 
           <div className="min-w-0">
             <Suspense
-              key={catalogHref(basePath, params)}
+              key={canonicalHref}
               fallback={
                 <div className="flex flex-col gap-m">
                   <div className="h-[3.25rem] border-b border-border" />
@@ -99,7 +122,11 @@ export async function CatalogPage({
                 </div>
               }
             >
-              <CatalogResults basePath={basePath} params={params} routeCategory={routeCategory} />
+              <CatalogResults
+                basePath={basePath}
+                params={canonical}
+                routeCategory={routeCategory}
+              />
             </Suspense>
           </div>
         </div>
@@ -131,6 +158,29 @@ async function CatalogResults({
 
   const formatPrice = (minor: number): null | string =>
     formatMinorUnits(minor, settings.currency, settings.locale)
+
+  /*
+   * **An out-of-range page is a redirect, not an empty grid.**
+   *
+   * `/shop?page=5` against a one-page catalogue used to render the toolbar's honest "10 products"
+   * above the empty state's *"this part of the shop has no published products at the moment"* — two
+   * statements on one screen that cannot both be true — and no pagination at all, because the
+   * control lives in the branch that only runs when there are products. A customer who mistyped a
+   * page number, or followed a link from when the catalogue was larger, had no way back but editing
+   * the URL.
+   *
+   * Redirecting to the last real page means the customer always lands on products, the address
+   * becomes canonical, and the empty state below can only ever mean *"nothing matched"* — which is
+   * the one thing it should mean.
+   *
+   * `totalPages === 0` is deliberately excluded: there is no page to send them to, and the empty
+   * state is the correct answer to a genuinely empty result.
+   */
+  const lastPage = outOfRangePage(query.page, result.totalPages)
+
+  if (lastPage !== null) {
+    redirect(catalogHref(basePath, { ...params, page: lastPage === 1 ? null : lastPage }))
+  }
 
   const isFiltered = isFilteredQuery(query, routeCategory)
 
@@ -166,17 +216,26 @@ async function CatalogResults({
           categories={vocabulary.categories.filter((category) => category.parent === null)}
           isFiltered={isFiltered}
           sort={params.sort}
+          /*
+           * The count, so the copy cannot contradict it. After the redirect above the only way to
+           * reach this with a non-zero total is a search index that still holds ids Postgres has
+           * stopped returning — plan §12.1d's "deleted product still in index", which deserves its
+           * own sentence rather than the flat claim that the shop is empty.
+           */
+          total={result.totalProducts}
         />
       ) : (
         <>
           <ProductGrid
             cards={result.products}
             /*
-             * The LCP candidate is the first card of the first page of an unfiltered shop. A
-             * filtered or paged view is a navigation the customer made from inside the site, where
-             * the largest paint is no longer the thing being measured — and marking an image eager
-             * on every page would be plan §10.1d's "proper priority only for the main hero/LCP
-             * image" ignored twenty-four times over.
+             * The LCP candidate is the first card of the first page of an **unfiltered listing** —
+             * which includes `/shop/<category>`, because standing in a category is not filtering and
+             * that page is just as likely to be the one a customer lands on first. A filtered or
+             * paged view is a navigation made from inside the site, where the largest paint is no
+             * longer the thing being measured — and marking an image eager on every page would be
+             * plan §10.1d's "proper priority only for the main hero/LCP image" ignored twenty-four
+             * times over.
              */
             eager={!isFiltered && result.page === 1}
           />

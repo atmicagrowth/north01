@@ -3901,6 +3901,140 @@ rather than passing quietly; it becomes meaningful with Phase 29's assets.
   product beneath it, which is a bulk operation. `pnpm reindex` is the documented answer.
 - **Facet counts are not rendered**, so every indexed attribute is `filterOnly`. Phase 12 can widen
   any of them when the search UI wants counts.
+- **The facets are independent, not dependent.** Ticking *Accessories* does not narrow the size list
+  to the sizes accessories come in, so a combination that returns nothing is still reachable. The
+  audit fixed the case where a facet value could *never* match (a draft product's size); narrowing
+  the vocabulary to the current filter context is a different feature, and it belongs to Phase 12,
+  which is where Algolia is already computing facet distributions.
+- **`unavailable` is still the one card state no listing renders**, by design — `publishedProductWhere`
+  drops a product whose every variant is switched off. It is reachable from a wishlist (Phase 20) or
+  a curated collection (Phase 23), which are the phases that link to a product regardless of whether
+  a listing would have offered it.
+
+### 1.16.11 Post-implementation audit
+
+The committed, green Phase 11 was re-read adversarially, then every claim was reproduced against the
+running application rather than argued from the code. **Six defects confirmed: two high, two medium,
+two low.** All six are fixed.
+
+This is the sixth phase to run this exercise and the sixth to find defects that had passed every
+gate — 501 harness checks, a clean `--max-warnings 0` lint, a strict typecheck, a 34-check browser
+pass and two zero-violation axe sweeps. As in Phase 10, the interesting question is not *what* was
+wrong but *what kind* of thing survived all of that.
+
+#### The two high-severity findings
+
+**1. A filter applied with different casing could not be removed.** `normaliseCatalogQuery` maps
+`?size=m` onto the stored value `M`, because `ProductVariants.size` is upper-cased by its own
+`beforeValidate` hook. The chip's *label* came from that normalised value; its *remove link* was
+built by filtering the **raw** URL token, so `['m'].filter(v => v !== 'M')` removed nothing and the
+href came back byte-identical to the page it was on. Measured on `/shop?size=m`: six products before
+the click, six after, same URL.
+
+`activeFilterChips`' own docblock states the property it violated — *"a filter a customer can apply
+and cannot see is a filter they cannot clear"*. The mechanism was different from the one the docblock
+imagined; the outcome was exactly the one it named.
+
+Fixed by **canonicalising the URL** rather than by patching the comparison, which is the difference
+between closing an instance and closing a class: `/shop?size=m` now redirects once to `/shop?size=M`,
+after which every downstream comparison is normalised-against-normalised *by construction*. It also
+buys what feature matrix §5 asks for — one canonical URL per query, which is one entry in a crawler's
+index rather than four spellings of one page.
+
+Two things are deliberately **not** canonicalised, and the harness pins both: an **unknown** value
+(`?color=puce`) and a **reversed** price range. Rewriting either would strip the evidence before the
+toolbar could report it, and plan §11.1d requires the customer be *told*, not silently corrected.
+`canonicaliseParams` is also asserted to be a **fixed point** — no URL can redirect twice.
+
+**2. The price facet lied about what was applied.** The two inputs hold local draft state so a
+customer can type `1`, `12`, `120` without three server round trips. That state was seeded from props
+and never updated, so it went stale the instant the URL changed underneath it:
+
+| Action | URL | Inputs showed |
+|---|---|---|
+| Load `?priceMin=100&priceMax=200` | correct | 100 / 200 |
+| Remove the price chip | `/shop` | **100 / 200** |
+| Apply a maximum, then press Back | `/shop` | **— / 150** |
+
+Worse than cosmetic: the panel is the only thing on screen claiming what is applied, so a customer who
+then edited only the minimum and pressed Apply would silently re-apply a maximum they believed they
+had cleared. Fixed with a `key` on the URL values — React's own documented answer for resetting state
+on a prop change, and one that leaves typing untouched because it only fires on a real change.
+
+#### The rest, by what they teach
+
+**An out-of-range page was a dead end that contradicted itself.** `/shop?page=5` against a one-page
+catalogue rendered the toolbar's honest *"10 products"* directly above *"Nothing here yet — this part
+of the shop has no published products at the moment"*, which was false, and **no pagination at all**,
+because that control lives in the branch that only runs when there are products. The only way back was
+editing the URL. It now redirects to the last real page, so the empty state can only ever mean
+*"nothing matched"* — the one thing it should mean. `CatalogEmpty` also gained the count, so the one
+remaining way to reach it with a non-zero total (a stale index — plan §12.1d's *"deleted product still
+in index"*) gets a sentence describing what actually happened.
+
+**The filter panel offered sizes no customer could buy.** The vocabulary read every variant with
+`active: true` — and said nothing about whether its *product* was published. So a draft product's
+sizes and colours appeared in the panel and returned zero results. Verified with a draft product sized
+`AUDIT-ONLY`: offered by the panel, 0 products. The function's own docblock claimed the opposite, in
+as many words: *"a facet that can only ever return nothing is worse than a missing facet."* The clause
+is now `publishedProductWhere`'s three conditions reached through the `product.` join — the same
+dotted path `access/publishedOn` resolves — extracted to `listableVariantWhere` so the vocabulary and
+the listing share **one** definition of "listable" rather than each deciding separately.
+
+**`site-settings` was read twice per render**, because `getCatalog` and `getCatalogSettings` each
+called the un-memoised `readSettings`. Hoisted into the `cache()`d export, so the second caller is
+free and both look at the same object.
+
+**A docblock described a narrower rule than the code implements.** `ProductGrid.eager` said "an
+unfiltered shop"; `/shop/<category>` qualifies too, because standing in a category is not filtering.
+The behaviour was right and the prose was wrong — the same category of defect that produced nine of
+Phase 10's thirty-six.
+
+#### The coverage gap the audit found, and closed
+
+**Every one of the ten seeded products was in stock.** So `soldOut`, `lowStock` and `unavailable` —
+three of plan §11.1b's nine card states — had **never rendered in a browser**. The badge precedence
+chain, the `muted` badge over a photograph and the reduced-opacity treatment were all fixture-verified
+only, and no axe sweep had ever seen them.
+
+They were verified during the audit by creating the missing states, then made permanent: the seed now
+ships `cashmere-scarf` sold out (both colours at zero — `inventoryTotal` is a **sum**, so zeroing one
+colour would still have totalled four) and `card-holder` at two units against a threshold of five.
+`/shop` now renders three availability states on one page in every environment, so every future
+browser and axe pass covers them without anyone remembering to.
+
+The general lesson is Phase 10's, arriving through a different door: *a harness meets the fixtures its
+author imagined, and one seeded composition.* Here the fixtures were right and the **composition** was
+the gap — the seeded catalogue could not express a third of the states the phase was built to render.
+
+#### What the gates could not see, again
+
+Every one of the six sits in a category Phase 10 already named, which is the part worth recording:
+
+1. **Types describe shape, never meaning.** `params.size.filter(v => v !== value)` is perfectly typed
+   and compares a raw URL token against a normalised one. `useState(min)` is valid and means "ignore
+   every later value of `min`".
+2. **A harness meets the fixtures its author imagined.** `verify-catalog` asserted that every applied
+   filter produces a chip — and built that chip from an already-canonical fixture, so the one input
+   shape that breaks it was never constructed.
+3. **A browser is where state over *time* lives.** Findings 1, 2 and 3 each needed a second
+   interaction — a click, a Back, a page number — and none of them is visible in one static DOM.
+4. **The gates run inside the machine and cannot check the machine's account of itself.** Two of the
+   six were code contradicting its own docblock, and in both cases the docblock was the more confident
+   of the two.
+
+All six now have regression tests. `verify-catalog` is **144 checks**, up from 122, and both the
+out-of-range rule and the vocabulary clause were *extracted into the pure module* so the harness could
+hold them at all — the same move Phase 10 made when it found `railWhere` untestable where it sat.
+
+#### Verification after the fixes
+
+`pnpm verify:catalog` **144/144**; `verify:access` 45/45, `verify:media` 61/61, `verify:shell`
+100/100, `verify:home` 173/173 — **523 checks** across five harnesses. Browser pass **36/36** (up from
+34; the out-of-range assertion was rewritten, because the old one encoded the defect), plus a 16-check
+re-verification of the fixes themselves. **0 axe-core violations** across six surfaces, now including
+the newly-reachable sold-out and low-stock cards. Typecheck, lint at `--max-warnings 0` and the
+production build all clean, with `/` still static at a 300-second revalidate.
 
 # 2. Deviations
 
@@ -5140,5 +5274,7 @@ to low" grid, priceless, above the most expensive garment in the shop.
 
 | Phase 10 — post-implementation audit | 2026-08-28 | Note **§1.15.12**: the committed phase re-read by seven auditors with adversarial verification — **39 claims, 3 refuted, 36 confirmed** (2 high, 8 medium, 26 low), all fixed. **The headline is a security defect this phase's own decision D-35 claimed to have closed**: `Prose` spread `defaultConverters` and overrode only `link`, while Lexical's **`autolink`** node — created by the editor's plugin whenever someone types something URL-shaped — renders `node.fields.url` unvalidated. `//evil.example/phish` and a `data:text/html` payload rendered as live anchors on the homepage; the save side cannot catch it either, because `AutoLinkNode` declares no `getSubFields` so the `url` field's hooks never run. Closed by listing every converter by name, sharing one sanitised implementation between both link types, and rendering nothing for the four node types this editor does not enable. Second: **`getHome`'s documented "never throws" was the defect** — `/` is prerendered with a 300-second revalidate, so a failed *background regeneration* returned a valid empty homepage that ISR cached over the good HTML for five minutes; the `try` had been reasoned about for the data cache and the route cache is a second one. `page.tsx` now throws on `degraded`. Also: two `<h1>`s from two heroes (axe requires *at least* one); an empty `<h2>` from a rail with a CTA and no heading; the newsletter announcing nothing and dropping focus on a validation failure; a sticky header covering 100% of the focused control on Shift+Tab (WCAG 2.4.11); focus landing inside an `opacity: 0` section; `MediaImage` discarding the mobile photograph in exactly the no-Cloudinary state three docblocks said it survived; a read-then-create newsletter path that was a timing oracle for the enumeration it set out to prevent; and two `sizes` strings measuring the viewport where they meant the container. **Nine of the thirty-six were docblocks asserting a property the code does not have** — the report's own conclusion is that the docblock is the specification the next phase trusts and the only artefact nothing executes. `verify-home` is **173 checks**, up from 161, with a regression for every confirmed finding the pure module can hold — and its report is now one awaited `stdout.write`, because `process.exit()` was truncating the verdict while still exiting 0. |
 | Phase 11 — product catalogue and discovery | 2026-08-30 | Notes §1.16: the per-query engine choice (**D-36**) that reconciles §11.1d, §0 and §A.5, measured against a real Algolia outage; the index that stores no customer-visible data (**D-37**); the `NULLS FIRST` that would have topped the price-desc grid; the nine card states; pagination over load-more; one nuqs parser map for server and client; and four defects — a 320px overflow, a taxonomy flattened by reading `parent` at `depth: 0`, a chip per descendant, and a struck price at 4.15:1. New harness `pnpm verify:catalog` (**122 checks**, including that both engines agree) and `pnpm reindex`. Deviations **DEV-45** through **DEV-48**. Two dependencies added: `nuqs`, `algoliasearch`. |
+
+| Phase 11 — post-implementation audit | 2026-09-02 | Note **§1.16.11**: the committed phase re-read adversarially and every claim reproduced against the running application — **6 defects confirmed** (2 high, 2 medium, 2 low), all fixed. **The headline is a filter a customer could apply and could not remove**: the chip's label came from the *normalised* value while its remove-link filtered the **raw** URL token, so on `/shop?size=m` the href was byte-identical to the page it was on — six products before the click, six after. Closed by **canonicalising the URL** (`?size=m` → `?size=M`, one redirect) rather than by patching the comparison, so every downstream comparison is normalised-against-normalised by construction; unknown values and reversed price ranges are deliberately *not* rewritten, because §11.1d requires the customer be told rather than silently corrected, and `canonicaliseParams` is asserted to be a fixed point so no URL can redirect twice. Second: **the price facet lied about what was applied** — draft state seeded from props and never re-synced, so removing the price chip left `100 / 200` in the inputs and pressing Back left a maximum the customer believed cleared, which a subsequent Apply would silently re-apply. Also: **an out-of-range page was a self-contradicting dead end** ("10 products" above "this part of the shop has no published products", with no pagination to escape by) — now redirects to the last real page; **the filter panel offered sizes of draft products**, verified with a draft-only size that returned zero results, against a docblock claiming the opposite, fixed by extracting `listableVariantWhere` so the vocabulary and the listing share one definition of "listable"; a duplicated `site-settings` read; and one docblock narrower than its code. **The coverage gap mattered more than any single defect**: all ten seeded products were in stock, so three of §11.1b's nine card states had never rendered in a browser — the seed now ships one sold-out and one low-stock product, so `/shop` exercises three availability states in every environment. `verify:catalog` is **144 checks**, up from 122, with a regression for each finding and two rules extracted into the pure module so the harness could hold them; browser pass **36/36** (the old out-of-range assertion encoded the defect and was rewritten); **523 checks** across five harnesses; 0 axe violations across six surfaces. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

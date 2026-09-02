@@ -299,6 +299,94 @@ export const EMPTY_VOCABULARY: CatalogVocabulary = {
   sizes: [],
 }
 
+/**
+ * **One spelling per query.** The URL a customer arrives on, rewritten to the one this shop owns.
+ *
+ * ### The defect this exists to make impossible
+ *
+ * `normaliseCatalogQuery` maps `?size=m` onto the stored value `M`, because a size is upper-cased by
+ * the variant's own `beforeValidate` hook and a lower-case one in the address bar is perfectly
+ * reasonable. That produced a **dead control**: the filter chip's label came from the *normalised*
+ * value while its remove-link was built from the *raw* URL token, so `params.size.filter(v => v !==
+ * 'M')` on `['m']` removed nothing, and the chip's href was byte-identical to the page it was on.
+ * Measured on `/shop?size=m`: clicking Remove left the same six products and the same URL.
+ *
+ * Fixing the comparison alone would have closed one instance. Canonicalising closes the class —
+ * after this runs, every downstream comparison is normalised-against-normalised **by construction**,
+ * so no future code can reintroduce it by comparing the raw params against the resolved query.
+ *
+ * It also earns the thing feature matrix §5 asks for. *"URL is shareable"* is worth more when two
+ * people filtering the same way land on the same address: one canonical URL per query, which is also
+ * one entry in a crawler's index rather than four spellings of one page.
+ *
+ * ### What it deliberately does **not** touch
+ *
+ * Two things a customer got wrong are left exactly as they typed them, and both are deliberate:
+ *
+ * - **An unknown value** — `?color=puce`. Rewriting it away would strip the evidence before the
+ *   toolbar could report *"one filter was ignored because the shop no longer has that value"*.
+ *   Plan §11.1d's *"filter references deleted value"* requires the customer be **told**, and a
+ *   redirect that silently deletes the token tells them nothing.
+ * - **A reversed price range** — `?priceMin=400&priceMax=100`. Same reasoning: the swap is announced,
+ *   and it cannot be announced if the URL no longer shows it happened.
+ *
+ * So this canonicalises **spelling, order and duplication of values the shop recognises**, and
+ * nothing else. Unknown values are preserved in the order they arrived, after the known ones.
+ */
+export function canonicaliseParams(
+  params: CatalogParams,
+  vocabulary: CatalogVocabulary,
+): CatalogParams {
+  const canonicalList = (requested: string[], options: FacetOption[]): string[] => {
+    const byKey = new Map(options.map((option) => [option.value.toLowerCase(), option.value]))
+    const known = new Set<string>()
+    const unknown: string[] = []
+
+    for (const raw of requested) {
+      const trimmed = raw.trim()
+
+      if (trimmed === '') {
+        continue
+      }
+
+      const match = byKey.get(trimmed.toLowerCase())
+
+      if (match === undefined) {
+        // Preserved, and de-duplicated on its own spelling so `?color=puce,puce` still settles.
+        if (!unknown.includes(trimmed)) {
+          unknown.push(trimmed)
+        }
+
+        continue
+      }
+
+      known.add(match)
+    }
+
+    return [
+      ...options.map((option) => option.value).filter((value) => known.has(value)),
+      ...unknown,
+    ]
+  }
+
+  return {
+    ...params,
+    category: canonicalList(params.category, vocabulary.categories),
+    collection: canonicalList(params.collection, vocabulary.collections),
+    color: canonicalList(params.color, vocabulary.colors),
+    /*
+     * Clamped here as well as in `normaliseCatalogQuery`, so a URL carrying `?page=0` or `?page=4.5`
+     * is rewritten to one the rest of the system agrees with rather than merely tolerated. Without
+     * it the address bar would keep a page number no query ever ran.
+     */
+    page: Math.min(
+      Math.max(Number.isSafeInteger(params.page) ? params.page : 1, 1),
+      CATALOG_MAX_PAGE,
+    ),
+    size: canonicalList(params.size, vocabulary.sizes),
+  }
+}
+
 /* -------------------------------------------------------------------------------------------------
  * The query
  * ---------------------------------------------------------------------------------------------- */
@@ -618,6 +706,59 @@ export function publishedProductWhere(now: string): Where[] {
     { or: [{ publishedAt: { exists: false } }, { publishedAt: { less_than_equal: now } }] },
     { 'derived.priceFromMinor': { exists: true } },
   ]
+}
+
+/**
+ * **Which variants may contribute a filter option.**
+ *
+ * The filter panel offers a size or a colour because *some product stocks it*, so "listable" has to
+ * mean the same thing here as it does for the listing — and it did not. This clause used to be
+ * `{ active: true }` alone, inline in the loader, which put the sizes of **draft** products into the
+ * panel: measured with a draft product sized `AUDIT-ONLY`, the size was offered and returned zero
+ * products, with nothing on screen to explain why.
+ *
+ * It is `publishedProductWhere`'s three conditions reached through the `product.` join — the same
+ * dotted path `access/publishedOn` resolves to a join on an indexed column. Written here rather than
+ * in the loader for the reason every other rule is: the loader is `server-only` and a harness cannot
+ * import it, so a rule that lives there is a rule nothing executes.
+ */
+export function listableVariantWhere(now: string): Where {
+  return {
+    and: [
+      { active: { equals: true } },
+      { 'product.status': { equals: 'published' } },
+      {
+        or: [
+          { 'product.publishedAt': { exists: false } },
+          { 'product.publishedAt': { less_than_equal: now } },
+        ],
+      },
+      { 'product.derived.priceFromMinor': { exists: true } },
+    ],
+  }
+}
+
+/**
+ * The page to redirect to when the requested one does not exist, or `null` to stay put.
+ *
+ * `/shop?page=5` against a one-page catalogue rendered the toolbar's honest "10 products" above the
+ * empty state's *"this part of the shop has no published products at the moment"* — two statements
+ * on one screen that could not both be true — and no pagination at all, because that control lives
+ * in the branch that only runs when there are products. The only way back was editing the URL.
+ *
+ * Returning the **last real page** means the customer always lands on products and the address
+ * becomes canonical. `null` covers the two cases where there is nowhere better to send them: a page
+ * that exists, and a result with no pages at all, where the empty state is the correct answer.
+ *
+ * A pure function rather than three lines in the component, so the harness can prove the one
+ * property that matters: it never returns a page that would itself redirect.
+ */
+export function outOfRangePage(page: number, totalPages: number): null | number {
+  if (totalPages <= 0 || page <= totalPages) {
+    return null
+  }
+
+  return totalPages
 }
 
 /**

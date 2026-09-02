@@ -54,9 +54,12 @@ import {
   CATALOG_SORT_FIELDS,
   DEFAULT_CATALOG_SORT,
   EMPTY_VOCABULARY,
+  canonicaliseParams,
   catalogHref,
   catalogWhere,
   expandCategory,
+  listableVariantWhere,
+  outOfRangePage,
   isFilteredQuery,
   normaliseCatalogQuery,
   publishedProductWhere,
@@ -321,6 +324,152 @@ check(
   'B: prices convert from major units to minor exactly once',
   normaliseCatalogQuery(params({ priceMin: 240 }), VOCABULARY).query.priceMinMinor === 24_000,
 )
+
+/* =================================================================================================
+ * B2 — Regressions from the Phase 11 post-implementation audit
+ * ============================================================================================== */
+
+check(
+  'B2: a lower-case size is canonicalised, so the chip and the URL agree (audit finding 1)',
+  canonicaliseParams(params({ size: ['m'] }), VOCABULARY).size.join(',') === 'M',
+  canonicaliseParams(params({ size: ['m'] }), VOCABULARY).size.join(','),
+)
+
+check(
+  'B2: …which is what makes removing that chip actually change the URL',
+  (() => {
+    const canonical = canonicaliseParams(params({ size: ['m'] }), VOCABULARY)
+    const remaining = canonical.size.filter((entry) => entry !== 'M')
+
+    return (
+      catalogHref('/shop', { ...canonical, size: remaining.length > 0 ? remaining : null }) !==
+      catalogHref('/shop', canonical)
+    )
+  })(),
+)
+
+check(
+  'B2: an UNKNOWN value survives canonicalisation, so the ignored-filter notice still fires',
+  canonicaliseParams(params({ color: ['puce'] }), VOCABULARY).color.join(',') === 'puce',
+)
+
+check(
+  'B2: a reversed price range survives canonicalisation, so the swap can still be announced',
+  (() => {
+    const canonical = canonicaliseParams(params({ priceMax: 100, priceMin: 400 }), VOCABULARY)
+
+    return canonical.priceMin === 400 && canonical.priceMax === 100
+  })(),
+)
+
+check(
+  'B2: canonicalisation orders values by the vocabulary, not by the URL',
+  canonicaliseParams(params({ color: ['bone', 'black'] }), VOCABULARY).color.join(',') ===
+    'black,bone',
+)
+
+check(
+  'B2: canonicalisation de-duplicates',
+  canonicaliseParams(params({ color: ['black', 'BLACK'] }), VOCABULARY).color.join(',') === 'black',
+)
+
+check(
+  'B2: an absurd page is canonicalised, so the URL cannot keep a page no query ran',
+  canonicaliseParams(params({ page: 99_999_999 }), VOCABULARY).page === CATALOG_MAX_PAGE,
+)
+
+check(
+  'B2: canonicalisation is a FIXED POINT — no URL can redirect twice',
+  (() => {
+    const once = canonicaliseParams(
+      params({
+        category: ['HOODIES'],
+        color: ['puce', 'BONE', 'black'],
+        page: 0,
+        size: ['m', 'm'],
+      }),
+      VOCABULARY,
+    )
+    const twice = canonicaliseParams(once, VOCABULARY)
+
+    return catalogHref('/shop', once) === catalogHref('/shop', twice)
+  })(),
+  catalogHref(
+    '/shop',
+    canonicaliseParams(
+      params({
+        category: ['HOODIES'],
+        color: ['puce', 'BONE', 'black'],
+        page: 0,
+        size: ['m', 'm'],
+      }),
+      VOCABULARY,
+    ),
+  ),
+)
+
+check(
+  'B2: an already-canonical URL does not redirect',
+  (() => {
+    const canonical = canonicaliseParams(params({ color: ['black'], size: ['M'] }), VOCABULARY)
+
+    return (
+      catalogHref('/shop', canonicaliseParams(canonical, VOCABULARY)) ===
+      catalogHref('/shop', canonical)
+    )
+  })(),
+)
+
+check(
+  'B2: page 5 of a 1-page result redirects to the last page (audit finding 3)',
+  outOfRangePage(5, 1) === 1,
+)
+
+check('B2: page 9 of a 3-page result redirects to page 3', outOfRangePage(9, 3) === 3)
+check('B2: a page that exists does not redirect', outOfRangePage(2, 3) === null)
+check('B2: the last page does not redirect', outOfRangePage(3, 3) === null)
+
+check(
+  'B2: an EMPTY result does not redirect — the empty state is the right answer',
+  outOfRangePage(5, 0) === null,
+)
+
+check(
+  'B2: the redirect target never itself redirects, at any size',
+  [1, 2, 3, 24, 500].every((total) => {
+    const target = outOfRangePage(9999, total)
+
+    return target === null || outOfRangePage(target, total) === null
+  }),
+)
+
+{
+  const clause = JSON.stringify(listableVariantWhere('2026-08-30T00:00:00.000Z'))
+
+  check(
+    'B2: the facet vocabulary only reads variants of PUBLISHED products (audit finding 4)',
+    clause.includes('product.status'),
+    clause,
+  )
+
+  check('B2: …and not of a scheduled product', clause.includes('product.publishedAt'))
+
+  check(
+    'B2: …and not of a product whose every variant is switched off',
+    clause.includes('product.derived.priceFromMinor'),
+  )
+
+  check(
+    'B2: the vocabulary clause and the listing clause agree on what "listable" means',
+    publishedProductWhere('2026-08-30T00:00:00.000Z').every((listing) => {
+      const key = JSON.stringify(listing).match(/"([a-zA-Z.]+)":/)?.[1] ?? ''
+
+      return key === 'or'
+        ? clause.includes('product.publishedAt')
+        : clause.includes(`product.${key}`)
+    }),
+  )
+}
 
 /* =================================================================================================
  * C — Category expansion, and the two engines agreeing about it
@@ -964,6 +1113,88 @@ try {
     `derived price: ${JSON.stringify((await payload.findByID({ collection: 'products', id: withdrawn.id, depth: 0 })).derived)}`,
   )
   check('G: a SOLD OUT product IS listed — it is a state, not a removal', listedIds.has(soldOut.id))
+
+  /*
+   * **The audit's finding 4, against real rows.** The fixture above proves the clause mentions
+   * `product.status`; this proves the database agrees — that the dotted path really does resolve to
+   * a join and really does exclude a draft product's variants. The draft product created above
+   * carries size `M`, which several published products also stock, so the test needs a size only the
+   * unlisted products have.
+   */
+  /*
+   * `size` carries `maxLength: 24`, so the marker is deliberately short — a 25-character size is a
+   * ValidationError, not a test failure, and the first version of this was exactly one over.
+   */
+  const hiddenSize = `VONLY-${stamp % 1_000_000}`
+
+  const hiddenVariant = await payload.create({
+    collection: 'product-variants',
+    data: {
+      active: true,
+      color: 'Black',
+      colorFamily: 'black',
+      inventoryQuantity: 5,
+      priceMinor: 12_000,
+      product: draft.id,
+      size: hiddenSize,
+      sizeSortOrder: 40,
+      sku: `VERIFY-HIDDEN-${stamp}`,
+    },
+    overrideAccess: true,
+  })
+  created.push({ collection: 'product-variants', id: hiddenVariant.id })
+
+  const listableVariants = await payload.find({
+    collection: 'product-variants',
+    depth: 0,
+    limit: 0,
+    pagination: false,
+    select: { size: true },
+    where: listableVariantWhere(new Date().toISOString()),
+  })
+
+  const offeredSizes = new Set(listableVariants.docs.map((doc) => doc.size))
+
+  check(
+    "G: a DRAFT product's size is not offered as a filter option",
+    !offeredSizes.has(hiddenSize),
+    `${offeredSizes.size} size(s) offered`,
+  )
+
+  const allActiveVariants = await payload.find({
+    collection: 'product-variants',
+    depth: 0,
+    limit: 0,
+    pagination: false,
+    select: { size: true },
+    where: { active: { equals: true } },
+  })
+
+  check(
+    'G: …and the old clause would have offered it, so the test can fail',
+    new Set(allActiveVariants.docs.map((doc) => doc.size)).has(hiddenSize),
+  )
+
+  check(
+    "G: a WITHDRAWN product's sizes are not offered either",
+    await payload
+      .find({
+        collection: 'product-variants',
+        depth: 0,
+        limit: 0,
+        pagination: false,
+        select: { product: true },
+        where: listableVariantWhere(new Date().toISOString()),
+      })
+      .then(({ docs }) =>
+        docs.every((doc) => {
+          const productId =
+            typeof doc.product === 'object' && doc.product ? doc.product.id : doc.product
+
+          return productId !== withdrawn.id && productId !== scheduled.id
+        }),
+      ),
+  )
 
   /*
    * The derived cache is what the listing filters on, so the harness checks that a real variant save
