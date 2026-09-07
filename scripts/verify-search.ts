@@ -227,6 +227,63 @@ for (const [name, codePoint] of HOSTILE) {
 }
 
 /* =================================================================================================
+ * A2 — Regressions from the Phase 12 sweep
+ * ============================================================================================== */
+
+check(
+  'A2: a REPLACEMENT CHARACTER makes the term unsearchable (sweep finding 1)',
+  normaliseSearchTerm(`${String.fromCodePoint(0xfffd)}%A`).term === null,
+)
+
+check(
+  'A2: …which is what a malformed percent-escape decodes to',
+  new URL('http://x/?q=%E0%A4%A').searchParams.get('q')?.includes(String.fromCodePoint(0xfffd)) ===
+    true,
+)
+
+check(
+  'A2: …so /search?q=%E0%A4%A cannot report a product count for a term nobody typed',
+  normaliseSearchTerm(new URL('http://x/?q=%E0%A4%A').searchParams.get('q')).status === 'empty',
+)
+
+check(
+  'A2: canonicalisation does NOT clamp, so the truncation can still be reported (sweep finding 2)',
+  normaliseSearchTerm('a'.repeat(400), { clamp: false }).term?.length === 400,
+)
+
+check(
+  'A2: …while the query itself is still clamped',
+  (normaliseSearchTerm('a'.repeat(400)).term?.length ?? 0) <= SEARCH_TERM_MAX_BYTES,
+)
+
+check(
+  'A2: …and normaliseCatalogQuery reports it',
+  normaliseCatalogQuery(params({ q: 'a'.repeat(400) }), VOCABULARY).ignored.some(
+    (entry) => entry.reason === 'truncated',
+  ),
+)
+
+check(
+  'A2: an unclamped canonicalisation is still a fixed point',
+  (() => {
+    const once = canonicaliseParams(params({ q: `  ${'a'.repeat(400)}  ` }), VOCABULARY)
+    const twice = canonicaliseParams(once, VOCABULARY)
+
+    return once.q === twice.q
+  })(),
+)
+
+check(
+  'A2: a present-but-empty q is distinguishable from an absent one (sweep finding 3)',
+  params({ q: '' }).q !== null && params().q === null,
+)
+
+check(
+  'A2: …and canonicalises to no term at all',
+  canonicaliseParams(params({ q: '   ' }), VOCABULARY).q === null,
+)
+
+/* =================================================================================================
  * B — The byte clamp (§12.1d: very long query)
  * ============================================================================================== */
 

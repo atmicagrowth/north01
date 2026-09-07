@@ -191,12 +191,15 @@ export function CatalogUnavailable({
   basePath,
   categories,
   curated = [],
+  isFiltered = false,
   params,
   scope = 'filters',
 }: {
   basePath: string
   categories: CategoryOption[]
   curated?: ProductCardModel[]
+  /** Whether anything is actually applied — a clear link with nothing to clear is a dead control. */
+  isFiltered?: boolean
   params: CatalogParams
   /**
    * What the customer was doing when it broke.
@@ -224,9 +227,23 @@ export function CatalogUnavailable({
       <p className="max-w-measure font-sans text-body text-foreground-muted">{copy.body}</p>
 
       <div className="flex flex-wrap items-center gap-m">
-        <Link href={catalogHref(basePath, { q: params.q, sort: params.sort })} variant="meta">
-          {scope === 'search' ? 'Clear filters' : 'Clear filters'}
-        </Link>
+        {/*
+          **Offered only when it would do something.**
+          
+          This link used to render unconditionally with an identical-branch ternary for its label.
+          On `/search?q=hoodie` with no facets applied it resolved to `/search?q=hoodie` — the page
+          the customer was already on — which is the dead control Phase 11's audit found in a
+          different form and `activeFilterChips` documents at length.
+
+          It is also withheld for `scope: 'search'` even when facets ARE applied: the term itself
+          needs the index, so clearing a colour leaves the same unavailable page. Browsing by
+          category is the only escape that works, and it is right there.
+        */}
+        {scope === 'filters' && isFiltered ? (
+          <Link href={catalogHref(basePath, { q: params.q, sort: params.sort })} variant="meta">
+            Clear filters
+          </Link>
+        ) : null}
 
         {categories.slice(0, 6).map((category) => (
           <Link key={category.value} href={`/shop/${category.value}`} variant="meta">

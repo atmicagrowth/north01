@@ -256,6 +256,7 @@ async function CatalogResults({
           basePath={basePath}
           categories={vocabulary.categories.filter((category) => category.parent === null)}
           curated={curated}
+          isFiltered={isFiltered}
           params={params}
           scope={scope}
         />

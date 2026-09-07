@@ -159,6 +159,14 @@ const STRIPPED = new RegExp(
   'gu',
 )
 
+/**
+ * U+FFFD, built from its code point for the same reason the classes above are.
+ *
+ * It is what a decoder produces when it cannot read the input, so its presence is a fact about the
+ * *transport* rather than about what anybody typed.
+ */
+const REPLACEMENT_CHARACTER = String.fromCodePoint(0xfffd)
+
 /** Combining marks, for accent folding. Built the same way, for the same reason. */
 const COMBINING = new RegExp('[\\u0300-\\u036F]', 'gu')
 
@@ -177,8 +185,27 @@ const COMBINING = new RegExp('[\\u0300-\\u036F]', 'gu')
  * — and lower-casing it would show the customer something they did not type. Matching is
  * case-insensitive at the engine, so folding here would buy nothing and cost that.
  */
-export function normaliseSearchTerm(raw: null | string | undefined): NormalisedSearchTerm {
+export function normaliseSearchTerm(
+  raw: null | string | undefined,
+  options: { clamp?: boolean } = {},
+): NormalisedSearchTerm {
   if (typeof raw !== 'string') {
+    return { status: 'empty', term: null, truncated: false }
+  }
+
+  /*
+   * **U+FFFD means the input was not valid text, so there is nothing to search for.**
+   *
+   * A malformed percent-escape in a URL — `?q=%E0%A4%A`, a link mangled in transit — is decoded by
+   * `URLSearchParams` into a REPLACEMENT CHARACTER rather than throwing. Measured: that query
+   * arrived as `U+FFFD` `%` `A`, the `A` satisfied the letter test below, and `/search` rendered
+   * **"9 products"** for a term nobody typed.
+   *
+   * The replacement character is the decoder saying it could not read the input. Guessing at what
+   * was meant and reporting a count for it is worse than saying nothing — so the whole term is
+   * treated as absent and the customer gets the landing page.
+   */
+  if (raw.includes(REPLACEMENT_CHARACTER)) {
     return { status: 'empty', term: null, truncated: false }
   }
 
@@ -190,7 +217,19 @@ export function normaliseSearchTerm(raw: null | string | undefined): NormalisedS
     .replace(/\s+/gu, ' ')
     .trim()
 
-  const clamped = truncateToBytes(cleaned, SEARCH_TERM_MAX_BYTES)
+  /*
+   * **`clamp: false` is what lets the customer be told the search was shortened.**
+   *
+   * `canonicaliseParams` calls this to decide the canonical URL. If it clamped, the redirect would
+   * rewrite a 400-character paste to 256 bytes and `normaliseCatalogQuery` would then see an
+   * already-short term with `truncated: false` — so the notice could never fire and its branch was
+   * dead code. That is the same mistake canonicalisation deliberately avoids for unknown facet
+   * values and reversed price ranges: rewriting the evidence before anything can report it.
+   *
+   * The URL therefore keeps what was pasted, and the query uses the clamp.
+   */
+  const clamped =
+    options.clamp === false ? cleaned : truncateToBytes(cleaned, SEARCH_TERM_MAX_BYTES)
   const truncated = clamped.length < cleaned.length
 
   if (clamped === '') {

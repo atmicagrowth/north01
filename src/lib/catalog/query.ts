@@ -383,7 +383,7 @@ export function canonicaliseParams(
     ]
   }
 
-  const { term } = normaliseSearchTerm(params.q)
+  const { term } = normaliseSearchTerm(params.q, { clamp: false })
 
   return {
     ...params,

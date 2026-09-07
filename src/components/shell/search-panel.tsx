@@ -18,6 +18,7 @@ import {
   pushRecentSearch,
   readRecentSearches,
   shouldReplaceHistory,
+  type SearchState,
 } from '@/lib/catalog/search'
 import { suggestionGroups, suggestionOptions, type SuggestionPayload } from '@/lib/catalog/suggest'
 
@@ -367,8 +368,26 @@ export function SearchPanel() {
    */
   const groups = suggestionGroups(options)
 
-  const showState =
-    merged.state === 'unavailable' || (merged.state === 'empty' && !pending && searchable !== null)
+  /**
+   * Which single message, if any, sits under the list.
+   *
+   * `loading` is here because feature matrix §2 lists a **loading state** under *Live results* and
+   * the panel had none: while a request was in flight the previous payload was discarded, so a
+   * customer who typed saw an empty panel with no explanation until the response landed. `pending`
+   * existed and was used only to *suppress* the empty message, which meant `SEARCH_COPY.loading` was
+   * unreachable — a state defined, documented and never rendered.
+   *
+   * It shows only while something is genuinely in flight for a term worth searching, so an idle
+   * panel and a too-short term stay quiet.
+   */
+  const panelState: null | SearchState =
+    merged.state === 'unavailable'
+      ? 'unavailable'
+      : pending && searchable !== null
+        ? 'loading'
+        : merged.state === 'empty' && searchable !== null
+          ? 'empty'
+          : null
 
   return (
     <div className="flex flex-col gap-l" data-slot="search-panel">
@@ -501,13 +520,11 @@ export function SearchPanel() {
         ))}
       </div>
 
-      {showState ? (
+      {panelState ? (
         <div role="status" className="flex flex-col gap-1">
-          <p className="font-sans text-body-sm text-foreground">
-            {SEARCH_COPY[merged.state].title}
-          </p>
+          <p className="font-sans text-body-sm text-foreground">{SEARCH_COPY[panelState].title}</p>
           <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
-            {SEARCH_COPY[merged.state].body}
+            {SEARCH_COPY[panelState].body}
           </p>
         </div>
       ) : null}

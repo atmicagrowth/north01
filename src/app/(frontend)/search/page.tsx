@@ -1,3 +1,5 @@
+import { redirect } from 'next/navigation'
+
 import { CatalogPage } from '@/components/catalog/catalog-page'
 import { SearchLanding } from '@/components/catalog/search-landing'
 import { getCatalogVocabulary, getCuratedProducts } from '@/lib/catalog/catalog'
@@ -41,6 +43,18 @@ export default async function SearchPage({
   const { term } = normaliseSearchTerm(params.q)
 
   if (term === null) {
+    /*
+     * **The landing branch canonicalises too.**
+     *
+     * `/search?q=`, `/search?q=%20` and `/search?q=%25` all render this page, so without this they
+     * are four URLs for one document — and `/shop?q=` already redirects to `/shop`, so the two
+     * routes disagreed about the same rule. The redirect runs before the reads because there is
+     * nothing to read for a search nobody made.
+     */
+    if (searchParamsCarryATerm(params)) {
+      redirect(SEARCH_PATH)
+    }
+
     const [vocabulary, curated] = await Promise.all([getCatalogVocabulary(), getCuratedProducts(4)])
 
     return <SearchLanding categories={vocabulary.categories} curated={curated} />
@@ -56,4 +70,14 @@ export default async function SearchPage({
       title={`“${term}”`}
     />
   )
+}
+
+/**
+ * Did the URL carry a `q` at all?
+ *
+ * `params.q` is `null` when the parameter is absent and a string when it is present but unusable —
+ * which is exactly the distinction between `/search` (canonical) and `/search?q=%20` (not).
+ */
+function searchParamsCarryATerm(params: { q: null | string }): boolean {
+  return params.q !== null
 }
