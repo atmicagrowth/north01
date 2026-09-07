@@ -7,6 +7,7 @@ import { cache } from 'react'
 import type { Payload } from 'payload'
 
 import { getCatalogSettings, type CatalogSettings } from '@/lib/catalog/catalog'
+import { appEnv } from '@/lib/env.server'
 import { publishedProductWhere } from '@/lib/catalog/query'
 import { resolveProductCards, type ProductCard } from '@/lib/catalog/resolve'
 import { formatMinorUnits } from '@/lib/money'
@@ -70,7 +71,14 @@ import {
  * the reason beside it.
  */
 
-/** The cookie holding the guest bag's token. Prefixed like every other cookie this project sets. */
+/**
+ * The cookie holding the guest bag's token.
+ *
+ * The **only** cookie this application names itself — the session cookie is Payload's
+ * `payload-token`, from its own `cookiePrefix` default. An earlier version of this comment claimed
+ * the two shared a prefix; they do not, and Phase 14's second sweep corrected the sentence rather
+ * than renaming a cookie to make a comment true.
+ */
 const CART_COOKIE = 'north01_cart'
 
 /** Thirty days, matching `Carts.expiresAt`'s default. A bag and its cookie should expire together. */
@@ -79,7 +87,15 @@ const CART_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
 /** Two hops: `variant.image` and `product.gallery[].image`. */
 const CART_DEPTH = 2
 
-/** No real bag is near this. It exists so a corrupt row cannot make the drawer unbounded. */
+/**
+ * No real bag is near this. It exists so a corrupt row cannot make the drawer unbounded.
+ *
+ * It is a **real** cap, not headroom: `pagination: false` does not make `limit` decorative — measured
+ * during Phase 13's second sweep, a `pagination: false` read with `limit: 2` returns two rows. So a
+ * bag that reached 200 lines would silently render 200 of them and total 200 of them, which is a
+ * wrong number rather than a slow page. `readCartLines` logs if it ever binds, because "no real bag
+ * is near this" is a prediction and a log is a fact.
+ */
 const LINE_LIMIT = 200
 
 export type CartLineView = {
@@ -198,11 +214,37 @@ async function resolveCart(
     const found = docs[0]
 
     /*
-     * A guest bag whose token is presented by a signed-in shopper is claimed rather than ignored:
-     * this is the ordinary "added things, then signed in" path, and `mergeGuestCart` has already run
-     * by the time a page renders. Refusing it here would strand the lines.
+     * **A cart that has an owner is never resolvable by cookie.** `!found.customer` is the whole
+     * condition, and it was `customerId === null || !found.customer` until Phase 14's second sweep —
+     * which meant an ANONYMOUS request presenting the cookie of a signed-in session's cart was
+     * handed that cart. Measured: register, add one thing, sign out, and the header still read
+     * "Bag, 1 item" — the previous account holder's bag, on a shared machine, to whoever sat down
+     * next. `logout` now clears the cookie as well; this is the check that does not depend on it.
+     *
+     * A guest bag whose token is presented by a signed-in shopper is **used** rather than ignored:
+     * this is the ordinary "added things, then signed in" path, and refusing it here would strand
+     * the lines.
+     *
+     * When the request is a mutation, it is also **claimed** — one `customer` write, so the bag
+     * stops being findable only by a cookie. Without that, a signed-in shopper whose merge did not
+     * run keeps filling an ownerless cart that vanishes with their cookies, and the next sign-in
+     * treats it as a guest bag all over again.
+     *
+     * The claim happens on `create` and nowhere else, because `create` is the flag that says this
+     * request is a decision. A read still just reads — see the module docblock. (An earlier version
+     * of this comment said "claimed" while the code only returned it, which is the mismatch Phase
+     * 14's second sweep was looking for.)
      */
-    if (found && (customerId === null || !found.customer)) {
+    if (found && !found.customer) {
+      if (create && customerId !== null) {
+        return payload.update({
+          collection: 'carts',
+          data: { customer: customerId },
+          id: found.id,
+          overrideAccess: true,
+        })
+      }
+
       return found
     }
   }
@@ -251,8 +293,30 @@ async function issueCookie(token: string): Promise<void> {
     maxAge: CART_COOKIE_MAX_AGE,
     path: '/',
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    /*
+     * `appEnv`, not `process.env.NODE_ENV`.
+     *
+     * `payload.config.ts` sets the session cookie's `secure` from `appEnv !== 'local'`, and two
+     * cookies on one site deciding the same question by two different rules is how they come to
+     * disagree on the deployment nobody tested. `appEnv` is also the project's own answer — it reads
+     * `VERCEL_ENV` first and falls back to `NODE_ENV`, and it withholds privilege when it cannot
+     * tell preview from production. Reading `process.env` past it was the shortcut §1.9's audit
+     * already found once.
+     */
+    secure: appEnv !== 'local',
   })
+}
+
+/**
+ * Drop the guest token.
+ *
+ * Exported for `logout`: a session that owned a cart leaves a cookie behind, and a cookie is a guest
+ * identity. `resolveCart` refuses an owned cart by token regardless, so this is belt as well as
+ * braces — but leaving a stale token in the jar means the next guest bag is created against a token
+ * the browser already has, and the tidier state is no token at all.
+ */
+export async function forgetCartCookie(): Promise<void> {
+  await clearCookie()
 }
 
 async function clearCookie(): Promise<void> {
@@ -323,6 +387,14 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
     sort: 'createdAt',
     where: { cart: { equals: cart.id } },
   })
+
+  if (docs.length >= LINE_LIMIT) {
+    payload.logger.error(
+      { cartId: cart.id, lines: docs.length },
+      `A bag reached the ${LINE_LIMIT}-line read cap. Its totals are computed from a truncated ` +
+        'read — raise LINE_LIMIT in lib/cart/cart.ts.',
+    )
+  }
 
   let drifted = false
 

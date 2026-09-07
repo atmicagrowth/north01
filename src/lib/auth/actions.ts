@@ -14,7 +14,7 @@ import {
 } from 'payload'
 import type { ZodType } from 'zod'
 
-import { mergeGuestCart } from '@/lib/cart/cart'
+import { forgetCartCookie, mergeGuestCart } from '@/lib/cart/cart'
 import { getPayloadClient } from '@/lib/payload'
 import { checkPassword } from '@/lib/password-policy'
 
@@ -440,6 +440,13 @@ export async function logout(): Promise<void> {
   }
 
   await clearSessionCookie(payload, payload.collections.customers.config)
+
+  /*
+   * The bag cookie is a guest identity, and this session is over. `resolveCart` refuses an owned
+   * cart by token anyway — Phase 14's second sweep made sure of that after measuring the previous
+   * account holder's bag surviving a sign-out — so this is the tidy half of a two-part fix.
+   */
+  await forgetCartCookie()
 
   redirect('/login?signedOut=1')
 }

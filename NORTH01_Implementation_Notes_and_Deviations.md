@@ -5016,6 +5016,78 @@ lines at quantity two:
 | Variant deleted outright | the line is gone, no crash, the rest of the bag intact |
 | Cart expired | reads as empty, exactly as `Carts.ts` says |
 
+#### Sweep 2 — checking the docblocks against the running application
+
+Six findings. One of them is the most serious defect of the phase, and it was found by testing a
+sentence rather than a feature.
+
+**1. A signed-out visitor was handed the previous account holder's bag.**
+
+`resolveCart` looked a cart up by token when `customerId === null || !found.customer`. The first half
+of that condition means: *an anonymous request may resolve any cart its cookie names* — including one
+that belongs to an account.
+
+Measured: register a new account with no bag, add one thing while signed in, sign out. The header
+still read **"Bag, 1 item"**, and `/cart` still listed it. On a shared machine that is one person's
+bag shown to the next person who sits down.
+
+The condition is now `!found.customer` alone: **a cart that has an owner is never resolvable by
+cookie.** `logout` also clears the cart cookie now, which is the tidy half — a cookie is a guest
+identity and a session that owned a cart should not leave one behind. The check does not depend on
+the cookie being cleared, because a fix that relies on a second fix is one fix.
+
+Verified: signed in **1**, after sign-out **0**, after signing back in **1**.
+
+**2. The cart cookie decided `secure` by a different rule from the session cookie.** `payload.config.ts`
+sets the session cookie's from `appEnv !== 'local'`; this module read `process.env.NODE_ENV` directly.
+Two cookies on one site answering the same question two ways is how they come to disagree on the
+deployment nobody tested — and reaching past `env.core` to `process.env` is the shortcut §1.9's audit
+already found once. Now `appEnv`.
+
+**3. "Prefixed like every other cookie this project sets."** There is no other cookie this project
+names: the session cookie is Payload's `payload-token`, from its own default prefix. The sentence was
+corrected rather than a cookie renamed to make a comment true.
+
+**4. "A guest bag … is claimed rather than ignored" — the code only returned it.** No `customer` was
+ever written. The consequence is real: a signed-in shopper whose merge did not run keeps filling an
+ownerless cart that disappears with their cookies. The bag is now **claimed on a mutation** — `create`
+is the flag that says the request is a decision — and still merely read on a read, which keeps the
+module's *"a page view is not a decision"* rule intact.
+
+**5. `LINE_LIMIT = 200` was a silent cap.** Exactly the finding Phase 13's second sweep made about
+`VARIANT_LIMIT`, in a new file: `pagination: false` does not make `limit` decorative, so a bag that
+reached 200 lines would render and **total** a truncated read. It now logs when it binds. That two
+phases in a row produced the same shape suggests it is worth watching for in every read that pairs the
+two options.
+
+**6. "The action is idempotent per line."** It is not — adding increments, and Phase 14's first sweep
+measured a double tap producing a quantity of two. That is the *correct* reading of two clicks, so the
+behaviour stands and the justification was rewritten as the trade it actually is: a pending-disabled
+button protects against a mis-click and costs a deliberate second click on a control whose whole job
+is to accept them.
+
+#### Claims that held
+
+**The deferral really is only in the type.** `cart-summary.tsx` claims that when Phases 15 and 16
+assign `discountMinor`, `shippingMinor` and `taxMinor`, the component *"starts rendering the rows and
+the word Total without being edited"*. Tested by temporarily assigning `500`, `995` and `1234` in
+`cartTotals`: the summary rendered a Discount row, a Shipping row, a Tax row and **Total $237.29** —
+`$220.00 − $5.00 + $9.95 + $12.34` — and the *"calculated at checkout"* sentence disappeared. No
+component was touched. Reverted.
+
+*(One thing for Phase 16 to hold together: with a threshold met, the bag says "Standard delivery is
+free on this order" while a simulated `shippingMinor` of `995` sat in the Shipping row. The
+free-shipping message and the shipping amount are two renderings of one fact and must not be allowed
+to disagree.)*
+
+**Server actions really do refuse a cross-site call.** `actions.ts` claims Next's origin check makes
+the action uncallable cross-site with the browser's credentials. Tested by capturing a real action
+POST — `next-action` header and all — and replaying it from the same cookie jar with
+`Origin: https://evil.example`: **500**, and the bag was unchanged.
+
+**A page view really does not write a row.** Eight routes including `/cart`, opening the drawer on each:
+no cookie issued and the `carts` table unchanged at 13 rows.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -6468,4 +6540,5 @@ rather than a rate for a destination. §14.1e asks for it by name.
 
 | Phase 13 — two post-implementation sweeps | 2026-09-07 | Notes **§1.18.10**. Nine findings. **Sweep 1**, against a production build: `history: 'push'` with `shallow: false` writes a history entry synchronously and renders it later, so a second selection made before the server answers leaves an entry whose content describes a **different URL** — Back showed `?size=XS` over a page with no size selected, from 400 ms between clicks on the product page and 150 ms on `/shop/<category>`. Not a Phase 13 regression; the pattern is Phase 11's. `components/url-state.tsx` now owns the write options both call sites duplicated plus the rule that a write made while a navigation is in flight replaces rather than pushes. Walking the whole history in both directions: product **2/5 → 5/5**, catalogue **8/8**. Also: closing the zoom viewer dropped focus onto `<body>` (WCAG 2.4.3), and the product video shipped an empty `<track kind="captions">` — invalid markup asserting a caption track that does not exist. **Sweep 2**, against the docblocks: the swatch row's order depended on which sizes each colour came in, with a tie the query never broke, so the **default colourway could change between requests** — now alphabetical over a totally ordered read; `PRODUCT_IMAGE_SIZES.recommendation` was **never imported**, so the row used the shop card's string and under-claimed by 22%; pointing the same measurement at every `sizes` string found four more wrong, all in the last tier, by up to **+20% at 320px** — every one now within 2%, with the shared container arithmetic in `lib/media/grid.ts` and a *no bare `100vw` unless it really is the viewport* rule in all three harnesses; the size guide's "cells by label" promise lived in a component where nothing could execute it, now a pure module with nine regressions; and `pagination: false` does **not** make `limit` decorative, so the 500-variant cap was a real silent truncation of the size selector and now logs. `verify:product` 49 → **80**. Full sweep: 719 harness checks, 119 browser checks, 0 axe violations. |
 | Phase 14 — cart system | 2026-09-07 | Notes **§1.19**: a server-authoritative bag. Phase 6's schema needed no revisiting — no totals on `carts`, no price snapshot on `cart-items`, and `(cart, variant)` unique, which is §14.1b step 5 as a constraint and is verified against the real database. §14.1b's **seven named edge cases are seven named checks**; summing happens **before** clamping, because two checks that each pass can still add up to more than the warehouse has. §14.1d's five totals: the subtotal is real and discount, shipping and tax are **`null` rather than zero** (**DEV-58**) — a computed `$0.00` beside *Shipping* is the most persuasive kind of fake UI, and `isFinal` flips on its own when Phases 15 and 16 assign those fields. Every control is a `<form>` posting to a Server Action, so the bag works without JavaScript, and **no price crosses the boundary as an input**. **DEV-57**: no Checkout control — Phase 17 owns `/checkout`, and the drawer pins *View bag* instead. Three defects found by running it, two invisible to every gate: a `'use server'` module exporting a constant 500'd at **runtime** with typecheck, lint and build all green; `maxQuantity` clamped the current quantity instead of the ceiling, disabling `+` on every line; and the new bag badge escaped its unpositioned button to sit two pixels past the **document** edge, giving every page a horizontal scrollbar. `verify:cart` is **68 checks**; 34 browser checks, 9 merge checks against a real account, 0 axe violations. |
+| Phase 14 — two post-implementation sweeps | 2026-09-07 | Notes **§1.19.9**. Eight findings. **Sweep 1**, making the world move under an open bag: the line rendered the **stored** quantity beside a subtotal computed from the **effective** one — drop stock to 1 under a line holding 2 and the number on screen times the price on screen did not equal the subtotal on screen; and an unpublished product left a **dead link inside the bag**, because `publishedProductWhere` is the single definition of *listable* and the route honours it. Sixteen adversarial cases held, including a forged cart token, a mutation aimed at another session's line id, a re-enabled Add button posting a sold-out variant, two diverging tabs, a double tap, and **the whole add-to-bag flow with JavaScript switched off** — which was a docblock claim until it was tested. **Sweep 2**, against the docblocks: `resolveCart` resolved a cart by cookie when `customerId === null || !found.customer`, so **a signed-out visitor was handed the previous account holder's bag** — measured as "Bag, 1 item" after signing out on a machine with no session; the condition is now `!found.customer` alone and `logout` clears the cookie. Also: the cart cookie decided `secure` from `process.env.NODE_ENV` while the session cookie uses `appEnv`; *"claimed rather than ignored"* never wrote a `customer`; `LINE_LIMIT` was a **silent cap** — the same `pagination: false` finding Phase 13's sweep made about `VARIANT_LIMIT`, in a new file; and *"the action is idempotent per line"* was false. Three claims held under test, including the forward-looking one: assigning the three deferred totals made the summary render Discount, Shipping, Tax and **Total $237.29** with no component edited. `verify:cart` 68 → **72**. |
 > **Append this table, and the sections above it, at the end of every phase.**

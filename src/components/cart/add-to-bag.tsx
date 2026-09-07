@@ -34,9 +34,15 @@ import { cn } from '@/lib/cn'
  *
  * The button is disabled when no size is chosen or the chosen combination is sold out, because in
  * both cases pressing it cannot succeed and saying so up front beats an error afterwards. It is
- * **not** disabled while the action is in flight — a submit-pending button that stops accepting input
- * is how a double-tap becomes a lost click; the action is idempotent per line (it increments, and the
- * sum is clamped), and `pending` changes the label instead.
+ * **not** disabled while the action is in flight, and `pending` changes the label instead.
+ *
+ * That is a deliberate trade rather than an oversight. Adding is **not idempotent** — an earlier
+ * version of this comment claimed it was, and Phase 14's first sweep measured a double tap producing
+ * a quantity of two, which is the correct reading of two clicks and not a bug. What a disabled
+ * pending button would buy is protection against a *mis*-click; what it costs is the deliberate
+ * second click landing on nothing, on a control whose whole job is to accept them. The sum is
+ * clamped against live stock either way, so the worst outcome is one more of something the customer
+ * chose twice, visible and removable in the bag.
  */
 export function AddToBag({
   disabledReason,
