@@ -63,7 +63,7 @@ export default async function FrontendLayout({ children }: { children: ReactNode
 
           <SiteFooter newsletter={<NewsletterSignup />} />
 
-          <SearchOverlay items={navigation.primary} />
+          <SearchOverlay />
           <CartDrawer items={navigation.primary} />
         </ShellOverlayProvider>
       </body>

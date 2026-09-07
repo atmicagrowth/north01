@@ -4,6 +4,7 @@ import { isAdmin, isStaff, publishedOnly } from '../access'
 import { seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
 import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
+import { syncCategoryRename } from '../hooks/syncTaxonomyRename'
 
 /**
  * The product taxonomy. Plan §6.1d gives the shape by example — Clothing, Tops, Shirts, Hoodies,
@@ -47,12 +48,13 @@ export const Categories: CollectionConfig = {
    * the CMS should read the same in the header and in the filter panel, and without this hook the
    * two would disagree for up to five minutes.
    *
-   * **It does not re-index.** A slug change alters the `categorySlugs` of every product filed under
-   * it, which is a bulk operation rather than a hook's job — `pnpm reindex` is the documented answer,
-   * and `docs/DATABASE.md` records slug changes as the case that needs it.
+   * **It re-indexes on a rename.** Phase 12 made category NAMES searchable, so renaming a category
+   * changes every descendant product's record while saving none of them. `syncCategoryRename` rebuilds
+   * the affected subtree in two round trips, and only when the slug or the name actually moved — see
+   * that hook for what it deliberately does not cover, and `pnpm reindex:check` for the rest.
    */
   hooks: {
-    afterChange: [revalidateCollection('catalog', 'shell', 'navigation')],
+    afterChange: [syncCategoryRename, revalidateCollection('catalog', 'shell', 'navigation')],
     afterDelete: [revalidateCollectionDelete('catalog', 'shell', 'navigation')],
   },
 

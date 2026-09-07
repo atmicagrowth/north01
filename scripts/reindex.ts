@@ -40,6 +40,14 @@
  *
  * The name is printed before anything is written, so an operator sees which index is about to be
  * replaced.
+ *
+ * ### The read-only companion
+ *
+ * `pnpm reindex:check` (`scripts/reindex-check.ts`) reports drift without writing anything. It is a
+ * separate FILE rather than a flag on this one, because the Payload CLI does not forward extra
+ * arguments: inside `payload run`, `process.argv` holds node's path and the CLI's path and nothing
+ * else — measured. A `--check` flag would have been silently ignored, and the command meant to CHECK
+ * the index would have REBUILT it.
  */
 
 import config from '../src/payload.config'

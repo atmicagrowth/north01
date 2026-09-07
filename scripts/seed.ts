@@ -1096,6 +1096,22 @@ try {
       defaultLocale: 'en-US',
       freeShippingThresholdMinor: 15000,
       lowStockThreshold: 5,
+      /*
+       * Four terms the seeded catalogue actually answers — D-38.
+       *
+       * Seeding them is not decoration: `getPopularSearches` drops any term with no hits, so an
+       * unseeded field means the section renders in zero environments and the phase would ship the
+       * FIELD rather than the SECTION. Each of these was measured against the index: hoodie 1,
+       * merino 1, jacket 1, cashmere 1.
+       */
+      search: {
+        popularSearches: [
+          { term: 'hoodie' },
+          { term: 'merino' },
+          { term: 'jacket' },
+          { term: 'cashmere' },
+        ],
+      },
       maxQuantityPerLine: 10,
       shippingPolicy: rich(
         'Standard delivery is free above the threshold shown in your bag, and charged below it. Express and overnight are quoted at checkout.',

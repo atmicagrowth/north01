@@ -32,7 +32,9 @@
     "verify:shell": "payload run scripts/verify-shell.ts",
     "verify:home": "payload run scripts/verify-home.ts",
     "verify:catalog": "payload run scripts/verify-catalog.ts",
-    "reindex": "payload run scripts/reindex.ts"
+    "reindex": "payload run scripts/reindex.ts",
+    "reindex:check": "payload run scripts/reindex-check.ts",
+    "verify:search": "payload run scripts/verify-search.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",

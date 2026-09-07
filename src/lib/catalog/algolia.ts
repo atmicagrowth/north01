@@ -331,6 +331,29 @@ export async function saveProductRecord(
 }
 
 /**
+ * Upsert **many** products in one batch.
+ *
+ * A taxonomy rename changes every product beneath it, and the obvious implementation — calling the
+ * single-product upsert in a loop — is one network round trip per product, inside a request, for a
+ * category that can hold the whole catalogue. `saveObjects` chunks internally, so this is one call
+ * regardless of size.
+ */
+export async function saveProductRecords(
+  client: Algoliasearch,
+  indexBase: string,
+  records: ProductIndexRecord[],
+): Promise<void> {
+  if (records.length === 0) {
+    return
+  }
+
+  await client.saveObjects({
+    indexName: indexBase,
+    objects: records as unknown as Record<string, unknown>[],
+  })
+}
+
+/**
  * Remove one product.
  *
  * Deleting an `objectID` that is not there is a no-op rather than an error, which is what makes this

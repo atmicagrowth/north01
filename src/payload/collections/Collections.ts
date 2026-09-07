@@ -6,6 +6,7 @@ import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
 import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
 import { syncSearchIndexForCollection } from '../hooks/syncSearchIndex'
+import { syncCollectionRename } from '../hooks/syncTaxonomyRename'
 
 /**
  * Merchandising sets — Current Season, Essentials, Limited, Archive (structure document §2).
@@ -65,7 +66,11 @@ export const Collections: CollectionConfig = {
    * the options the shop's filter panel offers.
    */
   hooks: {
-    afterChange: [syncSearchIndexForCollection, revalidateCollection('catalog')],
+    afterChange: [
+      syncSearchIndexForCollection,
+      syncCollectionRename,
+      revalidateCollection('catalog'),
+    ],
     afterDelete: [revalidateCollectionDelete('catalog')],
   },
 

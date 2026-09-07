@@ -85,7 +85,7 @@ export default async function GlobalNotFound() {
 
           <SiteFooter />
 
-          <SearchOverlay items={navigation.primary} />
+          <SearchOverlay />
           <CartDrawer items={navigation.primary} />
         </ShellOverlayProvider>
       </body>

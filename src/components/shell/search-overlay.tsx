@@ -7,11 +7,9 @@ import {
   overlayTriggerProps,
   useShellOverlay,
 } from '@/components/shell/overlay-context'
-import { Dialog, DialogContent, DialogClose } from '@/components/ui/dialog'
+import { SearchPanel } from '@/components/shell/search-panel'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
-import { Link, NewTabHint } from '@/components/ui/link'
-import { cn } from '@/lib/cn'
-import type { ShellNavItem } from '@/lib/navigation/resolve'
 
 /**
  * **The search overlay — its chrome, in the phase that owns the shell; its contents, in the phase
@@ -35,10 +33,20 @@ import type { ShellNavItem } from '@/lib/navigation/resolve'
  * **DEV-25**, where the footer's newsletter column is a slot the phase that can post a form fills
  * in. Recorded as **DEV-37**.
  *
- * When Phase 12 arrives it replaces the body of `SearchPanel` and nothing else: the trigger, the
- * state machine, the focus handling and the close behaviour are already here and already verified.
+ * **Phase 12 has now replaced that body**, and nothing else here changed: the trigger, the state
+ * machine, the focus handling and the close behaviour are Phase 9's, untouched. **DEV-37 is closed.**
+ *
+ * Two corrections to what that deviation assumed, both worth recording:
+ *
+ * - The panel no longer takes `items`. It fetches on open, which keeps this component's signature
+ *   unchanged — and the signature matters, because `SearchOverlay` is mounted **twice**: here and in
+ *   `global-not-found.tsx`, which renders its own `<html>` outside the route group. A new prop would
+ *   have to be supplied in both places or the 404 page's panel would silently lose a section.
+ * - `overlay-context.tsx` closes on a **pathname** change, so a query-only navigation does not close
+ *   it. The old panel hid that by wrapping every link in `<DialogClose>`; the new one navigates
+ *   programmatically and calls `close()` itself.
  */
-export function SearchOverlay({ items }: { items: ShellNavItem[] }) {
+export function SearchOverlay() {
   const { isOpen, setOpen, handleCloseAutoFocus } = useShellOverlay()
 
   return (
@@ -54,47 +62,9 @@ export function SearchOverlay({ items }: { items: ShellNavItem[] }) {
          */
         className="top-[12vh] max-w-measure translate-y-0"
       >
-        <SearchPanel items={items} />
+        <SearchPanel />
       </DialogContent>
     </Dialog>
-  )
-}
-
-function SearchPanel({ items }: { items: ShellNavItem[] }) {
-  return (
-    <div className="flex flex-col gap-l">
-      <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
-        Search is not open yet — it arrives with the catalogue. Everything in the shop is reachable
-        from here in the meantime.
-      </p>
-
-      {items.length > 0 ? (
-        <nav aria-label="Browse">
-          <ul className="flex flex-col">
-            {items.map((item, index) => (
-              <li key={index} className="border-t border-border last:border-b">
-                <DialogClose asChild>
-                  <Link
-                    href={item.href}
-                    variant="unstyled"
-                    external={item.external}
-                    className={cn(
-                      'flex items-center justify-between gap-m py-m',
-                      'font-sans text-meta uppercase text-foreground-muted',
-                      'transition-colors duration-(--duration-fast) ease-entrance',
-                      'hover:text-foreground',
-                    )}
-                  >
-                    {item.label}
-                    {item.external ? <NewTabHint /> : null}
-                  </Link>
-                </DialogClose>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      ) : null}
-    </div>
   )
 }
 

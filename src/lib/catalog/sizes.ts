@@ -45,6 +45,15 @@ export const CATALOG_IMAGE_SIZES = {
    * Identical to the homepage's contained figure, because that is what it is.
    */
   categoryHeader: '(min-width: 1440px) 1312px, (min-width: 1024px) 92vw, 100vw',
+  /**
+   * The thumbnail on a search-suggestion row. A fixed 56px box at every width.
+   *
+   * `MediaImage.sizes` is required and deliberately not defaulted, so this entry has to exist —
+   * and reusing `productCardGrid` here would be worse than forgetting it: that string promises a
+   * 244px minimum, so every settled keystroke would request six images four times wider than the
+   * 56px box they render into, on the one code path that runs per keystroke.
+   */
+  searchSuggestionThumb: '56px',
 } as const
 
 export type CatalogImageSurface = keyof typeof CATALOG_IMAGE_SIZES
