@@ -343,6 +343,11 @@ export const EMPTY_VOCABULARY: CatalogVocabulary = {
  *   redirect that silently deletes the token tells them nothing.
  * - **A reversed price range** — `?priceMin=400&priceMax=100`. Same reasoning: the swap is announced,
  *   and it cannot be announced if the URL no longer shows it happened.
+ * - **An over-long search term.** The term is trimmed and NFC-normalised here but **not clamped**,
+ *   which is why `normaliseSearchTerm` takes a `clamp` option at all. Clamping it made the "that
+ *   search was very long" notice unreachable: the redirect rewrote a 400-character paste to 256
+ *   bytes, and `normaliseCatalogQuery` then saw an already-short term with `truncated: false`. The
+ *   third instance of the same mistake, found by the sweep in the one place it had not been checked.
  *
  * So this canonicalises **spelling, order and duplication of values the shop recognises**, and
  * nothing else. Unknown values are preserved in the order they arrived, after the known ones.

@@ -84,6 +84,52 @@ async function reindexWhere(payload: Payload, where: Where, req?: PayloadRequest
   }
 }
 
+/**
+ * A category and every category beneath it, by id.
+ *
+ * Breadth-first with a `seen` guard, for the reason `expandCategory` and `withAncestors` both carry
+ * one: `Categories.ts` stops a category being its *own* parent and deliberately does not stop a
+ * longer `A -> B -> A` cycle, which is reachable through two saves. Walking one without a guard
+ * hangs the save rather than the render.
+ */
+async function descendantIds(req: PayloadRequest, rootId: number): Promise<number[]> {
+  const { docs } = await req.payload.find({
+    collection: 'categories',
+    depth: 0,
+    limit: 0,
+    overrideAccess: true,
+    pagination: false,
+    req,
+    select: { parent: true },
+  })
+
+  const children = new Map<number, number[]>()
+
+  for (const doc of docs) {
+    const parent = typeof doc.parent === 'object' && doc.parent ? doc.parent.id : doc.parent
+
+    if (typeof parent === 'number') {
+      children.set(parent, [...(children.get(parent) ?? []), doc.id])
+    }
+  }
+
+  const seen = new Set<number>()
+  const queue = [rootId]
+
+  while (queue.length > 0) {
+    const current = queue.shift() as number
+
+    if (seen.has(current)) {
+      continue
+    }
+
+    seen.add(current)
+    queue.push(...(children.get(current) ?? []))
+  }
+
+  return [...seen]
+}
+
 /** For `categories.hooks.afterChange`. */
 export const syncCategoryRename: CollectionAfterChangeHook = async ({ doc, previousDoc, req }) => {
   const next = doc as Renameable
@@ -94,16 +140,20 @@ export const syncCategoryRename: CollectionAfterChangeHook = async ({ doc, previ
   }
 
   /*
-   * Every product filed under this category **or any of its descendants** — because
-   * `withAncestors` means a descendant's record carries this category's name too. The dotted path
-   * resolves to a join on an indexed column, and one level of `parent` covers the shallow tree
-   * `Categories.ts` describes; a deeper rename is what `reindex:check` and `pnpm reindex` are for.
+   * **Every product under this category or any descendant, at any depth.**
+   *
+   * `withAncestors` puts a category's name into the record of every product beneath it, so a rename
+   * changes all of them. The subtree is resolved explicitly rather than with a `categories.parent`
+   * clause, and the reason is worth stating because the sweep found it by accident: renaming
+   * *Clothing* correctly updated a hoodie two levels below it — but only because the seed tags each
+   * product with its **full ancestor path** (`[hoodies, tops, clothing]`), so the direct clause
+   * matched. A product tagged with only its leaf category would have been missed, and nothing in the
+   * schema requires the seed's convention.
+   *
+   * One extra read of a collection `Categories.ts` describes as a *shallow tree* buys a claim that
+   * does not depend on how somebody happened to tag a product.
    */
-  await reindexWhere(
-    req.payload,
-    { or: [{ categories: { equals: next.id } }, { 'categories.parent': { equals: next.id } }] },
-    req,
-  )
+  await reindexWhere(req.payload, { categories: { in: await descendantIds(req, next.id) } }, req)
 
   return doc
 }

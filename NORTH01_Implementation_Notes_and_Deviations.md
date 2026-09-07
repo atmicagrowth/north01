@@ -4337,6 +4337,91 @@ The panel keeps categories, collections, recent and popular. `pnpm reindex:check
   `AGENTS.md`'s precedence list is unambiguous, so nothing depends on it.
 
 
+### 1.17.10 Post-implementation sweeps
+
+Two adversarial passes over the committed phase, on deliberately different axes. **Six defects, all
+fixed.** The seventh phase to run this exercise and the seventh to find things that had passed every
+gate.
+
+#### Sweep 1 — probing the runtime rather than reading the code
+
+Five, and the first would have put a number on a page that meant nothing.
+
+**A malformed URL escape reported a product count for a term nobody typed.** `?q=%E0%A4%A` is an
+incomplete UTF-8 sequence, and `URLSearchParams` decodes it to `U+FFFD` + `%` + `A` rather than
+throwing — so the `A` satisfied the letter test and `/search` rendered **"9 products"**. The
+replacement character is the decoder saying it could not read the input; guessing at what was meant
+and putting a count on the guess is worse than saying nothing. It now makes the term unsearchable.
+
+**The "very long query" notice was dead code.** `canonicaliseParams` clamped the term, so the
+redirect rewrote a 400-character paste to 256 bytes and `normaliseCatalogQuery` then saw an
+already-short term with `truncated: false`. This is the **third** instance of one mistake — the same
+one canonicalisation deliberately avoids for unknown facet values and for reversed price ranges, both
+of which have paragraphs explaining why the evidence must survive the redirect — made in the one
+place nobody checked. Canonicalisation no longer clamps.
+
+**`/search?q=` did not canonicalise**, while `/shop?q=` did: two routes disagreeing about one rule,
+and four URLs for one page. The landing branch returns before `CatalogPage`'s redirect, so it needed
+its own.
+
+**A dead control in the unavailable state.** `CatalogUnavailable` rendered "Clear filters"
+unconditionally, so on `/search?q=hoodie` with no facets it pointed at the page the customer was
+already on — the shape Phase 11's audit found in `activeFilterChips`, and that component's own
+docblock warns about it. It is now withheld when there is nothing to clear, and always for
+`scope: 'search'`, because the term itself needs the index so clearing a colour leaves the same
+unavailable page. Its label was also `scope === 'search' ? 'Clear filters' : 'Clear filters'` — an
+identical-branch ternary that typecheck and lint are both structurally blind to.
+
+**The panel had no loading state**, which feature matrix §2 lists by name under *Live results*.
+`pending` was computed and used only to *suppress* the empty message, so `SEARCH_COPY.loading` was
+defined, documented and unreachable — a customer who typed saw a blank panel until the response
+landed.
+
+#### Sweep 2 — checking claims against the running application
+
+One defect, and it was found by a test that **passed**.
+
+`syncTaxonomyRename` was exercised end to end for the first time, through the admin API against the
+running app, because the hook cannot fire under the CLI. Renaming *Hoodies* updated the product's
+`searchTerms` and the new name was searchable within seconds. Renaming the **grandparent**
+*Clothing* also worked, two levels down — better than the docblock hedged.
+
+Checking *why* is what found the defect. The `where` was
+`{ or: [{ categories: { equals: id } }, { 'categories.parent': { equals: id } }] }`, which reaches one
+level. It succeeded two levels down only because **the seed tags every product with its full ancestor
+path** (`[hoodies, tops, clothing]`), so the direct clause matched. Nothing in the schema requires
+that convention, and `withAncestors` exists precisely because a product may be tagged with only its
+leaf.
+
+Proved by construction: re-tagging the product with `[hoodies]` alone and renaming *Clothing* again
+would have missed it. The hook now resolves the subtree explicitly — one extra read of a collection
+`Categories.ts` describes as a *shallow tree* — and the leaf-only case was then verified to pass.
+
+**The lesson is the one worth keeping.** A green test is not evidence that the mechanism under test is
+the mechanism doing the work. The rename test passed twice before it was correct, and would have kept
+passing until a merchandiser tagged a product the way the schema allows and the seed does not.
+
+#### What the sweeps say about the gates
+
+Every one of the six was invisible to typecheck, lint, the build and 200 harness checks — and five of
+the six were invisible to a *reading* of the code, because each was a disagreement between two places
+that were individually reasonable. Four categories, all previously named in §1.15.12 and §1.16.11:
+
+1. **Types describe shape, never meaning.** A conditional with identical branches type-checks.
+   `U+FFFD` is a letter-adjacent character to a regex and a decoding failure to a human.
+2. **A harness meets the fixtures its author imagined.** No fixture carried a replacement character,
+   because nobody types one.
+3. **A browser and a running application are where state over time lives.** The loading state, the
+   dead link and the rename hook all needed something to happen *after* something else.
+4. **The gates cannot check the machine's account of itself.** Two of the six were docblocks
+   describing a mechanism that was not the one running.
+
+`verify:search` is **209 checks**, up from 200, with a regression for every finding the pure modules
+can hold. Full sweep after both: **732 checks across six harnesses**, 19 browser checks, 0 axe
+violations across 14 surfaces, no index drift, and the degraded pass re-run to confirm the dead link
+is gone and browsing is untouched.
+
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

@@ -49,9 +49,10 @@ export const Categories: CollectionConfig = {
    * two would disagree for up to five minutes.
    *
    * **It re-indexes on a rename.** Phase 12 made category NAMES searchable, so renaming a category
-   * changes every descendant product's record while saving none of them. `syncCategoryRename` rebuilds
-   * the affected subtree in two round trips, and only when the slug or the name actually moved — see
-   * that hook for what it deliberately does not cover, and `pnpm reindex:check` for the rest.
+   * changes every descendant product's record while saving none of them. `syncCategoryRename`
+   * resolves the whole subtree and rebuilds it in a bounded number of round trips, and only when the
+   * slug or the display name actually moved. Verified end to end against the running application:
+   * renaming a grandparent updates a product tagged with only its leaf category.
    */
   hooks: {
     afterChange: [syncCategoryRename, revalidateCollection('catalog', 'shell', 'navigation')],
