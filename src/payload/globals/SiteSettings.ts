@@ -237,6 +237,64 @@ export const SiteSettings: GlobalConfig = {
           ],
         },
         {
+          /**
+           * **Popular searches, and why they are typed rather than measured.**
+           *
+           * Plan section 12.1c lists "popular searches" as a search-panel section and no document
+           * says where they come from. Decision **D-38** settles it here rather than from Algolia's
+           * analytics, and the reasoning is measured rather than theoretical:
+           *
+           * - The recorded top search in this application is the **empty string**, with eighteen
+           *   times the count of anything else, because every faceted `/shop` request sends
+           *   `query: ''` and Algolia's `analytics` parameter defaults on. (Phase 12 sets
+           *   `analytics: false` on browse queries, so the corpus stops being polluted -- but the
+           *   history already is.)
+           * - Several of the remaining recorded terms return zero hits: they were engineer probes.
+           *
+           * Rendering that list would offer a customer a "popular search" whose only destination is
+           * the no-results page. Plan section 0.1.17 forbids a control that looks functional and does
+           * nothing, and provenance from an analytics API does not make it work.
+           *
+           * The honest alternative costs one array field. Phase 25 owns `search_submitted` and can
+           * feed this same field from real behaviour later without changing a line of the reader.
+           *
+           * **Every term is validated against the index before it is shown**, and one that matches
+           * nothing is dropped -- so this field cannot create a dead end even if it is left stale.
+           */
+          label: 'Search',
+          fields: [
+            {
+              name: 'search',
+              type: 'group',
+              label: false,
+              fields: [
+                {
+                  name: 'popularSearches',
+                  type: 'array',
+                  maxRows: 8,
+                  labels: { singular: 'Term', plural: 'Terms' },
+                  admin: {
+                    description:
+                      'These appear in the search panel. A term that returns no products is dropped rather than shown, so the panel can never offer a search that leads nowhere. Leave empty to hide the section.',
+                  },
+                  fields: [
+                    {
+                      name: 'term',
+                      type: 'text',
+                      required: true,
+                      maxLength: 48,
+                      admin: {
+                        description:
+                          'What a customer would type -- "hoodie", "merino". Not a slug and not a category name unless that is genuinely what people search for.',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
           label: 'Policies',
           /**
            * Plan §13.1e puts a **Shipping & Returns** accordion on every product page, and no

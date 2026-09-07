@@ -1,5 +1,7 @@
 import { algoliasearch, type Algoliasearch } from 'algoliasearch'
 
+import { RESULTS_DEADLINE_MS, SUGGEST_DEADLINE_MS, withDeadline } from './search'
+
 import {
   CATALOG_INDEX_SETTINGS,
   CATALOG_SHARED_SETTINGS,
@@ -92,10 +94,27 @@ export const createWriteClient = createSearchClient
  * ---------------------------------------------------------------------------------------------- */
 
 export type IndexSearchResult = {
+  /** Whether `totalProducts` is exact — Algolia stops counting precisely on large result sets. */
+  exhaustive: boolean
   /** Product ids, in the index's ranking order. */
   ids: number[]
   totalPages: number
   totalProducts: number
+}
+
+/** Ids from one response, dropping anything that is not a usable Postgres id. See `searchProductIds`. */
+function hitIds(hits: readonly { objectID: string }[] | undefined): number[] {
+  const ids: number[] = []
+
+  for (const hit of hits ?? []) {
+    const id = Number(hit.objectID)
+
+    if (Number.isSafeInteger(id) && id > 0) {
+      ids.push(id)
+    }
+  }
+
+  return ids
 }
 
 /**
@@ -127,26 +146,96 @@ export async function searchProductIds(
   query: CatalogQuery,
   hitsPerPage: number,
 ): Promise<IndexSearchResult> {
-  const response = await client.searchSingleIndex<{ objectID: string }>({
-    indexName: indexNameForSort(indexBase, query.sort),
-    searchParams: indexSearchParams(query, hitsPerPage),
-  })
-
-  const ids: number[] = []
-
-  for (const hit of response.hits ?? []) {
-    const id = Number(hit.objectID)
-
-    if (Number.isSafeInteger(id) && id > 0) {
-      ids.push(id)
-    }
-  }
+  const response = await withDeadline(
+    client.searchSingleIndex<{ objectID: string }>({
+      indexName: indexNameForSort(indexBase, query.sort),
+      searchParams: indexSearchParams(query, hitsPerPage),
+    }),
+    RESULTS_DEADLINE_MS,
+    'catalogue search',
+  )
 
   return {
-    ids,
+    exhaustive: response.exhaustiveNbHits !== false,
+    ids: hitIds(response.hits),
     totalPages: response.nbPages ?? 0,
     totalProducts: response.nbHits ?? 0,
   }
+}
+
+/**
+ * Ids for the typeahead — always against the **primary** index.
+ *
+ * A suggestion list is ranked by relevance, never by price or recency: somebody typing three letters
+ * wants the closest match, not the cheapest one. Querying a sort replica here would silently reorder
+ * suggestions by whatever that replica ranks on and bury the obvious answer.
+ *
+ * It carries the shorter deadline, because a suggestion the customer has already typed past is worse
+ * than no suggestion at all.
+ */
+export async function searchSuggestionIds(
+  client: Algoliasearch,
+  indexBase: string,
+  term: string,
+  limit: number,
+): Promise<number[]> {
+  const response = await withDeadline(
+    client.searchSingleIndex<{ objectID: string }>({
+      indexName: indexBase,
+      searchParams: { analytics: false, hitsPerPage: limit, page: 0, query: term },
+    }),
+    SUGGEST_DEADLINE_MS,
+    'suggestion search',
+  )
+
+  return hitIds(response.hits)
+}
+
+/**
+ * How many products each term matches, in **one** round trip.
+ *
+ * `client.search({ requests })` is a single POST to `/1/indexes/*&#47;queries`, so validating eight
+ * curated popular searches costs one request rather than eight. `hitsPerPage: 0` asks for counts
+ * only — no hits cross the wire at all.
+ *
+ * `analytics: false` because this is the shop checking its own configuration, not a customer
+ * searching. Recording it would put the curated list into the analytics corpus and make the
+ * dashboard report the shop's own health checks as demand.
+ */
+export async function countHitsForTerms(
+  client: Algoliasearch,
+  indexBase: string,
+  terms: readonly string[],
+): Promise<Map<string, number>> {
+  if (terms.length === 0) {
+    return new Map()
+  }
+
+  const response = await withDeadline(
+    client.search({
+      requests: terms.map((term) => ({
+        analytics: false,
+        hitsPerPage: 0,
+        indexName: indexBase,
+        query: term,
+      })),
+    }),
+    SUGGEST_DEADLINE_MS,
+    'popular-search validation',
+  )
+
+  const counts = new Map<string, number>()
+
+  response.results.forEach((result, index) => {
+    const term = terms[index]
+    const nbHits = (result as { nbHits?: number }).nbHits
+
+    if (typeof term === 'string') {
+      counts.set(term, typeof nbHits === 'number' ? nbHits : 0)
+    }
+  })
+
+  return counts
 }
 
 /* -------------------------------------------------------------------------------------------------

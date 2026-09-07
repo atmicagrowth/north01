@@ -7,6 +7,8 @@ import {
 } from 'nuqs/server'
 import type { Where } from 'payload'
 
+import { normaliseSearchTerm } from './search'
+
 /**
  * **A URL, turned into a question the catalogue can answer.**
  *
@@ -134,6 +136,16 @@ export type CatalogAvailability = (typeof CATALOG_AVAILABILITY)[number]
  * unreadable, which defeats the point of putting it in the URL at all.
  */
 export const CATALOG_PARSERS = {
+  /**
+   * The search term.
+   *
+   * It joins **this** map rather than getting one of its own, and that single decision is what makes
+   * `/search` inherit URL preservation, canonicalisation, the filter chips, pagination and
+   * Back/Forward instead of rebuilding all five. Feature matrix §2 requires that a full results page
+   * keep "query preserved in URL, filters and sorting preserved in URL" — which is exactly what one
+   * shared parser map already guarantees for every other parameter.
+   */
+  q: parseAsString,
   category: parseAsArrayOf(parseAsString, ',').withDefault([]),
   collection: parseAsArrayOf(parseAsString, ',').withDefault([]),
   color: parseAsArrayOf(parseAsString, ',').withDefault([]),
@@ -181,6 +193,8 @@ export function catalogHref(basePath: string, values: CatalogHrefValues): string
 /** What `CATALOG_PARSERS` produces. Shapes, not yet answers — see `normaliseCatalogQuery`. */
 export type CatalogParams = {
   availability: CatalogAvailability | null
+  /** The raw search term as it arrived. `normaliseCatalogQuery` is what cleans it. */
+  q: null | string
   category: string[]
   collection: string[]
   color: string[]
@@ -369,8 +383,16 @@ export function canonicaliseParams(
     ]
   }
 
+  const { term } = normaliseSearchTerm(params.q)
+
   return {
     ...params,
+    /*
+     * The term is canonicalised like every other parameter, so `?q=%20hoodie%20` and `?q=hoodie` are
+     * one URL. An empty or punctuation-only term becomes `null` and the serializer drops the key —
+     * `/search?q=%20` is not a search and must not look like one in the address bar.
+     */
+    q: term,
     category: canonicalList(params.category, vocabulary.categories),
     collection: canonicalList(params.collection, vocabulary.collections),
     color: canonicalList(params.color, vocabulary.colors),
@@ -401,6 +423,8 @@ export function canonicaliseParams(
  */
 export type CatalogQuery = {
   availability: CatalogAvailability | null
+  /** The normalised search term, or `null` for a browse. */
+  q: null | string
   /** What the query filters on: the requested categories **expanded to include every descendant**. */
   categories: string[]
   collections: string[]
@@ -428,6 +452,7 @@ export type CatalogQuery = {
 
 export const EMPTY_QUERY: CatalogQuery = {
   availability: null,
+  q: null,
   categories: [],
   collections: [],
   colors: [],
@@ -443,7 +468,7 @@ export const EMPTY_QUERY: CatalogQuery = {
 export type IgnoredFilter = {
   /** The facet it was offered as — `category`, `collection`, `color`, `size`, `price`. */
   facet: string
-  reason: 'reversed' | 'unknown'
+  reason: 'reversed' | 'truncated' | 'unknown'
   value: string
 }
 
@@ -610,10 +635,22 @@ export function normaliseCatalogQuery(
     priceMax = swap
   }
 
+  const search = normaliseSearchTerm(params.q)
+
+  /*
+   * A clamped term is reported rather than silently shortened. §12.1d's "very long query" is a real
+   * input — a paste of a whole paragraph — and the customer is told the shop used the first part of
+   * it, instead of being shown results for a sentence they cannot see.
+   */
+  if (search.truncated) {
+    ignored.push({ facet: 'q', reason: 'truncated', value: search.term ?? '' })
+  }
+
   return {
     ignored,
     query: {
       availability: params.availability,
+      q: search.term,
       categories,
       collections: keepKnown('collection', params.collection, vocabulary.collections),
       colors: keepKnown('color', params.color, vocabulary.colors),
@@ -637,11 +674,22 @@ export function normaliseCatalogQuery(
  * `/shop/<category>` the route's own category is **not** a filter — it is where the customer is
  * standing, and offering to clear it would be offering to leave the page they asked for.
  */
-export function isFilteredQuery(query: CatalogQuery, routeCategory?: null | string): boolean {
+export function isFilteredQuery(
+  query: CatalogQuery,
+  routeCategory?: null | string,
+  /**
+   * The term that IS the route, on `/search`. Like `routeCategory`, standing somewhere is not
+   * filtering — offering to "clear" the search from the search page would offer to leave it.
+   */
+  routeQuery?: null | string,
+): boolean {
   const onlyTheRouteCategory =
     typeof routeCategory === 'string' && routeCategory !== '' && query.categories.length > 0
 
+  const onlyTheRouteQuery = typeof routeQuery === 'string' && routeQuery !== '' && query.q !== null
+
   return (
+    (query.q !== null && !onlyTheRouteQuery) ||
     query.colors.length > 0 ||
     query.sizes.length > 0 ||
     query.collections.length > 0 ||
@@ -671,7 +719,19 @@ export function isFilteredQuery(query: CatalogQuery, routeCategory?: null | stri
  * on `products`, and Postgres answers those exactly, authoritatively, and with no network hop.
  */
 export function requiresSearchIndex(query: CatalogQuery): boolean {
-  return query.colors.length > 0 || query.sizes.length > 0 || query.collections.length > 0
+  /*
+   * **A text query is ALWAYS the index.** This clause is the single highest-consequence line in the
+   * phase: without it `/search?q=hoodie` routes to Postgres, `catalogWhere` builds no clause from
+   * `q` because there is no text column to build one from, and the page renders the ENTIRE
+   * catalogue while the URL and the page title both claim a search. A wrong answer that looks
+   * exactly like a right one.
+   */
+  return (
+    query.q !== null ||
+    query.colors.length > 0 ||
+    query.sizes.length > 0 ||
+    query.collections.length > 0
+  )
 }
 
 /* -------------------------------------------------------------------------------------------------

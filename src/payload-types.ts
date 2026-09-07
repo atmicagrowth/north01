@@ -3055,6 +3055,20 @@ export interface SiteSetting {
    * The most units of a single variant one bag may hold. Enforced server-side.
    */
   maxQuantityPerLine: number;
+  search?: {
+    /**
+     * These appear in the search panel. A term that returns no products is dropped rather than shown, so the panel can never offer a search that leads nowhere. Leave empty to hide the section.
+     */
+    popularSearches?:
+      | {
+          /**
+           * What a customer would type -- "hoodie", "merino". Not a slug and not a category name unless that is genuinely what people search for.
+           */
+          term: string;
+          id?: string | null;
+        }[]
+      | null;
+  };
   /**
    * The Shipping half of the PDP accordion, and the shipping support page.
    */
@@ -3661,6 +3675,16 @@ export interface SiteSettingsSelect<T extends boolean = true> {
   freeShippingThresholdMinor?: T;
   lowStockThreshold?: T;
   maxQuantityPerLine?: T;
+  search?:
+    | T
+    | {
+        popularSearches?:
+          | T
+          | {
+              term?: T;
+              id?: T;
+            };
+      };
   shippingPolicy?: T;
   returnsPolicy?: T;
   defaultSeoTitle?: T;

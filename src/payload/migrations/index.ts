@@ -6,6 +6,7 @@ import * as migration_20260827_082119_phase_7_access_control from './20260827_08
 import * as migration_20260828_020136_phase_8_media_cloudinary from './20260828_020136_phase_8_media_cloudinary';
 import * as migration_20260828_060719_phase_9_defer_campaign_links from './20260828_060719_phase_9_defer_campaign_links';
 import * as migration_20260828_085710_phase_10_homepage from './20260828_085710_phase_10_homepage';
+import * as migration_20260907_073432_phase_12_search from './20260907_073432_phase_12_search';
 
 export const migrations = [
   {
@@ -46,6 +47,11 @@ export const migrations = [
   {
     up: migration_20260828_085710_phase_10_homepage.up,
     down: migration_20260828_085710_phase_10_homepage.down,
-    name: '20260828_085710_phase_10_homepage'
+    name: '20260828_085710_phase_10_homepage',
+  },
+  {
+    up: migration_20260907_073432_phase_12_search.up,
+    down: migration_20260907_073432_phase_12_search.down,
+    name: '20260907_073432_phase_12_search'
   },
 ];

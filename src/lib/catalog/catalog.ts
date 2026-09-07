@@ -8,7 +8,13 @@ import { appEnv, integrationStatus, serverEnv } from '@/lib/env.server'
 import { getPayloadClient } from '@/lib/payload'
 import { DEFAULT_CURRENCY, type CurrencyCode } from '@/payload/fields/money'
 
-import { catalogIndexName, createSearchClient, searchProductIds } from './algolia'
+import {
+  catalogIndexName,
+  countHitsForTerms,
+  createSearchClient,
+  searchProductIds,
+  searchSuggestionIds,
+} from './algolia'
 import { COLOR_FAMILY_LABELS, COLOR_FAMILY_OPTIONS } from './colors'
 import {
   CATALOG_PAGE_SIZE,
@@ -24,7 +30,18 @@ import {
   type CatalogVocabulary,
   type FacetOption,
 } from './query'
-import { resolveProductCards, type CatalogResult, type CatalogView } from './resolve'
+import {
+  resolveProductCards,
+  type CatalogResult,
+  type CatalogView,
+  type ProductCard,
+} from './resolve'
+import {
+  SEARCH_FAILURE_HINT,
+  SEARCH_SUGGESTION_LIMIT,
+  classifySearchFailure,
+  correctedTotal,
+} from './search'
 
 /**
  * **The reads that build the shop page.**
@@ -322,6 +339,31 @@ const getVocabulary = cache(async (): Promise<CatalogVocabulary> => {
 /** One hop is enough: `gallery[].image` is the only relationship a card reads. */
 const CARD_DEPTH = 1
 
+/**
+ * **Both engines read as an anonymous visitor, and they must read identically.**
+ *
+ * `payload.find` defaults to `overrideAccess: true` in the Local API, so D-37's phrase *"the ordinary
+ * access-controlled `payload.find`"* was aspirational rather than true: the read was bypassing
+ * `Products.publishedOnly` and relying entirely on `publishedProductWhere` to filter drafts.
+ *
+ * That produced the right answer, because the explicit clause is correct — but it meant one
+ * forgotten clause in a refactor would leak a draft rather than being caught by the access layer. It
+ * is spread into both engines from one constant so the two can never answer under different rules,
+ * which `verify:search` asserts directly.
+ */
+const STOREFRONT_ACCESS = { overrideAccess: false, user: null } as const
+
+/** The one shape an unreachable engine produces. Never `empty` -- see `searchState`. */
+const UNAVAILABLE_RESULT = (page: number): CatalogResult => ({
+  engine: 'unavailable',
+  exhaustive: true,
+  page,
+  products: [],
+  stale: false,
+  totalPages: 0,
+  totalProducts: 0,
+})
+
 async function runPostgres(
   payload: Payload,
   query: CatalogQuery,
@@ -335,11 +377,13 @@ async function runPostgres(
     limit: CATALOG_PAGE_SIZE,
     page: query.page,
     sort: CATALOG_SORT_FIELDS[query.sort],
+    ...STOREFRONT_ACCESS,
     where: catalogWhere(query, now),
   })
 
   return {
     engine: 'postgres',
+    exhaustive: true,
     page: result.page ?? query.page,
     products: resolveProductCards(
       result.docs,
@@ -347,9 +391,53 @@ async function runPostgres(
       settings.locale,
       settings.lowStockThreshold,
     ),
+    stale: false,
     totalPages: result.totalPages ?? 0,
     totalProducts: result.totalDocs ?? 0,
   }
+}
+
+/**
+ * **Ids from the index, products from Postgres.** The one path from an id to a card.
+ *
+ * Both the results grid and the typeahead call this, so there is literally one implementation of
+ * D-37's contract rather than two that can drift. It is also what makes §12.1d's *"deleted product
+ * still in index"* and *"product unpublished after index update"* structural rather than handled:
+ * the row is simply not returned, and no card is built.
+ *
+ * The re-sort at the end is not optional. `payload.find` with an `id IN (…)` clause returns rows in
+ * *its* order, not the order the ids were given, so without it the index's ranking — the entire
+ * reason the query went to Algolia — would be discarded and the grid would come back in
+ * `-createdAt` order under every sort.
+ */
+async function rehydrateProductIds(
+  payload: Payload,
+  ids: number[],
+  settings: CatalogSettings,
+): Promise<ProductCard[]> {
+  if (ids.length === 0) {
+    return []
+  }
+
+  const now = new Date().toISOString()
+
+  const result = await payload.find({
+    collection: 'products',
+    depth: CARD_DEPTH,
+    limit: ids.length,
+    pagination: false,
+    ...STOREFRONT_ACCESS,
+    where: { and: [...publishedProductWhere(now), { id: { in: ids } }] },
+  })
+
+  const byId = new Map(result.docs.map((doc) => [doc.id, doc]))
+
+  return resolveProductCards(
+    ids.map((id) => byId.get(id)).filter((doc) => doc !== undefined),
+    settings.currency,
+    settings.locale,
+    settings.lowStockThreshold,
+  )
 }
 
 /**
@@ -375,40 +463,28 @@ async function runSearch(
     appId: serverEnv.NEXT_PUBLIC_ALGOLIA_APP_ID as string,
   })
 
-  const { ids, totalPages, totalProducts } = await searchProductIds(
+  const { exhaustive, ids, totalPages, totalProducts } = await searchProductIds(
     client,
     catalogIndexName(appEnv),
     query,
     CATALOG_PAGE_SIZE,
   )
 
-  if (ids.length === 0) {
-    return { engine: 'search', page: query.page, products: [], totalPages, totalProducts }
-  }
-
-  const now = new Date().toISOString()
-
-  const result = await payload.find({
-    collection: 'products',
-    depth: CARD_DEPTH,
-    limit: ids.length,
-    pagination: false,
-    where: { and: [...publishedProductWhere(now), { id: { in: ids } }] },
-  })
-
-  const byId = new Map(result.docs.map((doc) => [doc.id, doc]))
+  const products = await rehydrateProductIds(payload, ids, settings)
 
   return {
     engine: 'search',
+    exhaustive,
     page: query.page,
-    products: resolveProductCards(
-      ids.map((id) => byId.get(id)).filter((doc) => doc !== undefined),
-      settings.currency,
-      settings.locale,
-      settings.lowStockThreshold,
-    ),
+    products,
+    /*
+     * The engine found something and Postgres refused all of it. That is a *stale* answer, not an
+     * empty one, and `searchState` ranks it above `empty` so the customer is told the pieces have
+     * just gone rather than that nothing matched.
+     */
+    stale: ids.length > 0 && products.length === 0,
     totalPages,
-    totalProducts,
+    totalProducts: correctedTotal(totalProducts, ids.length, products.length),
   }
 }
 
@@ -447,13 +523,7 @@ export const getCatalog = cache(
       return {
         ignored,
         query,
-        result: {
-          engine: 'unavailable',
-          page: query.page,
-          products: [],
-          totalPages: 0,
-          totalProducts: 0,
-        },
+        result: UNAVAILABLE_RESULT(query.page),
         vocabulary,
       }
     }
@@ -474,13 +544,7 @@ export const getCatalog = cache(
       return {
         ignored,
         query,
-        result: {
-          engine: 'unavailable',
-          page: query.page,
-          products: [],
-          totalPages: 0,
-          totalProducts: 0,
-        },
+        result: UNAVAILABLE_RESULT(query.page),
         vocabulary,
       }
     }
@@ -562,5 +626,180 @@ export const getShopCategory = cache(async (slug: string): Promise<ShopCategory 
     console.error(`[catalog] The category "${slug}" could not be read.`, error)
 
     throw error
+  }
+})
+
+/* -------------------------------------------------------------------------------------------------
+ * Search
+ * ---------------------------------------------------------------------------------------------- */
+
+export type SearchSuggestions = {
+  engine: 'search' | 'unavailable'
+  products: ProductCard[]
+}
+
+/** The credentials both read paths use. The search key, never the write key. */
+const searchCredentials = () => ({
+  apiKey: serverEnv.NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY as string,
+  appId: serverEnv.NEXT_PUBLIC_ALGOLIA_APP_ID as string,
+})
+
+/**
+ * Product suggestions for the typeahead.
+ *
+ * Ids from the index, products from Postgres, through the **same** `rehydrateProductIds` the results
+ * grid uses -- so a suggestion row and a result card can never disagree about a price, and a product
+ * unpublished a second ago cannot appear in either.
+ *
+ * **Deliberately not cached.** This module already refuses to cache the listing because it is a
+ * function of nine parameters; a free-text term keyed by unauthenticated input is worse on every
+ * axis, and with a trailing debounce every settled prefix of every word anybody types would become
+ * its own durable cache entry. The debounce, the two-character floor and the six-hit cap are what
+ * bound this path.
+ *
+ * Returns `engine: 'unavailable'` rather than throwing, because the panel keeps working without it:
+ * categories, collections, recent and popular searches all come from Postgres.
+ */
+export const getSearchSuggestions = cache(async (term: string): Promise<SearchSuggestions> => {
+  if (integrationStatus('algolia') !== 'configured') {
+    return { engine: 'unavailable', products: [] }
+  }
+
+  try {
+    const payload = await getPayloadClient()
+    const settings = await getCatalogSettings()
+
+    const ids = await searchSuggestionIds(
+      createSearchClient(searchCredentials()),
+      catalogIndexName(appEnv),
+      term,
+      SEARCH_SUGGESTION_LIMIT,
+    )
+
+    return { engine: 'search', products: await rehydrateProductIds(payload, ids, settings) }
+  } catch (error) {
+    const failure = classifySearchFailure(error)
+
+    console.error(
+      `[catalog] Suggestions could not be read (${failure}). ` + SEARCH_FAILURE_HINT[failure],
+      error,
+    )
+
+    return { engine: 'unavailable', products: [] }
+  }
+})
+
+/**
+ * **Popular searches -- curated by an editor, validated against the index.**
+ *
+ * Decision **D-38**. The terms come from `site-settings`, not from analytics, and the reasoning is in
+ * the notes; the short version is that the measured analytics corpus for this application has the
+ * empty string as its top search by a factor of eighteen, because every faceted `/shop` request sent
+ * `query: ''` with Algolia's `analytics` parameter defaulting on.
+ *
+ * **Every term is checked before it is offered.** A curated search that returns nothing is a link to
+ * the no-results page, which is plan section 0.1.17's fake control wearing official provenance. One
+ * batched multi-query validates the whole list in a single round trip, and any term with no hits is
+ * dropped.
+ *
+ * Cached under **`site-settings`**, not `catalog` -- that is the tag `SiteSettings.afterChange`
+ * actually revalidates. Caching it under `catalog` would mean an editor's save invalidated nothing
+ * that reads it, while every unrelated product save flushed it constantly.
+ *
+ * Fails open to an empty list, and an empty list means the section is **absent** rather than empty.
+ */
+export const getPopularSearches = cache(async (): Promise<string[]> => {
+  try {
+    return await loadPopularSearches()
+  } catch (error) {
+    console.error('[catalog] Popular searches could not be read; omitting the section.', error)
+
+    return []
+  }
+})
+
+const loadPopularSearches = unstable_cache(
+  async (): Promise<string[]> => {
+    const payload = await getPayloadClient()
+
+    const settings = await payload.findGlobal({ slug: 'site-settings', depth: 0 }).catch(() => null)
+
+    const terms = (settings?.search?.popularSearches ?? [])
+      .map((row) => (typeof row === 'object' && row !== null ? row.term : null))
+      .filter((term): term is string => typeof term === 'string' && term.trim() !== '')
+      .map((term) => term.trim())
+
+    if (terms.length === 0 || integrationStatus('algolia') !== 'configured') {
+      /*
+       * With no index to check against, an unvalidated term could lead to a dead end -- so the
+       * section is withheld entirely rather than shown on trust.
+       */
+      return []
+    }
+
+    try {
+      const counts = await countHitsForTerms(
+        createSearchClient(searchCredentials()),
+        catalogIndexName(appEnv),
+        terms,
+      )
+
+      return terms.filter((term) => (counts.get(term) ?? 0) > 0)
+    } catch (error) {
+      console.error('[catalog] Popular searches could not be validated; omitting them.', error)
+
+      return []
+    }
+  },
+  ['north01-popular-searches'],
+  { revalidate: 300, tags: ['site-settings'] },
+)
+
+/**
+ * A short curated row for the no-results and unavailable states.
+ *
+ * Structure section 12 asks a no-results state to *"offer popular/curated products when available"*,
+ * and feature matrix section 2 repeats it. **Postgres only** -- this renders on the exact screens
+ * where the index has just failed, so reaching for the index to populate it would guarantee it is
+ * missing precisely when it is needed.
+ */
+export const getCuratedProducts = cache(async (limit = 4): Promise<ProductCard[]> => {
+  try {
+    const payload = await getPayloadClient()
+    const settings = await getCatalogSettings()
+    const now = new Date().toISOString()
+
+    const read = async (where: Where) => {
+      const result = await payload.find({
+        collection: 'products',
+        depth: CARD_DEPTH,
+        limit,
+        sort: ['sortOrder', '-publishedAt', 'slug'],
+        ...STOREFRONT_ACCESS,
+        where,
+      })
+
+      return resolveProductCards(
+        result.docs,
+        settings.currency,
+        settings.locale,
+        settings.lowStockThreshold,
+      )
+    }
+
+    const featured = await read({
+      and: [...publishedProductWhere(now), { featured: { equals: true } }],
+    })
+
+    if (featured.length > 0) {
+      return featured
+    }
+
+    /* Nothing is flagged featured -- fall back to the merchandiser's curated order rather than none. */
+    return await read({ and: publishedProductWhere(now) })
+  } catch (error) {
+    console.error('[catalog] Curated products could not be read; omitting them.', error)
+
+    return []
   }
 })

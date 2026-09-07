@@ -464,6 +464,18 @@ export const CATALOG_REPLICA_CUSTOM_RANKING: Record<string, string[]> = {
  * ---------------------------------------------------------------------------------------------- */
 
 export type IndexSearchParams = {
+  /**
+   * Whether this query counts as customer behaviour in Algolia's analytics.
+   *
+   * A browse query — every faceted `/shop` request — sends `query: ''`, and Algolia's `analytics`
+   * parameter defaults to **true**. Measured on this application before the flag existed: the top
+   * recorded search was the empty string with eighteen times the count of anything else, which is
+   * the shop's own filtering recorded as what customers searched for.
+   *
+   * This is diagnostic hygiene, not event emission: it stops the operator's dashboard lying. Phase
+   * 25 owns `search_submitted` and the Insights API; `clickAnalytics` is deliberately not set.
+   */
+  analytics: boolean
   facetFilters: string[][]
   hitsPerPage: number
   numericFilters: string[]
@@ -523,7 +535,8 @@ export function indexSearchParams(query: CatalogQuery, hitsPerPage: number): Ind
     facetFilters,
     hitsPerPage,
     numericFilters,
+    analytics: query.q !== null,
     page: Math.max(0, query.page - 1),
-    query: '',
+    query: query.q ?? '',
   }
 }

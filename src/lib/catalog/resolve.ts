@@ -100,14 +100,30 @@ export type CatalogResult = {
    * *"search service unavailable"*, and it renders a different surface entirely.
    */
   engine: 'postgres' | 'search' | 'unavailable'
+  /**
+   * Whether `totalProducts` is exact.
+   *
+   * Algolia reports `exhaustiveNbHits: false` once a result set is large enough that it stops
+   * counting precisely. Printing an approximation as a fact is a small lie the customer can catch by
+   * paging to the end, so the count label says "About 240 products" when this is false.
+   */
+  exhaustive: boolean
   page: number
   products: ProductCard[]
+  /**
+   * The engine returned hits that Postgres then refused — a product unpublished or deleted since the
+   * last sync. Distinct from an empty result, and `searchState` ranks it above one: "nothing
+   * matched" would be false when something matched and has just gone.
+   */
+  stale: boolean
   totalPages: number
   totalProducts: number
 }
 
 export const EMPTY_RESULT: CatalogResult = {
   engine: 'postgres',
+  exhaustive: true,
+  stale: false,
   page: 1,
   products: [],
   totalPages: 0,
@@ -305,12 +321,20 @@ export function productCardBadge(card: ProductCard): null | {
  * Plan §11.1a lists the product count as a required element of the shop page, and the singular
  * matters more than it looks: *"1 products"* is the tell of a listing nobody read the output of.
  */
-export function productCountLabel(total: number): string {
+export function productCountLabel(total: number, exhaustive = true): string {
   if (total <= 0) {
     return 'No products'
   }
 
-  return total === 1 ? '1 product' : `${total.toLocaleString('en-US')} products`
+  if (total === 1) {
+    return '1 product'
+  }
+
+  /*
+   * "About" only when the engine said it was approximating. Hedging an exact count would be as
+   * dishonest as stating an approximate one — in the opposite direction, and on every page.
+   */
+  return `${exhaustive ? '' : 'About '}${total.toLocaleString('en-US')} products`
 }
 
 /**

@@ -110,6 +110,7 @@ function check(name: string, ok: boolean, detail = '') {
 
 const params = (overrides: Partial<CatalogParams> = {}): CatalogParams => ({
   availability: null,
+  q: null,
   category: [],
   collection: [],
   color: [],
