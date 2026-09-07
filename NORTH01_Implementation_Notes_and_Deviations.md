@@ -4954,6 +4954,68 @@ screenshot, because two pixels of white look like nothing. Fixed with `relative`
 - **An expiry sweep.** `carts.expiresAt` is set and honoured on read; nothing deletes an expired cart,
   and `Carts.ts` already recorded that the sweep is a maintenance task no phase has claimed.
 
+### 1.19.9 Post-implementation sweeps
+
+#### Sweep 1 — the bag under conditions the happy path never produces
+
+Two defects, both found by making the world move underneath an open bag, and sixteen adversarial cases
+that held.
+
+**1. The bag rendered a quantity of 2 beside a subtotal charging for 1.**
+
+Stock was dropped from 6 to 1 on a variant held twice in an open bag. Everything downstream was right —
+the badge read 3, the subtotal was computed from the effective quantities, the drift banner appeared —
+and the **line still displayed "2"**. The number on screen multiplied by the price on screen did not
+equal the subtotal on screen.
+
+The rule *"a read revalidates but does not repair"* is correct for the stored row: a page view is not a
+decision, and a read that silently edited the bag would let a crawler empty someone's cart. It was
+wrong for the **rendered** number. `CartLineView` now carries `effectiveQuantity` beside `quantity` —
+what they will get, and what they asked for — the row renders the first, the steppers step from it, and
+a reduced line says so in words: *"You asked for 2. Only 1 left, so that is what this line is for."*
+
+The underlying mistake is the same one §1.19.6 records: **two clamps that answer two questions and have
+identical signatures.** The harness now asserts that they diverge whenever the bag holds less than the
+shelf, which is the shape of the confusion rather than one instance of it.
+
+**2. An unavailable line linked to a page that 404s.**
+
+Unpublishing a product with an open bag holding it leaves the line visible — which §14.1e wants — and
+the line's product link pointing at `/product/<slug>`, which now returns 404, because
+`publishedProductWhere` is the single definition of *listable* and the route honours it. A dead link
+inside the bag, which is the one place a shopper is least willing to be sent nowhere.
+
+The line now links only when `availability.productPublished` is true. The same defect class Phase 12's
+sweep found in the search panel, in a different component, for the same reason: a surface that shows a
+document keeps showing it after the document stops being reachable.
+
+**What held.** Recorded because the adversarial cases are the ones worth knowing about:
+
+| Attempt | Result |
+|---|---|
+| A forged 42-character cart token in the cookie | resolves to an empty bag; adding replaces it with a server-issued 43-character one |
+| Rewriting our own form's `lineId` to another session's line, then submitting | the victim's line is untouched — `ownedLine` resolves the line's cart and compares |
+| Re-enabling the disabled Add button in the browser and posting a sold-out variant | refused by the server, with *"Sold out in this size."* |
+| Two tabs, one removing what the other still shows | the stale tab's mutation resurrects nothing, and it converges on a refresh |
+| Double-tapping Add | **one** line, quantity two — the unique index and the increment agree |
+| **JavaScript disabled entirely** | the form is in the HTML, carries a real variant id, and **submitting it adds to the bag** |
+
+That last one is the claim `add-to-bag.tsx` makes in its docblock, and it is the kind of claim that is
+usually false. It was tested by switching JavaScript off in the browser context, not by reading the
+markup.
+
+**The world moving underneath an open bag**, in five states, each measured against a bag holding three
+lines at quantity two:
+
+| Change | Bag after |
+|---|---|
+| Price 48000 → 39000 | the line shows **$390.00**; nothing is cached |
+| Stock 6 → 1 under a line holding 2 | quantity **1**, drift banner, subtotal recomputed |
+| Variant deactivated | line visible, *"No longer available"*, excluded from the subtotal |
+| Product unpublished | same, and **no link** (after the fix) |
+| Variant deleted outright | the line is gone, no crash, the rest of the bag intact |
+| Cart expired | reads as empty, exactly as `Carts.ts` says |
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

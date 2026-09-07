@@ -40,7 +40,29 @@ import { cn } from '@/lib/cn'
  */
 export function CartLineRow({ compact = false, line }: { compact?: boolean; line: CartLineView }) {
   const buyable = line.maxQuantity > 0 && line.unitPriceMinor !== null
-  const atCeiling = line.quantity >= line.maxQuantity
+
+  /*
+   * The EFFECTIVE quantity everywhere, not the stored one. They differ when stock fell under an open
+   * bag, and rendering the stored number beside a subtotal computed from the effective one is a page
+   * that contradicts itself — the defect Phase 14's first sweep found by dropping stock to 1 under a
+   * line holding 2.
+   */
+  const shown = line.effectiveQuantity
+  const reduced = line.effectiveQuantity < line.quantity
+  const atCeiling = shown >= line.maxQuantity
+
+  /*
+   * **Only link to a product that can still be opened.**
+   *
+   * A line survives its product being unpublished — §14.1e wants the customer to see what happened —
+   * but `/product/<slug>` 404s the moment `publishedProductWhere` stops matching it, because that
+   * predicate is the single definition of *listable* and the route honours it. Linking anyway puts a
+   * dead link inside the bag, which is the one place a shopper is least willing to be sent nowhere.
+   *
+   * Found in Phase 14's first sweep by unpublishing a product with an open bag holding it. The same
+   * class of defect Phase 12's sweep found in the search panel, in a different component.
+   */
+  const linkable = line.productSlug !== '' && line.availability?.productPublished === true
 
   return (
     <li className="flex gap-m py-m" data-slot="cart-line" data-variant={line.variantId}>
@@ -56,7 +78,7 @@ export function CartLineRow({ compact = false, line }: { compact?: boolean; line
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="flex items-start justify-between gap-s">
           <div className="min-w-0">
-            {line.productSlug ? (
+            {linkable ? (
               <Link
                 className="font-sans text-body-sm text-foreground"
                 href={`/product/${line.productSlug}`}
@@ -78,7 +100,7 @@ export function CartLineRow({ compact = false, line }: { compact?: boolean; line
 
         <div className="flex items-center justify-between gap-s">
           {buyable ? (
-            <Stepper atCeiling={atCeiling} line={line} />
+            <Stepper atCeiling={atCeiling} line={line} shown={shown} />
           ) : (
             <span className="font-sans text-body-sm text-error">{CART_COPY.lineUnavailable}</span>
           )}
@@ -88,7 +110,11 @@ export function CartLineRow({ compact = false, line }: { compact?: boolean; line
           </span>
         </div>
 
-        {buyable && atCeiling ? (
+        {buyable && reduced ? (
+          <p className="font-sans text-meta text-foreground-muted">
+            {`You asked for ${line.quantity}. Only ${line.maxQuantity} left, so that is what this line is for.`}
+          </p>
+        ) : buyable && atCeiling ? (
           <p className="font-sans text-meta text-foreground-muted">
             {`That is all we have — ${line.maxQuantity} in stock.`}
           </p>
@@ -109,19 +135,26 @@ export function CartLineRow({ compact = false, line }: { compact?: boolean; line
  * `−` at a quantity of one submits `0`, which the server treats as a removal. That is the behaviour a
  * stepper should have and it is the reason the action accepts zero at all.
  */
-function Stepper({ atCeiling, line }: { atCeiling: boolean; line: CartLineView }) {
+function Stepper({
+  atCeiling,
+  line,
+  shown,
+}: {
+  atCeiling: boolean
+  line: CartLineView
+  /** The effective quantity — what the steppers move away from, so a reduced line steps from what it is. */
+  shown: number
+}) {
   const [state, action, pending] = useActionState(setQuantityAction, CART_ACTION_IDLE)
 
   return (
     <div className="flex items-center gap-1" data-slot="cart-stepper">
       <form action={action}>
         <input name="lineId" type="hidden" value={line.id} />
-        <input name="quantity" type="hidden" value={line.quantity - 1} />
+        <input name="quantity" type="hidden" value={shown - 1} />
 
         <IconButton
-          label={
-            line.quantity === 1 ? `Remove ${line.productName}` : `One fewer ${line.productName}`
-          }
+          label={shown === 1 ? `Remove ${line.productName}` : `One fewer ${line.productName}`}
           size="sm"
           type="submit"
           variant="ghost"
@@ -134,12 +167,12 @@ function Stepper({ atCeiling, line }: { atCeiling: boolean; line: CartLineView }
         aria-live="polite"
         className="min-w-8 text-center font-sans text-body-sm text-foreground"
       >
-        {pending ? '…' : line.quantity}
+        {pending ? '…' : shown}
       </span>
 
       <form action={action}>
         <input name="lineId" type="hidden" value={line.id} />
-        <input name="quantity" type="hidden" value={line.quantity + 1} />
+        <input name="quantity" type="hidden" value={shown + 1} />
 
         <IconButton
           /*

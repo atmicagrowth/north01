@@ -180,6 +180,46 @@ check(
   clampNotice({ clampedBy: null, quantity: 2 }) === null,
 )
 
+/* -------------------------------------------------------------------------------------------------
+ * The two clamps answer two questions, and confusing them is a rule that type-checks and is wrong.
+ *
+ * Phase 14's first sweep found the bag rendering a quantity of 2 beside a subtotal charging for 1,
+ * because `maxQuantity` was computed by clamping the line's CURRENT quantity — which returns the
+ * current quantity — instead of clamping the policy maximum. Both calls have the same signature and
+ * the same return type; only the argument differs.
+ * ---------------------------------------------------------------------------------------------- */
+
+{
+  const availability = stocked({ inventoryQuantity: 1 })
+
+  const held = clampQuantity(2, availability, 10)
+  const ceiling = clampQuantity(10, availability, 10)
+
+  check(
+    'A: clamping the STORED quantity answers "may they keep what they have?"',
+    held.quantity === 1,
+    String(held.quantity),
+  )
+
+  check(
+    'A: clamping the POLICY answers "how many could they have?" — and it is the same number here',
+    ceiling.quantity === 1,
+  )
+
+  const roomy = stocked({ inventoryQuantity: 8 })
+
+  check(
+    'A: …and the two DIVERGE whenever the bag holds less than the shelf',
+    clampQuantity(2, roomy, 10).quantity === 2 && clampQuantity(10, roomy, 10).quantity === 8,
+    `${clampQuantity(2, roomy, 10).quantity} held vs ${clampQuantity(10, roomy, 10).quantity} available`,
+  )
+
+  check(
+    'A: using the held clamp as a ceiling would make every line look full',
+    clampQuantity(2, roomy, 10).quantity < clampQuantity(10, roomy, 10).quantity,
+  )
+}
+
 /* =================================================================================================
  * B — §14.1b's seven steps
  * ============================================================================================== */

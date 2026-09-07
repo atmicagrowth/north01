@@ -86,6 +86,19 @@ export type CartLineView = {
   /** `null` when the variant cannot currently be bought — §14.1e's "product becomes unavailable". */
   availability: LineAvailability | null
   color: null | string
+  /**
+   * **What the customer will actually get**, which is not always what the row says.
+   *
+   * The stored `quantity` is what they asked for; this is that number clamped to what the warehouse
+   * and the policy can meet today. They differ exactly when §14.1e's *"quantity becomes unavailable"*
+   * has happened, and the bag renders **this** one — because the subtotal is computed from it, and a
+   * line reading "2" beside a subtotal charging for one is a page that contradicts itself.
+   *
+   * The stored row is left alone: a read is not a decision (see the module docblock). The repair
+   * happens on the next mutation, and until then the customer sees the truth with the original
+   * beside it.
+   */
+  effectiveQuantity: number
   id: number
   image: Media | null
   /** The most this line may hold right now, for the stepper's bound. */
@@ -356,6 +369,7 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
       productId: product?.id ?? (relatedId(item.product) as number),
       productName: product?.name ?? 'This item',
       productSlug: product?.slug ?? '',
+      effectiveQuantity: held.quantity,
       quantity: item.quantity,
       size: variant?.size?.trim() || null,
       unitPriceLabel:
@@ -376,7 +390,7 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
     lines
       .filter((line) => line.unitPriceMinor !== null && line.maxQuantity > 0)
       .map((line) => ({
-        quantity: Math.min(line.quantity, line.maxQuantity),
+        quantity: line.effectiveQuantity,
         unitPriceMinor: line.unitPriceMinor as number,
       })),
   )
