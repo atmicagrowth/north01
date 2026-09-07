@@ -5199,6 +5199,79 @@ on the wrong module does not make anything safer; it only makes it untestable.**
   code in seed data is a live discount code"* — and this phase did not overrule it. The harness and
   the browser passes create their own and delete them.
 
+### 1.20.9 Post-implementation sweeps
+
+**No defects.** The first phase in this project where both sweeps came back empty, which is worth
+examining rather than celebrating — see the note at the end.
+
+#### Sweep 1 — the engine under hostile input
+
+A discount is money, so the adversarial cases are the whole point. Sixteen checks, all of which held.
+
+| Attempt | Result |
+|---|---|
+| `' OR 1=1 --`, `<script>alert(1)</script>`, a 500-character code, `../../etc/passwd`, `%00SWEEP`, whitespace only | each refused with a readable reason; nothing echoed unescaped |
+| Applying a code that **exists but is switched off** | refused, with the sentence an unknown code gets |
+| Reading what the form actually posts | **`["code"]`** — no amount, no promotion id, no eligibility |
+| Applying a code, then emptying the bag entirely | no error; the bag says it is empty |
+| …then refilling it with a **different** product | the code is re-decided against the new bag: `$165.00` subtotal, `−$33.00` |
+| A code whose minimum exceeds the bag | refused, and specifically *"under the minimum"* rather than a generic failure |
+| Two tabs, one applying and the other removing | the stale tab converges on refresh |
+
+The refill case is the one worth keeping. The cart stores *which* code, never *what it was worth*, so
+a bag that changes under an applied code produces a recomputed discount rather than a stale one —
+and it did, from `−$44.00` on one bag to `−$33.00` on another, without the code being re-entered.
+
+One probe was wrong before the code was: it counted React's own `$ACTION_REF_*` and `$ACTION_KEY`
+fields as data the form posts. Filtering them is the difference between testing our form and testing
+Next's.
+
+#### Sweep 2 — the claims, and the one made on reasoning alone
+
+**Collection eligibility was corrected during the build without ever being run.** §1.20.3 records the
+reasoning — `product.collections` is a `join`, so it has no column and returns `{ docs }` rather than
+an array, and a promotion scoped to a collection would have silently never applied. The fix reads
+membership from `collections.products` instead. That is exactly the kind of change a sweep exists to
+distrust, so it was measured end to end against a real collection:
+
+| Bag | Code | Result |
+|---|---|---|
+| `cotton-tee`, a member of *Archive* | 50% off *Archive* | **`−$37.50`** off `$75.00` |
+| `field-jacket`, not a member | same code | refused — *"does not apply to anything in your bag"* |
+| both, `$555.00` | same code | **`−$37.50`** — only the eligible line is discounted |
+
+The reasoning was right, and now it is also tested.
+
+**Nothing about a promotion reaches the browser.** `promotions.ts` claims the page carries only the
+code, the label and the amount. Checked against the rendered HTML with a code applied: no
+`eligibleCollections`, no `eligibleProducts`, no `minimumSubtotalMinor`, no `usageLimit`, no
+`perCustomerLimit`, no `timesUsed`, and not the promotion's id.
+
+**A code at its usage limit is refused** — which also confirms the shape of what §1.20.8 records as
+owed: the check reads `timesUsed`, and nothing increments it until Phase 17, so today it only binds on
+a value an editor set by hand.
+
+#### Why both sweeps were empty, which is not the same as the phase being perfect
+
+Three reasons, in decreasing order of how much credit they deserve:
+
+1. **The schema had already made the hard calls.** `Promotions.ts` was written in Phase 6 with
+   docblocks that named this phase and told it what not to do — do not increment `timesUsed`, do not
+   add a per-customer counter, do not model stacking. Three defects this phase never had a chance to
+   write.
+2. **The previous two phases' lessons were applied during the build rather than after.** The
+   `'use server'` export rule, the `null`-versus-zero distinction, the two-clamps confusion, the
+   pure/`server-only` split — each of those cost a sweep finding in Phase 14 and cost nothing here.
+   The `server-only` guard was still on the wrong module (§1.20.6), but the harness caught it in
+   minutes because the harness existed first.
+3. **This phase has no new UI surface to speak of.** One text field and one remove button, both
+   following patterns three phases old. Phases 13 and 14 each shipped a page; every sweep finding
+   in both was in something rendered.
+
+The honest reading is that the sweeps found nothing because the *cheap* defects had been made
+already, in earlier phases, and their fixes were carried forward. It is not evidence that a sweep is
+no longer worth running — it is evidence that the corpus of lessons is doing its job.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -6698,4 +6771,5 @@ tested.
 | Phase 14 — cart system | 2026-09-07 | Notes **§1.19**: a server-authoritative bag. Phase 6's schema needed no revisiting — no totals on `carts`, no price snapshot on `cart-items`, and `(cart, variant)` unique, which is §14.1b step 5 as a constraint and is verified against the real database. §14.1b's **seven named edge cases are seven named checks**; summing happens **before** clamping, because two checks that each pass can still add up to more than the warehouse has. §14.1d's five totals: the subtotal is real and discount, shipping and tax are **`null` rather than zero** (**DEV-58**) — a computed `$0.00` beside *Shipping* is the most persuasive kind of fake UI, and `isFinal` flips on its own when Phases 15 and 16 assign those fields. Every control is a `<form>` posting to a Server Action, so the bag works without JavaScript, and **no price crosses the boundary as an input**. **DEV-57**: no Checkout control — Phase 17 owns `/checkout`, and the drawer pins *View bag* instead. Three defects found by running it, two invisible to every gate: a `'use server'` module exporting a constant 500'd at **runtime** with typecheck, lint and build all green; `maxQuantity` clamped the current quantity instead of the ceiling, disabling `+` on every line; and the new bag badge escaped its unpositioned button to sit two pixels past the **document** edge, giving every page a horizontal scrollbar. `verify:cart` is **68 checks**; 34 browser checks, 9 merge checks against a real account, 0 axe violations. |
 | Phase 14 — two post-implementation sweeps | 2026-09-07 | Notes **§1.19.9**. Eight findings. **Sweep 1**, making the world move under an open bag: the line rendered the **stored** quantity beside a subtotal computed from the **effective** one — drop stock to 1 under a line holding 2 and the number on screen times the price on screen did not equal the subtotal on screen; and an unpublished product left a **dead link inside the bag**, because `publishedProductWhere` is the single definition of *listable* and the route honours it. Sixteen adversarial cases held, including a forged cart token, a mutation aimed at another session's line id, a re-enabled Add button posting a sold-out variant, two diverging tabs, a double tap, and **the whole add-to-bag flow with JavaScript switched off** — which was a docblock claim until it was tested. **Sweep 2**, against the docblocks: `resolveCart` resolved a cart by cookie when `customerId === null || !found.customer`, so **a signed-out visitor was handed the previous account holder's bag** — measured as "Bag, 1 item" after signing out on a machine with no session; the condition is now `!found.customer` alone and `logout` clears the cookie. Also: the cart cookie decided `secure` from `process.env.NODE_ENV` while the session cookie uses `appEnv`; *"claimed rather than ignored"* never wrote a `customer`; `LINE_LIMIT` was a **silent cap** — the same `pagination: false` finding Phase 13's sweep made about `VARIANT_LIMIT`, in a new file; and *"the action is idempotent per line"* was false. Three claims held under test, including the forward-looking one: assigning the three deferred totals made the summary render Discount, Shipping, Tax and **Total $237.29** with no component edited. `verify:cart` 68 → **72**. |
 | Phase 15 — promotions and discounts | 2026-09-07 | Notes **§1.20**: a server-authoritative promotion engine, filling the first of Phase 14's three deferred totals. Phase 6 had already answered three questions this phase would otherwise have got wrong — `timesUsed` increments in **Phase 17**'s payment transaction, `perCustomerLimit` is a **count of paid orders** rather than a tally that a refund would falsify, and one-code-at-a-time is a schema property rather than a rule. §15.1a's eight checks and §15.1c's eight edge cases are all named checks. **`inactive` and `unknownCode` return the identical sentence**, byte for byte, so the code field cannot be used to enumerate an unreleased campaign. Eligibility is resolved from `collections.products` and not from `product.collections`, because the latter is a **`join`** — virtual, no column, `{ docs }` rather than an array — and reading it would have produced a collection-scoped promotion that silently never applied; the third phase to meet that join, and the first to meet it before shipping the bug. Rounding is `Math.round` rather than `floor`, because flooring every percentage is a systematic fraction of a penny in the shop's favour. **The discount is re-decided on every read** — only the choice of code is stored — so an expired or exhausted code cannot leave a stale amount. `verify:promotions` failed on its first run with `ERR_MODULE_NOT_FOUND: server-only`: the guard was on the wrong module, and the fix was structural — reads that take a `Payload` argument moved to `read.ts` with no guard, exactly as `catalog/query.ts` sits beside `catalog/catalog.ts`. Deviations **DEV-59** (a per-customer limit is unenforceable against a guest, and the alternatives only look like enforcement) and **DEV-60** (a free-shipping code validates and records but changes no price until Phase 16, and draws no `-$0.00` row). `verify:promotions` **64 checks**, 20 browser checks, 0 axe violations. |
+| Phase 15 — two post-implementation sweeps | 2026-09-07 | Notes **§1.20.9**. **No defects** — the first phase where both sweeps came back empty, recorded with the reasons rather than as a result. **Sweep 1**, hostile input: SQL-shaped and script-shaped codes, a 500-character one, a null byte and whitespace were each refused with a readable reason and nothing echoed unescaped; a code that **exists but is switched off** got the same sentence an unknown code gets; the form posts **`["code"]`** and nothing else; and applying a code, emptying the bag and refilling it with a different product produced a **recomputed** discount (`−$44.00` → `−$33.00`) rather than a stale one, because only the choice of code is stored. **Sweep 2** measured the one claim made on reasoning alone: collection eligibility had been corrected during the build — reading `collections.products` instead of the `join` on `product.collections` — without ever being run. Verified end to end: 50% off *Archive* takes `−$37.50` off a member, is refused on a non-member, and in a `$555.00` mixed bag discounts only the eligible `$75.00` line. Nothing about a promotion reaches the page: no eligibility lists, no minimum, no usage limits, no counter, not even the id. One probe was wrong before the code was, counting React's own `$ACTION_*` fields as data the form posts. |
 > **Append this table, and the sections above it, at the end of every phase.**
