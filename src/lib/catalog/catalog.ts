@@ -115,8 +115,17 @@ export const CATALOG_CACHE_TAG = 'catalog'
 
 export type CatalogSettings = {
   currency: CurrencyCode
+  /**
+   * The subtotal at which standard delivery is free — plan §14.1e's shipping-progress message.
+   *
+   * `null` when an editor has not set one, which is different from zero: zero means everything ships
+   * free, and the bag says so.
+   */
+  freeShippingThresholdMinor: null | number
   locale: string
   lowStockThreshold: number
+  /** The most units of one variant a bag may hold — plan §14.1b's "stock/max limits". */
+  maxQuantityPerLine: number
   /**
    * The shipping and returns prose, for Phase 13's *Shipping & Returns* accordion.
    *
@@ -131,8 +140,10 @@ export type CatalogSettings = {
 
 const DEFAULT_SETTINGS: CatalogSettings = {
   currency: DEFAULT_CURRENCY,
+  freeShippingThresholdMinor: null,
   locale: 'en-US',
   lowStockThreshold: 5,
+  maxQuantityPerLine: 10,
   returnsPolicy: null,
   shippingPolicy: null,
 }
@@ -163,6 +174,15 @@ async function readSettings(payload: Payload): Promise<CatalogSettings> {
       typeof settings.lowStockThreshold === 'number' && settings.lowStockThreshold >= 1
         ? settings.lowStockThreshold
         : DEFAULT_SETTINGS.lowStockThreshold,
+    freeShippingThresholdMinor:
+      typeof settings.freeShippingThresholdMinor === 'number' &&
+      settings.freeShippingThresholdMinor >= 0
+        ? settings.freeShippingThresholdMinor
+        : DEFAULT_SETTINGS.freeShippingThresholdMinor,
+    maxQuantityPerLine:
+      typeof settings.maxQuantityPerLine === 'number' && settings.maxQuantityPerLine >= 1
+        ? settings.maxQuantityPerLine
+        : DEFAULT_SETTINGS.maxQuantityPerLine,
     returnsPolicy: settings.returnsPolicy ?? null,
     shippingPolicy: settings.shippingPolicy ?? null,
   }

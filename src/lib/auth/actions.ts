@@ -14,6 +14,7 @@ import {
 } from 'payload'
 import type { ZodType } from 'zod'
 
+import { mergeGuestCart } from '@/lib/cart/cart'
 import { getPayloadClient } from '@/lib/payload'
 import { checkPassword } from '@/lib/password-policy'
 
@@ -283,6 +284,8 @@ export async function register(
     redirect('/login?registered=1')
   }
 
+  await claimGuestCart(signedIn.user?.id)
+
   redirect(next ?? '/account')
 }
 
@@ -302,12 +305,16 @@ export async function login(previous: AuthFormState, formData: FormData): Promis
 
   let locked = false
 
+  let signedInCustomerId: number | undefined
+
   try {
     const signedIn = await startSession(payload, parsed.data.email, parsed.data.password)
 
     if (!signedIn) {
       return failure(previous, formData, GENERIC_LOGIN_FAILURE)
     }
+
+    signedInCustomerId = signedIn.user?.id
   } catch (error) {
     /*
      * **The lockout is the one failure that gets its own message**, and the reasoning runs the other
@@ -333,7 +340,27 @@ export async function login(previous: AuthFormState, formData: FormData): Promis
     )
   }
 
+  await claimGuestCart(signedInCustomerId)
+
   redirect(next ?? '/account')
+}
+
+/**
+ * **Plan §14.1b, hung off the two moments a guest becomes a customer.**
+ *
+ * Sign-in and registration are the only transitions where a guest bag and a customer bag can both
+ * exist, so this is the only place the merge belongs. It runs **after** the session cookie is set and
+ * **before** the redirect, so the page the customer lands on already renders the merged bag — a merge
+ * that happened one navigation later would show them an empty header badge and then change it.
+ *
+ * `mergeGuestCart` swallows its own failures and logs them: a bag that would not merge must never
+ * turn a successful sign-in into a failed one. See that function for what is lost in that case, which
+ * is at worst the guest additions and never the customer's own bag.
+ */
+async function claimGuestCart(customerId: number | undefined): Promise<void> {
+  if (typeof customerId === 'number') {
+    await mergeGuestCart(customerId)
+  }
 }
 
 /**

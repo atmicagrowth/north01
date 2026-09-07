@@ -4806,6 +4806,154 @@ had each corrected by hand into one a machine can find in ninety seconds.
 **719 checks across five harnesses**, 119 browser checks, 0 axe violations across 14 surfaces, and
 every `sizes` string within 2% of the box it describes.
 
+## 1.19 Phase 14 — cart system
+
+Plan §14.1a–§14.1e. The phase that turns a catalogue into a shop, and the only one in the corpus whose
+prompt asks for tests by name: *"add unit tests for every cart calculation and merge edge case."*
+
+**No dependencies added.** The schema was already there — `Carts.ts` and `CartItems.ts` were written in
+Phase 6 and have waited eight phases for a writer.
+
+### 1.19.1 Phase 6 had already made the hard decisions, and they held
+
+Reading those two collections before writing a line of this phase was the highest-value hour in it.
+Three of their choices are load-bearing and none needed revisiting:
+
+- **No totals on `carts`.** Not subtotal, not discount, not tax. §14.1d requires every one of them to
+  be computed server-side, and a stored subtotal is a cached answer that goes stale the moment a price
+  changes — which §14.1e lists as an edge case the bag must *notice*.
+- **No price snapshot on `cart-items`.** Same reasoning, one level down. *"Product price changed"* is
+  only visible if the price is read live, so every line renders today's number. The freeze happens once,
+  at `order-items`, and only after payment.
+- **`(cart, variant)` is a unique index.** That is §14.1b step 5 — *"resolve duplicate items by summing
+  quantities"* — expressed as a constraint rather than a convention. Verified against the real database:
+  a second line for the same variant is refused. Without it a double-tapped Add button produces two
+  lines and every total is quietly wrong.
+
+The collections also close customer write access entirely, so `lib/cart/cart.ts` is the **only** door
+onto these tables and runs with `overrideAccess: true`. That is the opposite posture from the
+catalogue reads, and deliberately: reads there are *for* the browser, writes here are *about* the
+browser's request and never take its word for anything.
+
+### 1.19.2 §14.1b, all seven edge cases, as fixtures
+
+`lib/cart/rules.ts` imports nothing from Next or Payload, so the merge can be exercised with two bags,
+a stock change and a deleted product in the same fixture. All seven of §14.1b's named edge cases are
+named checks:
+
+| Plan's words | What happens |
+|---|---|
+| Customer has no cart | the guest cart is **claimed** — one `customer` write, no line copying, no ids changing |
+| Guest cart empty | nothing to do |
+| Customer cart empty | the merge is the guest's lines |
+| Same variant exists in both carts | quantities **summed**, then clamped |
+| One variant becomes unavailable during merge | dropped and reported |
+| Quantity exceeds stock after merge | reduced to stock and reported |
+| Product deleted while guest was browsing | dropped and reported |
+
+**Summing happens before clamping, and the order is the point.** Two of three in one bag and three of
+three in the other is a request for five, and five is what gets checked against stock. A merge that
+clamped each side first would pass both checks and produce a bag holding more than the warehouse has —
+which is exactly what *"quantity exceeds stock after merge"* is warning about.
+
+**The customer's own lines lead.** Signing in should leave your bag with new things in it, not
+reordered. The output is a pure function of its inputs, which is what lets the harness assert it.
+
+Verified end to end in a browser as well: a guest fills a bag, registers (the bag is claimed), signs
+out, fills a second bag, signs back in (the two merge into two lines with the customer's leading), and
+then repeats with the *same* variant to confirm the quantities sum rather than duplicating. **9/9.**
+
+### 1.19.3 §14.1d asks for five totals and exactly one can be true today
+
+Subtotal, discount, shipping estimate, tax estimate, total. Promotions are **Phase 15**; shipping rates
+and tax are **Phase 16**. So `cartTotals` returns the subtotal and **`null`** — not zero — for the other
+three.
+
+That distinction is the whole design. A discount of `0` says *no discount applies*; a discount of
+`null` says *this phase does not know*. Rendering a confident `$0.00` beside *Shipping* would be plan
+§0.1.17's fake UI in its most persuasive form, because a customer has no way to tell a computed zero
+from a placeholder. So those rows are not rendered, the figure is labelled **Subtotal** rather than
+**Total**, and one sentence says where the rest arrives.
+
+`totals.isFinal` is what the summary reads to choose between the two. It is false while anything is
+`null`, and it becomes true **without this component being edited** the moment Phases 15 and 16 assign
+those fields. That is why the `null`s are in the type rather than the rows being commented out.
+
+The one part of §14.1d's shipping estimate that *is* computable is §14.1e's shipping-progress message,
+because it is a comparison against an editor's number in `site-settings` rather than a rate for a
+destination. A threshold of zero means everything ships free — a shop's decision to make — and says so
+rather than dividing by zero.
+
+### 1.19.4 Reading a bag revalidates it, and does not repair it
+
+§14.1e lists four edge cases that are one fact: the bag is a set of references and the world moves
+underneath them. *Price changed. Product unavailable. Quantity unavailable. Two tabs diverge.*
+
+`getCart` re-reads every variant live and clamps every quantity — but it **does not write the
+correction back**. A page view is not a decision. The customer sees the truth with the reason beside
+it, the stored rows are repaired on the next mutation, and checkout preflight (§17.1a) will do it
+again. A read that silently edited the bag would mean a crawler could empty someone's cart.
+
+Two clamps run per line, and confusing them was this phase's first real defect (§1.19.6).
+
+### 1.19.5 Every control is a form
+
+Add to Bag, both stepper buttons and the remove control are `<form action={serverAction}>`, not buttons
+with `onClick`. A form is submitted by the browser itself when the script has not arrived, failed, or
+been switched off — so the one control on the site that turns browsing into buying keeps working in the
+condition where every other approach quietly does nothing. `useActionState` upgrades it in place: same
+markup, same action, no second code path.
+
+**No price crosses the boundary in either direction as an input.** §13.1d's *"never trust a
+client-submitted price"* is satisfied by there being nothing to trust — the request carries a variant
+id and a whole number, the server reads the price from the variant at the moment it writes, and
+`cart-items` stores none.
+
+### 1.19.6 Three defects found by running it
+
+Two of the three were invisible to `typecheck`, `lint` and `build`.
+
+**1. `A "use server" file can only export async functions, found object.`** `actions.ts` exported
+`CART_ACTION_IDLE` beside its four actions, and every page rendering a cart control answered with a
+**500** — at runtime. All three gates were green, because the rule is enforced by the server-actions
+runtime rather than by the compiler. Found by clicking the button. The constant now lives in
+`lib/cart/action-state.ts`.
+
+**2. The `+` control was disabled on every line from the moment it was added.** `maxQuantity` was
+computed by clamping the line's *current* quantity, which returns the current quantity — so
+`quantity >= maxQuantity` was always true. Two clamps answer two questions: *may they keep what they
+have?* (clamp the stored quantity; a difference is drift) and *how many could they have?* (clamp the
+policy maximum; the answer is `min(stock, policy)`). Using the first for both is a rule that type-checks
+and is wrong in one direction only.
+
+**3. The new bag badge produced a horizontal scrollbar on every page of the site.** `IconButton` does
+not position itself, so the badge's `absolute` resolved against an ancestor far up the tree and rendered
+two pixels past the **document's** right edge. Measured at seven widths on the bag page; invisible in a
+screenshot, because two pixels of white look like nothing. Fixed with `relative` on the trigger.
+
+### 1.19.7 What was verified, and how
+
+| Surface | Evidence |
+|---|---|
+| §14.1b's seven edge cases | 68 harness checks, each named in the plan's own words |
+| Clamping, totals, shipping progress | fixtures for every bound, including the hard cap of 99 and a zero threshold |
+| The schema's constraints | real documents: the unique index refuses a duplicate line, quantity 0 and 500 are both refused, deleting a cart cascades |
+| The whole flow in a browser | 34 checks — add, drawer, stepper, remove, cookie flags, and that browsing alone issues no cookie |
+| Sign-in merge | 9 checks against a real account: claim, merge, and sum |
+| Accessibility | 0 axe violations across six new surface/width combinations |
+| The rest of the storefront | shell 100, home 183, catalogue 147, search 209, product 80 |
+
+### 1.19.8 What is now owed
+
+- **Apply and remove a promotion** (§14.1c) — **Phase 15**. `carts.promotion` exists and is unused;
+  `cartTotals` has a `discountMinor` field waiting for a number.
+- **Shipping and tax** (§14.1d) — **Phase 16**. Same shape: two `null`s and an `isFinal` that flips on
+  its own.
+- **The Checkout control** — **Phase 17**. See **DEV-57**.
+- **Save for later** (§14.1c) — listed as *"if implemented"*, and it is not.
+- **An expiry sweep.** `carts.expiresAt` is set and honoured on read; nothing deletes an expired cart,
+  and `Carts.ts` already recorded that the sweep is a maintenance task no phase has claimed.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -6174,6 +6322,54 @@ Unavailable sizes are **visited** by the arrow keys rather than skipped, which i
 `aria-disabled` over `disabled` — the customer meets XS and hears that it is sold out in this colour
 rather than never meeting it.
 
+---
+
+### DEV-57 — The bag ships without a Checkout control
+
+**Plan §14.1e** lists *"Checkout CTA"* among the drawer's contents, and a bag page without one is not a
+bag page a customer can finish with.
+
+**We do:** pin **View bag** in the drawer, going to `/cart` — a page this phase builds — and put a
+sentence where the checkout button belongs: *"Checkout opens shortly. Everything here — prices, sizes
+and stock — is live, and your bag will still be here."*
+
+**Why:** checkout is **Phase 17**, and `/checkout` does not exist. A control labelled *Checkout* that
+404s is worse than a missing one, because the customer only learns after deciding to buy — which is the
+same argument **DEV-55** made about Add to Bag one phase ago, and the reason that button is now real.
+
+A **disabled** Checkout button was considered and rejected for the identical reason DEV-55 gives: a
+greyed-out control reads as a broken shop rather than an unfinished one, and §0.1.17's rule is about not
+implying the capability at all.
+
+The bag itself is complete, which is what makes the omission legible: every line, every quantity
+control, the live subtotal and the shipping-progress message are real. Phase 17 adds one button to a
+page that already knows what it is selling.
+
+---
+
+### DEV-58 — Discount, shipping and tax are `null` rather than zero, and their rows are not drawn
+
+**Plan §14.1d** asks the server to calculate *"subtotal, discount, shipping estimate, tax estimate where
+appropriate, total"*.
+
+**We do:** compute the subtotal, and return `null` for discount, shipping and tax. The summary renders
+no row for a `null`, labels the figure **Subtotal** rather than **Total**, and says *"Delivery and any
+taxes are calculated at checkout."*
+
+**Why:** promotions are **Phase 15** and shipping and tax are **Phase 16**, so this phase cannot produce
+those three numbers truthfully. `0` is not a truthful stand-in — it is a *claim*, and a customer has no
+way to distinguish a computed zero from a placeholder. A bag that says *Shipping $0.00* and then charges
+for delivery at checkout has misled someone in the most expensive possible place.
+
+`null` also does the phase boundary a service the plan does not require but the code benefits from:
+`CartTotals.isFinal` is false while any component is unknown, and the summary switches to a real
+**Total** the moment Phases 15 and 16 assign those fields — **without the component being edited**. The
+deferral is expressed in the type rather than in commented-out markup.
+
+The one estimate that *is* rendered is the free-shipping progress message, and it is legitimate: it
+compares the subtotal against `site-settings.freeShippingThresholdMinor`, which is an editor's number
+rather than a rate for a destination. §14.1e asks for it by name.
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -6209,4 +6405,5 @@ rather than never meeting it.
 | Phase 13 — product detail page | 2026-09-07 | Notes **§1.18**: the `/product/<slug>` route every phase since 9 recorded as owed, and one 404 for all four absences — `publishedProductWhere` is the single definition of *listable*, so a product that cannot be listed cannot be reached by URL (verified: published 1, draft 0, scheduled 0). §13.1c lives in a pure module and the plan's own Black/M–Cream/M example is a named check; colour falls back and size deliberately does not. Variants are read explicitly rather than through the Payload `join`, whose fixed page size would have shipped a size row silently missing its last size. **A pre-commit read found three `role="radiogroup"`s with roving `tabIndex` and no arrow-key handler** — the size row, which is unselected on every arrival from the shop, had **zero of five options reachable by keyboard**, invisible to typecheck, lint, the build, 49 harness checks, 25 browser checks and an axe sweep reporting zero violations, because it is a behaviour rather than a property of the DOM. Fixed in `lib/product/roving.ts` with 11 harness and 19 browser regressions. Also recorded: the media library is empty by design, so the multi-frame gallery is owed a pass against real assets. Deviations **DEV-55** (purchase controls deferred — a sentence, not a disabled button) and **DEV-56** (arrows move focus, Space commits, because `shallow: false` makes every selection a navigation). |
 
 | Phase 13 — two post-implementation sweeps | 2026-09-07 | Notes **§1.18.10**. Nine findings. **Sweep 1**, against a production build: `history: 'push'` with `shallow: false` writes a history entry synchronously and renders it later, so a second selection made before the server answers leaves an entry whose content describes a **different URL** — Back showed `?size=XS` over a page with no size selected, from 400 ms between clicks on the product page and 150 ms on `/shop/<category>`. Not a Phase 13 regression; the pattern is Phase 11's. `components/url-state.tsx` now owns the write options both call sites duplicated plus the rule that a write made while a navigation is in flight replaces rather than pushes. Walking the whole history in both directions: product **2/5 → 5/5**, catalogue **8/8**. Also: closing the zoom viewer dropped focus onto `<body>` (WCAG 2.4.3), and the product video shipped an empty `<track kind="captions">` — invalid markup asserting a caption track that does not exist. **Sweep 2**, against the docblocks: the swatch row's order depended on which sizes each colour came in, with a tie the query never broke, so the **default colourway could change between requests** — now alphabetical over a totally ordered read; `PRODUCT_IMAGE_SIZES.recommendation` was **never imported**, so the row used the shop card's string and under-claimed by 22%; pointing the same measurement at every `sizes` string found four more wrong, all in the last tier, by up to **+20% at 320px** — every one now within 2%, with the shared container arithmetic in `lib/media/grid.ts` and a *no bare `100vw` unless it really is the viewport* rule in all three harnesses; the size guide's "cells by label" promise lived in a component where nothing could execute it, now a pure module with nine regressions; and `pagination: false` does **not** make `limit` decorative, so the 500-variant cap was a real silent truncation of the size selector and now logs. `verify:product` 49 → **80**. Full sweep: 719 harness checks, 119 browser checks, 0 axe violations. |
+| Phase 14 — cart system | 2026-09-07 | Notes **§1.19**: a server-authoritative bag. Phase 6's schema needed no revisiting — no totals on `carts`, no price snapshot on `cart-items`, and `(cart, variant)` unique, which is §14.1b step 5 as a constraint and is verified against the real database. §14.1b's **seven named edge cases are seven named checks**; summing happens **before** clamping, because two checks that each pass can still add up to more than the warehouse has. §14.1d's five totals: the subtotal is real and discount, shipping and tax are **`null` rather than zero** (**DEV-58**) — a computed `$0.00` beside *Shipping* is the most persuasive kind of fake UI, and `isFinal` flips on its own when Phases 15 and 16 assign those fields. Every control is a `<form>` posting to a Server Action, so the bag works without JavaScript, and **no price crosses the boundary as an input**. **DEV-57**: no Checkout control — Phase 17 owns `/checkout`, and the drawer pins *View bag* instead. Three defects found by running it, two invisible to every gate: a `'use server'` module exporting a constant 500'd at **runtime** with typecheck, lint and build all green; `maxQuantity` clamped the current quantity instead of the ceiling, disabling `+` on every line; and the new bag badge escaped its unpositioned button to sit two pixels past the **document** edge, giving every page a horizontal scrollbar. `verify:cart` is **68 checks**; 34 browser checks, 9 merge checks against a real account, 0 axe violations. |
 > **Append this table, and the sections above it, at the end of every phase.**

@@ -7,6 +7,8 @@ import { NewsletterSignup } from '@/components/newsletter/newsletter-signup'
 import { CartDrawer } from '@/components/shell/cart-drawer'
 import { ShellOverlayProvider } from '@/components/shell/overlay-context'
 import { SearchOverlay } from '@/components/shell/search-overlay'
+import { getCustomer } from '@/lib/auth/session'
+import { getCart } from '@/lib/cart/cart'
 import { getShell } from '@/lib/navigation/shell'
 
 import { fontVariables } from './fonts'
@@ -53,6 +55,14 @@ export const metadata: Metadata = {
 export default async function FrontendLayout({ children }: { children: ReactNode }) {
   const { navigation } = await getShell()
 
+  /*
+   * The bag, read once for the drawer. `getCart` is memoised per render, so `SiteHeader`'s read of
+   * the same thing for its badge is free — the two must agree, and sharing the read is what makes
+   * that structural rather than coincidental.
+   */
+  const customer = await getCustomer()
+  const cart = await getCart(customer?.id ?? null)
+
   return (
     <html lang="en" className={fontVariables}>
       <body>
@@ -64,7 +74,7 @@ export default async function FrontendLayout({ children }: { children: ReactNode
           <SiteFooter newsletter={<NewsletterSignup />} />
 
           <SearchOverlay />
-          <CartDrawer items={navigation.primary} />
+          <CartDrawer cart={cart} items={navigation.primary} />
         </ShellOverlayProvider>
       </body>
     </html>

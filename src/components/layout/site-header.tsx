@@ -1,5 +1,7 @@
 import { AnnouncementBar } from '@/components/layout/announcement-bar'
 import { HeaderBar } from '@/components/shell/header-bar'
+import { getCustomer } from '@/lib/auth/session'
+import { getCart } from '@/lib/cart/cart'
 import { cn } from '@/lib/cn'
 import { getShell } from '@/lib/navigation/shell'
 
@@ -26,6 +28,14 @@ import { getShell } from '@/lib/navigation/shell'
 export async function SiteHeader() {
   const { navigation, settings } = await getShell()
 
+  /*
+   * The bag count, for the trigger's badge. `getCart` is React-memoised for the render, so the
+   * drawer below reads the same object — one query, two consumers. It returns `null` when there is
+   * no cart at all, which is the common case and costs a single indexed lookup.
+   */
+  const customer = await getCustomer()
+  const cart = await getCart(customer?.id ?? null)
+
   return (
     <>
       <a
@@ -44,7 +54,11 @@ export async function SiteHeader() {
 
       {settings.announcement ? <AnnouncementBar announcement={settings.announcement} /> : null}
 
-      <HeaderBar items={navigation.primary} settings={settings} />
+      <HeaderBar
+        cartCount={cart?.totals.itemCount ?? 0}
+        items={navigation.primary}
+        settings={settings}
+      />
     </>
   )
 }

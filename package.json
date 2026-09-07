@@ -35,7 +35,8 @@
     "reindex": "payload run scripts/reindex.ts",
     "reindex:check": "payload run scripts/reindex-check.ts",
     "verify:search": "payload run scripts/verify-search.ts",
-    "verify:product": "payload run scripts/verify-product.ts"
+    "verify:product": "payload run scripts/verify-product.ts",
+    "verify:cart": "payload run scripts/verify-cart.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",

@@ -10,6 +10,8 @@ import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
 import { Button } from '@/components/ui/button'
 import { Link } from '@/components/ui/link'
+import { getCustomer } from '@/lib/auth/session'
+import { getCart } from '@/lib/cart/cart'
 import { getShell } from '@/lib/navigation/shell'
 
 import { fontVariables } from './(frontend)/fonts'
@@ -56,6 +58,10 @@ export const metadata: Metadata = {
 export default async function GlobalNotFound() {
   const { navigation } = await getShell()
 
+  /* The 404 renders its own <html> outside the route group, so it reads the bag for itself. */
+  const customer = await getCustomer()
+  const cart = await getCart(customer?.id ?? null)
+
   return (
     <html lang="en" className={fontVariables}>
       <body>
@@ -86,7 +92,7 @@ export default async function GlobalNotFound() {
           <SiteFooter />
 
           <SearchOverlay />
-          <CartDrawer items={navigation.primary} />
+          <CartDrawer cart={cart} items={navigation.primary} />
         </ShellOverlayProvider>
       </body>
     </html>

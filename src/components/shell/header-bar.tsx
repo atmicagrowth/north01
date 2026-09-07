@@ -42,7 +42,15 @@ import { utilityNav } from '@/lib/navigation/utility'
  * itself against the inner container's `relative` box. That is why the container keeps `relative`
  * even though nothing inside it is absolutely positioned here.
  */
-export function HeaderBar({ items, settings }: { items: ShellNavItem[]; settings: ShellSettings }) {
+export function HeaderBar({
+  cartCount,
+  items,
+  settings,
+}: {
+  cartCount: number
+  items: ShellNavItem[]
+  settings: ShellSettings
+}) {
   const sentinel = useRef<HTMLDivElement>(null)
   const [compact, setCompact] = useState(false)
 
@@ -113,7 +121,7 @@ export function HeaderBar({ items, settings }: { items: ShellNavItem[]; settings
               </Link>
             </IconButton>
 
-            <CartTrigger />
+            <CartTrigger count={cartCount} />
           </div>
         </div>
       </header>

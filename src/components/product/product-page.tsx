@@ -1,3 +1,4 @@
+import { AddToBag } from '@/components/cart/add-to-bag'
 import { ProductCard } from '@/components/catalog/product-card'
 import { PageContainer } from '@/components/layout/page-container'
 import { Section, SectionHeading } from '@/components/layout/section'
@@ -7,6 +8,7 @@ import { VariantSelector } from '@/components/product/variant-selector'
 import { Badge } from '@/components/ui/badge'
 import { Link } from '@/components/ui/link'
 import { PRODUCT_IMAGE_SIZES } from '@/lib/product/sizes'
+import { clampQuantity } from '@/lib/cart/rules'
 import { inventoryMessage, priceRangeForColor } from '@/lib/product/variants'
 import type { ProductView } from '@/lib/product/product'
 import type { Media } from '@/payload-types'
@@ -80,6 +82,24 @@ export function ProductPage({ view }: { view: ProductView }) {
 
   const stock = inventoryMessage(matrix.selected)
 
+  /*
+   * How many of this exact variant may be added right now. The same function the server applies when
+   * the form posts, given the same two inputs — so the control cannot offer a number the mutation
+   * would refuse.
+   */
+  const bound = clampQuantity(
+    settings.maxQuantityPerLine,
+    matrix.selected
+      ? {
+          active: true,
+          inventoryQuantity: matrix.selected.inventoryQuantity,
+          priceMinor: matrix.selected.priceMinor,
+          productPublished: true,
+        }
+      : null,
+    settings.maxQuantityPerLine,
+  )
+
   const video = typeof product.video === 'object' && product.video ? (product.video as Media) : null
 
   return (
@@ -150,14 +170,29 @@ export function ProductPage({ view }: { view: ProductView }) {
               </div>
 
               {/*
-                The honest placeholder for the purchase controls. It is a SENTENCE, not a disabled
-                button: a greyed-out "Add to Bag" would still read as a broken shop rather than an
-                unfinished one, and §0.1.17's rule is about not implying a capability at all.
+                Phase 14's purchase controls, which DEV-55 recorded as owed and which slot in exactly
+                where that deviation said they would — beneath the selector, reading the variant it
+                had already resolved. What is still absent is **Buy Now** (Phase 17, which owns
+                checkout) and the wishlist (Phase 20).
+
+                `maxQuantity` is the live bound: `clampQuantity` applied to this variant's stock and
+                the shop's `maxQuantityPerLine`. It is computed on the server and passed down, so the
+                stepper's ceiling and the server's clamp are the same number rather than two
+                implementations of the same policy.
               */}
-              <p className="border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
-                Online ordering opens shortly. Everything here — colours, sizes and live stock — is
-                the real catalogue.
-              </p>
+              <AddToBag
+                disabledReason={
+                  matrix.selectedSize === null
+                    ? 'Choose a size.'
+                    : matrix.selected === null
+                      ? 'That combination is not available.'
+                      : bound.quantity <= 0
+                        ? 'Sold out in this size.'
+                        : null
+                }
+                maxQuantity={bound.quantity}
+                variantId={matrix.selected?.id ?? null}
+              />
 
               <ProductDetails
                 product={product}
