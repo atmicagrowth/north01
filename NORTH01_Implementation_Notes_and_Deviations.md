@@ -4606,6 +4606,89 @@ an empty cell instead of shifting everything left. Verified at 1440×900 and 390
 - **`generateStaticParams`** — a Phase 30 question, and not obviously right for a page that reads live
   stock.
 
+### 1.18.10 Post-implementation sweeps
+
+#### Sweep 1 — driving the page instead of reading it
+
+Four findings. One was caught in the pre-commit read and shipped fixed inside the phase commit
+(§1.18.5); the other three needed a **production build**, because two of them do not exist in
+development at all.
+
+**1. A history entry can render content that describes a different URL.** The serious one.
+
+Click one size, then another before the server has answered the first. The URL ends on the second,
+correctly. Press Back: the address bar says `?size=XS` and the page shows **no size selected**, with
+*"Choose a size to see availability"* under a URL that names a size.
+
+`history: 'push'` writes the entry synchronously; the render that belongs to it arrives later. When a
+second push supersedes the first before its render commits, the intermediate entry keeps the tree that
+was on screen when it was created — so the customer walks back into content that is not what the URL
+asks for. It is what the App Router's client cache does with an entry that never received a render,
+not something specific to this code.
+
+Measured against `next start`, not `next dev`:
+
+| Route | Fails from | Notes |
+|---|---|---|
+| `/product/<slug>` | **400 ms** between clicks | three queries per render, so the widest window |
+| `/shop/<category>` | 150 ms | |
+| `/shop` | 150 ms | the cheapest render, and still reachable |
+
+**This is not a Phase 13 regression.** The pattern is Phase 11's, and `/shop` has had it since
+`filter-controls.tsx` was written; it went unnoticed because the probe that would have caught it
+compared two filter states that happened to return the same eight products, and because the shop's
+render is fast enough that a human rarely wins the race. The product page made it visible by being
+slower.
+
+The fix is to stop creating the entry: while a navigation is in flight the customer has not **seen**
+the state they are leaving, so it is not a place to come back to, and the write becomes a `replace`.
+As soon as the server answers, `push` resumes and deliberate selections get their own entries —
+feature matrix §5's requirement is preserved exactly where it means something. `components/url-state.tsx`
+now owns that rule and the three write options that were previously written out twice; nuqs's
+`startTransition` is what makes "in flight" mean *the server has not answered* rather than *the URL
+has not changed*.
+
+Measured with a probe that walks the entire history in **both** directions and asserts that every
+entry renders what its URL claims:
+
+| | Product page | Catalogue |
+|---|---|---|
+| Before | **2/5** | not measurable with the old probe |
+| After | **5/5** | **8/8** across `/shop` and `/shop/clothing` |
+
+Two of my own probes were wrong before the code was, and both failed in the direction that invents a
+defect: one read the selector one history entry behind because it stopped waiting as soon as two
+samples matched — which they did, because the navigation had not started — and one declared the fix
+broken because Back now lands on the original page rather than on an entry that should never have
+existed. The second is the more instructive: **a probe that asserts the old behaviour will call the
+fix a regression.**
+
+**2. Closing the zoom viewer dropped focus onto `<body>`.** A keyboard customer who opened a
+photograph and pressed Escape landed at the top of the document with the whole page to tab through
+again — WCAG 2.4.3.
+
+Radix returns focus to whatever opened a dialog, but only when it knows what that was, which means a
+`DialogTrigger`. The viewer has none: it is opened from whichever frame was activated, so there are as
+many triggers as there are photographs. The size guide, which does have a trigger, was correct all
+along — the two behaved differently and the difference was invisible in a screenshot. Fixed by
+remembering the frame and restoring focus in `onCloseAutoFocus`.
+
+**3. The product video shipped an empty `<track kind="captions" />`.** `src` is required on that
+element, so the markup was invalid, nothing was ever loaded, and it asserted the existence of a caption
+track that does not exist. Lint did not ask for it — removing it leaves `--max-warnings 0` clean — so
+it was defensive and wrong. `Media` has no captions field for one to point at; a product video carrying
+speech would fail WCAG 1.2.2, and closing that needs a field on the collection rather than an empty
+element on the page. The video also gained an accessible name, which it had never had.
+
+Never rendered today, because no product has a video. That is exactly why it survived every gate.
+
+**Two findings that were not findings.** The accordion appeared to have no `aria-controls` — it has
+one; Radix adds it when the panel exists, and the probe read a collapsed trigger. And an intermittent
+`performance.measure` console error on `/shop/<category>` is Next's development-only React
+instrumentation emitting a negative timestamp; zero console errors in four scenarios in development
+and none in production. Both are recorded because a sweep that only lists confirmed defects hides how
+often the instrument is the thing that is broken.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

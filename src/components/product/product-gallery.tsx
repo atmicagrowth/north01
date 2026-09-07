@@ -56,6 +56,19 @@ export function ProductGallery({
   const scrollerRef = useRef<HTMLDivElement>(null)
   const thumbnails = useRef<(HTMLButtonElement | null)[]>([])
 
+  /*
+   * Which frame opened the viewer, and the button it was opened from.
+   *
+   * Radix returns focus to the element that triggered a dialog — but only when it knows what that
+   * was, which means a `DialogTrigger`. This dialog has none: it is opened from whichever frame the
+   * customer activated, so there are as many triggers as there are photographs. Without these, close
+   * put focus on `<body>`, and a keyboard customer who opened the zoom and pressed Escape landed at
+   * the top of the document with the whole page to tab through again. Found in Phase 13's first
+   * sweep; the size guide never had it, because that one does have a trigger.
+   */
+  const frameButtons = useRef<(HTMLButtonElement | null)[]>([])
+  const openedFrom = useRef(0)
+
   const usable = frames.filter((frame): frame is Media => frame !== null)
 
   /*
@@ -91,7 +104,13 @@ export function ProductGallery({
           <button
             className="w-full shrink-0 snap-start lg:cursor-zoom-in"
             key={frame?.id ?? index}
-            onClick={() => setZoomed(index)}
+            onClick={() => {
+              openedFrom.current = index
+              setZoomed(index)
+            }}
+            ref={(node) => {
+              frameButtons.current[index] = node
+            }}
             type="button"
           >
             <span className="sr-only">View larger</span>
@@ -167,21 +186,31 @@ export function ProductGallery({
          * a replacement. No autoplay and no loop — `controls` puts it under the customer's thumb,
          * and a garment video that starts itself is the thing visual guide §08 means by keeping
          * motion slow and deliberate.
+         *
+         * **No `<track>`.** It carried an empty `<track kind="captions" />` until Phase 13's first
+         * sweep: `src` is required on that element, so the markup was invalid, nothing was ever
+         * loaded, and it asserted the existence of a caption track that does not exist. `Media` has
+         * no captions field for one to point at. Shipping no track is the honest state; a product
+         * video carrying speech would fail WCAG 1.2.2, and closing that needs a field on the
+         * collection rather than an empty element here.
          */
         <video
+          aria-label={`${alt} — video`}
           className="w-full"
           controls
           preload="none"
           poster={shown[0]?.url ?? undefined}
           src={video.url ?? undefined}
-        >
-          <track kind="captions" />
-        </video>
+        />
       ) : null}
 
       <Dialog open={zoomed !== null} onOpenChange={(open) => setZoomed(open ? zoomed : null)}>
         <DialogContent
           className="max-w-none bg-canvas p-0"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            frameButtons.current[openedFrom.current]?.focus()
+          }}
           title={`${alt} — full screen`}
           titleHidden
         >

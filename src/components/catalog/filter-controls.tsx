@@ -1,8 +1,8 @@
 'use client'
 
-import { useQueryStates } from 'nuqs'
 import { useId, useState, type ReactNode } from 'react'
 
+import { useUrlState } from '@/components/url-state'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -27,22 +27,13 @@ import { cn } from '@/lib/cn'
  *
  * ---
  *
- * ### The three options passed to every write, and why each is not the default
+ * ### The write options moved to `components/url-state.tsx`
  *
- * ```ts
- * { history: 'push', scroll: false, shallow: false }
- * ```
- *
- * - **`shallow: false`.** nuqs defaults to a client-only URL update, which is right for a control
- *   whose effect is client-side. Here the grid is rendered on the server from these exact
- *   parameters, so a shallow write would change the address bar and **nothing else** — the classic
- *   fake control. This is the single most important line in the file.
- * - **`history: 'push'`.** Feature matrix §5 requires that *"browser back/forward restores state"*,
- *   and the default `replace` makes Back leave the shop entirely after a customer has ticked four
- *   filters. Push costs a history entry per change; that is the price of the requirement.
- * - **`scroll: false`.** The default jumps to the top of the document. A customer ticking "M" three
- *   facets down the panel does not want to be thrown back to the page title; the grid updating in
- *   place is what they expect.
+ * `{ history: 'push', scroll: false, shallow: false }` was written out here and again on the product
+ * page. `useUrlState` now owns them, along with the rule that a write made **before the server has
+ * answered the previous one** replaces rather than pushes — without which ticking two boxes in quick
+ * succession leaves a history entry whose content describes a different URL. Measured on this route
+ * at 150 ms between clicks; the reasoning is in that file.
  *
  * ### Every write resets the page, and forgetting that is a real defect
  *
@@ -51,8 +42,6 @@ import { cn } from '@/lib/cn'
  * and lands on an empty grid that says nothing matched. `setFilters` therefore always writes
  * `page: null`, which the serializer omits entirely rather than writing `page=1`.
  */
-
-const WRITE_OPTIONS = { history: 'push', scroll: false, shallow: false } as const
 
 /* -------------------------------------------------------------------------------------------------
  * Sort
@@ -71,7 +60,7 @@ const WRITE_OPTIONS = { history: 'push', scroll: false, shallow: false } as cons
  * control in the middle of a considered page.
  */
 export function SortControl({ value }: { value: CatalogSort }) {
-  const [, setFilters] = useQueryStates(CATALOG_PARSERS, WRITE_OPTIONS)
+  const [, setFilters] = useUrlState(CATALOG_PARSERS)
   const id = useId()
 
   return (
@@ -274,7 +263,7 @@ export function FilterPanel({
   routeCategory?: null | string
   vocabulary: CatalogVocabulary
 }) {
-  const [filters, setFilters] = useQueryStates(CATALOG_PARSERS, WRITE_OPTIONS)
+  const [filters, setFilters] = useUrlState(CATALOG_PARSERS)
 
   const toggle =
     (key: 'category' | 'collection' | 'color' | 'size') => (value: string, checked: boolean) => {

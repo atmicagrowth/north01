@@ -1,8 +1,8 @@
 'use client'
 
-import { useQueryStates } from 'nuqs'
 import { useId, useRef, type ReactNode } from 'react'
 
+import { useUrlState } from '@/components/url-state'
 import { cn } from '@/lib/cn'
 import { PRODUCT_PARSERS } from '@/lib/product/params'
 import { isRovingKey, rovingIndex, tabbableIndex } from '@/lib/product/roving'
@@ -26,8 +26,10 @@ import type { ColorOption, SizeOption } from '@/lib/product/variants'
  * specific colourway shareable, makes Back work between colours, and means the server resolves the
  * selection — the same reason plan §11.1d put the shop's filters there.
  *
- * `shallow: false` because the server owns the answer. A shallow write would change the address bar
- * and leave the price, the stock message and the disabled sizes describing the previous colour.
+ * `useUrlState` supplies the three options every URL-backed control in the storefront shares, and the
+ * rule that a selection made before the server has answered the previous one **replaces** rather than
+ * pushes — see that file for the defect it closes, which was found by walking this page's own
+ * history.
  *
  * ### Disabled, never hidden
  *
@@ -59,11 +61,7 @@ export function VariantSelector({
   selectedSize: null | string
   sizes: SizeOption[]
 }) {
-  const [, setSelection] = useQueryStates(PRODUCT_PARSERS, {
-    history: 'push',
-    scroll: false,
-    shallow: false,
-  })
+  const [, commit] = useUrlState(PRODUCT_PARSERS)
 
   const colorLabelId = useId()
   const sizeLabelId = useId()
@@ -86,7 +84,7 @@ export function VariantSelector({
                * out" message for a combination they never chose. §13.1c's example is exactly this
                * case: Black / M exists, Cream / M does not.
                */
-              void setSelection({ color: value, size: null })
+              void commit({ color: value, size: null })
             }}
             options={colors.map((color) => ({
               className: cn(
@@ -127,7 +125,7 @@ export function VariantSelector({
           <RadioRow
             labelledBy={sizeLabelId}
             onSelect={(value) => {
-              void setSelection({ size: value })
+              void commit({ size: value })
             }}
             options={sizes.map((size) => ({
               className: cn(
