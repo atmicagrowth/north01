@@ -140,16 +140,27 @@ export type NormalisedSearchTerm = {
  * - **U+202A-U+202E, U+2066-U+2069** — bidi overrides. This is the range that matters for display: a
  *   term echoed into a page title and a chip can visually reorder the sentence around it.
  *
- * These are written as escapes and **never as literals**, here or anywhere else in the repository.
- * An earlier draft of this docblock pasted real examples of each range into the comment, which made
- * the source file itself contain C0 controls and bidi overrides — `file` reported it as binary data
- * and `grep` refused to read it as text. A file that hides its own contents from review is the
- * Trojan-Source hazard, arriving through a comment explaining the Trojan-Source hazard.
+ * ### Why these are built from a string rather than written as a regex literal
+ *
+ * Twice now, the characters in this class have been destroyed by the tooling editing the file around
+ * them. First a draft of this docblock pasted the real characters in as examples, which made the
+ * source itself contain C0 controls and bidi overrides — `file` reported it as binary data and
+ * `grep` refused to read it as text. The cleanup that removed those then ate the characters **out of
+ * the regex literal**, leaving `/[-----]/` — a class that still compiled, still ran, and silently
+ * stripped almost nothing. `verify:search` caught it; nothing else did, and nothing else could,
+ * because a regex with the wrong characters in it is not a syntax error.
+ *
+ * A `RegExp` built from a string of `\u` escapes is plain ASCII in the file. No editor, formatter or
+ * patch script can alter it without the change being visible in review, and it cannot be silently
+ * emptied.
  */
-const STRIPPED = /[-----]/gu
+const STRIPPED = new RegExp(
+  '[\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200D\\uFEFF\\u202A-\\u202E\\u2066-\\u2069]',
+  'gu',
+)
 
-/** Combining marks, for accent folding. */
-const COMBINING = /[̀-ͯ]/gu
+/** Combining marks, for accent folding. Built the same way, for the same reason. */
+const COMBINING = new RegExp('[\\u0300-\\u036F]', 'gu')
 
 /**
  * **One place decides what a search term is.**
