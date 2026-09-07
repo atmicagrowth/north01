@@ -1,3 +1,4 @@
+import { COLOR_FAMILY_LABELS } from './colors'
 import type { CatalogQuery, CatalogSort } from './query'
 
 /**
@@ -80,6 +81,27 @@ export type ProductIndexRecord = {
   priceToMinor: number
   /** Epoch milliseconds. Algolia cannot rank on an ISO string. */
   publishedAtMs: number
+  /**
+   * **One derived attribute carrying every human-readable label a customer might type.**
+   *
+   * Plan §12.1a names Category, Collection, Colour and Size as *searchable*. None of them is
+   * searchable as stored: `categorySlugs` and `collectionSlugs` are machine slugs, `colorFamilies`
+   * is an enum value, and the variant's display colour is not in the record at all. Measured before
+   * this field existed — `accessories` 0 hits, `essentials` 0, `black` 0, `medium` 0.
+   *
+   * They are collapsed into ONE attribute rather than five because Algolia's Attribute ranking
+   * criterion is positional: five separate entries would impose an arbitrary precedence between a
+   * category name and a colour name, and every product carries all of them, so the ordering would be
+   * noise that outranks relevance. One `unordered(...)` bucket says what is true — these are equally
+   * weighted labels, and position within them means nothing.
+   *
+   * Slugs are deliberately absent: the names supersede them, and `categorySlugs` already gives slug
+   * coverage through the facet. `fit` and `materials` are absent too — they are already their own
+   * searchable attributes, and repeating them here would double-weight them.
+   */
+  searchTerms: string[]
+  /** Plan §12.1a's "description/summary where useful". Free — the indexer already reads it. */
+  shortDescription: null | string
   /** Distinct sizes across **active** variants. */
   sizes: string[]
   slug: string
@@ -90,6 +112,8 @@ export type ProductIndexRecord = {
 /** The minimum a caller must supply per variant. Deliberately structural, not a Payload type. */
 export type IndexableVariant = {
   active?: boolean | null
+  /** The swatch name a customer reads — "Graphite", "Oat". Distinct from the family enum. */
+  color?: null | string
   colorFamily?: null | string
   inventoryQuantity?: null | number
   size?: null | string
@@ -97,7 +121,11 @@ export type IndexableVariant = {
 
 /** The minimum a caller must supply per product. */
 export type IndexableProduct = {
+  /** Display names, including every ancestor's — not slugs. Feeds `searchTerms`. */
+  categoryNames?: string[]
   categorySlugs?: string[]
+  /** Collection titles. Feeds `searchTerms`. */
+  collectionTitles?: string[]
   collectionSlugs?: string[]
   derived?: {
     compareAtFromMinor?: null | number
@@ -115,6 +143,7 @@ export type IndexableProduct = {
   materials?: null | string[]
   name?: null | string
   publishedAt?: null | string
+  shortDescription?: null | string
   slug?: null | string
   sortOrder?: null | number
   /** `'published'` is the only value that belongs in the index. */
@@ -156,6 +185,38 @@ export function withAncestors(slugs: string[], parentOf: Map<string, null | stri
   }
 
   return [...out]
+}
+
+/**
+ * **Every human-readable label a customer might type, for one product.**
+ *
+ * Pure, and separate from `buildProductRecord` so the harness can assert the contents directly
+ * against a fixture rather than by reading a whole record.
+ *
+ * Only **active** variants contribute a colour or a size, for the same reason they are the only ones
+ * that contribute a facet value: an inactive variant is withdrawn from sale, so matching a search on
+ * it would return a product that cannot be bought in the thing that was searched for.
+ *
+ * The colour family contributes its **label**, not its value — `COLOR_FAMILY_LABELS.bone` is "Bone",
+ * and "bone" the enum value is what the facet filters on. A customer types the label.
+ */
+export function buildSearchTerms(
+  product: Pick<IndexableProduct, 'categoryNames' | 'collectionTitles'>,
+  variants: IndexableVariant[],
+): string[] {
+  const active = variants.filter((variant) => variant.active !== false)
+
+  return clean([
+    ...(product.categoryNames ?? []),
+    ...(product.collectionTitles ?? []),
+    ...active.map((variant) => variant.color),
+    ...active.map((variant) =>
+      variant.colorFamily
+        ? (COLOR_FAMILY_LABELS[variant.colorFamily] ?? variant.colorFamily)
+        : null,
+    ),
+    ...active.map((variant) => variant.size),
+  ])
 }
 
 /**
@@ -229,6 +290,8 @@ export function buildProductRecord(
      * under "Newest", which is the honest place for a product whose publication date is unknown.
      */
     publishedAtMs: Number.isFinite(publishedAtMs) ? publishedAtMs : 0,
+    searchTerms: buildSearchTerms(product, variants),
+    shortDescription: product.shortDescription?.trim() || null,
     sizes: clean(active.map((variant) => variant.size)),
     slug,
     sortOrder: product.sortOrder ?? 0,
@@ -322,9 +385,71 @@ export const CATALOG_INDEX_SETTINGS = {
    */
   attributesToHighlight: [],
   customRanking: ['asc(sortOrder)', 'desc(publishedAtMs)'],
+  /**
+   * Typo tolerance off for the one attribute that is prose.
+   *
+   * A summary is long and full of ordinary words, so a typo-tolerant match against it produces
+   * confident-looking matches on words the customer did not type. Names, labels and tags are short
+   * and deliberate, which is exactly where typo tolerance earns its place.
+   */
+  disableTypoToleranceOnAttributes: ['shortDescription'],
   numericAttributesForFiltering: ['priceFromMinor', 'priceToMinor', 'inventoryTotal'],
-  searchableAttributes: ['name', 'tags', 'materials', 'unordered(fit)'],
+  /**
+   * Fall back to dropping trailing words rather than returning nothing.
+   *
+   * Algolia ANDs query words by default, so a two-word search matches only a product carrying both.
+   * Measured: `merino hoodie` returns **0** hits under the default `'none'` and **1** under
+   * `'lastWords'`. Without it, no-results would be the most-visited state on the results page.
+   *
+   * It engages only when the answer would otherwise be empty. The cost, recorded because Algolia
+   * gives no signal that it happened: this is the one place the engine answers a slightly narrower
+   * question than the one that was asked.
+   */
+  removeWordsIfNoResults: 'lastWords' as const,
+  /**
+   * The order **is** the Attribute ranking priority, and a non-empty list turns that criterion on.
+   *
+   * `name` first and ordered — position within a product name is meaningful. Everything after it is
+   * `unordered(...)`, because position inside a bag of unrelated labels is not. `tags,materials` are
+   * comma-joined so they rank as one tier rather than inventing a precedence between them.
+   *
+   * `categorySlugs` and `collectionSlugs` are deliberately **absent**: they are machine slugs, and
+   * their human names reach the customer through `searchTerms`.
+   */
+  searchableAttributes: [
+    'name',
+    'unordered(searchTerms)',
+    'tags,materials',
+    'unordered(fit)',
+    'unordered(shortDescription)',
+  ],
+  /**
+   * The one setting here that **is** a hard boundary.
+   *
+   * `attributesToRetrieve` is only a default — a per-request parameter overrides it, measured with
+   * the public search key alone. `unretrievableAttributes` cannot be overridden by any search key.
+   * Stock level is the one indexed field with no business being readable by anyone who opens the
+   * browser console, and `indexSearchParams` never emits an `inventoryTotal` filter, so nothing
+   * breaks by withholding it.
+   */
+  unretrievableAttributes: ['inventoryTotal'],
 }
+
+/**
+ * The primary's settings **minus the two things a replica must own**.
+ *
+ * Derived by omission rather than re-listed, and that is the whole point: a replica that is handed a
+ * hand-picked subset silently keeps whatever it was not given, because `setSettings` leaves
+ * unspecified settings unchanged. That is how every replica came to have **no**
+ * `searchableAttributes` — meaning "search every attribute" — while the primary had four, so `black`
+ * returned 0 hits under Featured and 1 under Price ascending.
+ *
+ * `customRanking` is omitted because it is the only reason a replica exists. `replicas` is not in the
+ * primary's constant at all; `configureCatalogIndex` adds it at the call site, so it cannot leak here.
+ */
+const { customRanking: _primaryCustomRanking, ...SHARED } = CATALOG_INDEX_SETTINGS
+
+export const CATALOG_SHARED_SETTINGS = SHARED
 
 /** Per-replica ranking. The attributes are already in every record; only the order differs. */
 export const CATALOG_REPLICA_CUSTOM_RANKING: Record<string, string[]> = {

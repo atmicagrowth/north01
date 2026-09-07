@@ -2,6 +2,7 @@ import { algoliasearch, type Algoliasearch } from 'algoliasearch'
 
 import {
   CATALOG_INDEX_SETTINGS,
+  CATALOG_SHARED_SETTINGS,
   CATALOG_REPLICA_CUSTOM_RANKING,
   CATALOG_SORT_REPLICAS,
   indexNameForSort,
@@ -200,7 +201,7 @@ export async function configureCatalogIndex(
        * Spreading the whole object is also the only shape that stays correct when a later phase adds
        * a setting: a subset has to be remembered and will not be.
        */
-      indexSettings: { ...CATALOG_INDEX_SETTINGS, customRanking },
+      indexSettings: { ...CATALOG_SHARED_SETTINGS, customRanking },
     })
   }
 }

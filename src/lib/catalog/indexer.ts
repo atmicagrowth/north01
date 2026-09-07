@@ -63,7 +63,7 @@ type Credentials = {
 export async function readCategoryParents(
   payload: Payload,
   req?: PayloadRequest,
-): Promise<Map<string, null | string>> {
+): Promise<{ names: Map<string, string>; parents: Map<string, null | string> }> {
   const { docs } = await payload.find({
     collection: 'categories',
     depth: 0,
@@ -71,7 +71,7 @@ export async function readCategoryParents(
     overrideAccess: true,
     pagination: false,
     req,
-    select: { parent: true, slug: true },
+    select: { name: true, parent: true, slug: true },
   })
 
   const bySlug = new Map<number, string>()
@@ -83,6 +83,15 @@ export async function readCategoryParents(
   }
 
   const parents = new Map<string, null | string>()
+  /*
+   * Slug -> display name, built in the same pass.
+   *
+   * `withAncestors` widens a product's categories to their ancestor SLUGS, so turning that widened
+   * set into the NAMES §12.1a wants searchable needs this second map. Without it the record would
+   * carry `undefined` for every ancestor, `clean()` would silently drop them, and the phase would
+   * ship a searchable attribute that matches nothing — a settings-shaped fake control.
+   */
+  const names = new Map<string, string>()
 
   for (const doc of docs) {
     if (!doc.slug) {
@@ -92,9 +101,13 @@ export async function readCategoryParents(
     const parentId = typeof doc.parent === 'object' && doc.parent ? doc.parent.id : doc.parent
 
     parents.set(doc.slug, typeof parentId === 'number' ? (bySlug.get(parentId) ?? null) : null)
+
+    if (doc.name?.trim()) {
+      names.set(doc.slug, doc.name.trim())
+    }
   }
 
-  return parents
+  return { names, parents }
 }
 
 /**
@@ -111,7 +124,7 @@ export async function readCategoryParents(
 export async function readCollectionMembership(
   payload: Payload,
   req?: PayloadRequest,
-): Promise<Map<number, string[]>> {
+): Promise<{ membership: Map<number, string[]>; titles: Map<string, string> }> {
   const { docs } = await payload.find({
     collection: 'collections',
     depth: 0,
@@ -119,10 +132,12 @@ export async function readCollectionMembership(
     overrideAccess: true,
     pagination: false,
     req,
-    select: { products: true, slug: true, status: true },
+    select: { products: true, slug: true, status: true, title: true },
   })
 
   const membership = new Map<number, string[]>()
+  /** Slug -> title, so `searchTerms` can carry the words an editor named the set with. */
+  const titles = new Map<string, string>()
 
   for (const doc of docs) {
     /*
@@ -132,6 +147,10 @@ export async function readCollectionMembership(
      */
     if (doc.status !== 'published' || !doc.slug) {
       continue
+    }
+
+    if (doc.title?.trim()) {
+      titles.set(doc.slug, doc.title.trim())
     }
 
     for (const entry of doc.products ?? []) {
@@ -145,7 +164,7 @@ export async function readCollectionMembership(
     }
   }
 
-  return membership
+  return { membership, titles }
 }
 
 export type CollectedRecords = {
@@ -170,10 +189,8 @@ export async function collectProductRecords(
 ): Promise<CollectedRecords> {
   const { req, where } = options
 
-  const [parents, membership] = await Promise.all([
-    readCategoryParents(payload, req),
-    readCollectionMembership(payload, req),
-  ])
+  const [{ names: categoryNames, parents }, { membership, titles: collectionTitles }] =
+    await Promise.all([readCategoryParents(payload, req), readCollectionMembership(payload, req)])
 
   const records: ProductIndexRecord[] = []
   const excludedIds: number[] = []
@@ -208,6 +225,7 @@ export async function collectProductRecords(
         req,
         select: {
           active: true,
+          color: true,
           colorFamily: true,
           inventoryQuantity: true,
           product: true,
@@ -230,6 +248,7 @@ export async function collectProductRecords(
           ...(variantsByProduct.get(productId) ?? []),
           {
             active: variant.active,
+            color: variant.color,
             colorFamily: variant.colorFamily,
             inventoryQuantity: variant.inventoryQuantity,
             size: variant.size,
@@ -243,10 +262,24 @@ export async function collectProductRecords(
         .map((entry) => (typeof entry === 'object' && entry ? entry.slug : null))
         .filter((slug): slug is string => typeof slug === 'string')
 
+      const widenedCategories = withAncestors(categorySlugs, parents)
+      const collectionSlugs = membership.get(doc.id) ?? []
+
       const record = buildProductRecord(
         {
-          categorySlugs: withAncestors(categorySlugs, parents),
-          collectionSlugs: membership.get(doc.id) ?? [],
+          /*
+           * Names, not slugs, and they follow the WIDENED set — a hoodie filed only under `hoodies`
+           * is searchable by "Tops" and "Clothing" too, which is the same subtree promise
+           * `categorySlugs` already makes to the facet.
+           */
+          categoryNames: widenedCategories
+            .map((slug) => categoryNames.get(slug))
+            .filter((name): name is string => typeof name === 'string'),
+          categorySlugs: widenedCategories,
+          collectionSlugs,
+          collectionTitles: collectionSlugs
+            .map((slug) => collectionTitles.get(slug))
+            .filter((title): title is string => typeof title === 'string'),
           derived: doc.derived ?? null,
           featured: doc.featured,
           fit: doc.fit,
@@ -258,6 +291,7 @@ export async function collectProductRecords(
           materials: doc.materials,
           name: doc.name,
           publishedAt: doc.publishedAt,
+          shortDescription: doc.shortDescription,
           slug: doc.slug,
           sortOrder: doc.sortOrder,
           status: doc.status,
