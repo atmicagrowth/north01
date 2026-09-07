@@ -4036,6 +4036,307 @@ re-verification of the fixes themselves. **0 axe-core violations** across six su
 the newly-reachable sold-out and low-stock cards. Typecheck, lint at `--max-warnings 0` and the
 production build all clean, with `/` still static at a 300-second revalidate.
 
+## 1.17 Phase 12 — search / Algolia
+
+Plan §12.1a–§12.1d. Text search over the index Phase 11 built: the searchable set the plan actually
+asks for, the overlay panel **DEV-37** deferred, a `/search` results page, and the ten edge cases.
+
+**Two dependencies were already present** — `algoliasearch` arrived in Phase 11 with the facet engine.
+This phase added none.
+
+### 1.17.1 Three defects in the shipped index, found before a single line of Phase 12 was written
+
+The design pass measured the live index rather than reading the code, and all three would have gone
+live in the same commit that enabled text search. They are fixed in `813b40a`, before the feature.
+
+**1. Every sort replica had no `searchableAttributes`.** In Algolia that means *search every
+attribute*. `configureCatalogIndex` hand-wrote a four-key settings object per replica, and
+`setSettings` leaves anything it is not given unchanged — so the replicas kept the empty default while
+the primary had four attributes. Measured:
+
+| Index | `black` |
+|---|---|
+| `north01_products_local` | **0 hits** |
+| `north01_products_local_price_asc` | **1 hit** |
+
+Dormant only because `indexSearchParams` hard-coded `query: ''`. The first text query would have made
+`?q=black&sort=price-asc` return a different, differently-ranked set from `?q=black` — a sort control
+that silently changes the result set.
+
+Fixed by **omission rather than addition**: `CATALOG_SHARED_SETTINGS` is the primary's object minus
+`customRanking`, so a setting added by a later phase cannot be forgotten for the replicas.
+
+**2. `_highlightResult` returns index text past `attributesToRetrieve`.** A query for `hoodie`
+returned `{objectID, _highlightResult}` where the highlight carried `name`
+(`"Heavyweight <em>Hoodie</em>"`), `materials` and `fit` — customer-visible index text, with markup, on
+the one code path **D-37** says returns an id and nothing else. Closed with
+`attributesToHighlight: []`. Rendering it would also have required `dangerouslySetInnerHTML`, which is
+the Phase 10 **D-35** defect class.
+
+**3. `attributesToRetrieve` is not a security boundary, and D-37's wording implied it was.** Measured
+with the *public* search key alone, a per-request override returned `name`, `slug`, `priceFromMinor`
+and `inventoryTotal`. Nothing confidential is exposed — `buildProductRecord` keeps drafts, scheduled
+drops and withdrawn products out of the index entirely — but the guarantee is **staleness**, not
+secrecy. `docs/ARCHITECTURE.md`'s D-37 entry is amended to say so, and
+`unretrievableAttributes: ['inventoryTotal']` is added as the one setting here that genuinely cannot be
+overridden.
+
+That third one is the Phase 10 lesson again: *the docblock is the specification the next phase will
+trust, and it is the only artefact nothing executes.*
+
+### 1.17.2 §12.1a asked for nine searchable fields and four of them matched nothing
+
+| Probe | Before | After | Answered by |
+|---|---|---|---|
+| `accessories` | 0 | 2 | category **name** |
+| `essentials` | 0 | 5 | collection **title** |
+| `black` | 0 | 1 | colour-family **label** |
+| `Graphite` | 0 | 2 | variant display colour |
+| `XL` / `ONE SIZE` | 0 | 6 / 2 | sizes |
+| `brushed cashmere` | 0 | 1 | `shortDescription` |
+| `merino hoodie` | 0 | 1 | `removeWordsIfNoResults: 'lastWords'` |
+
+They are collapsed into **one** derived attribute, `searchTerms`, rather than five. Algolia's Attribute
+ranking criterion is positional, so five entries would impose an arbitrary precedence between a
+category name and a colour name — and every product carries all of them, so the ordering would be
+noise outranking relevance. One `unordered(...)` bucket says what is true.
+
+Slugs stay out: they are machine strings, and `categorySlugs` already covers the subtree for the
+*facet*. `fit` and `materials` stay out because they are already their own attributes and repeating
+them would double-weight them.
+
+**The design pass caught a defect here that would have shipped as a settings-shaped fake control.**
+`readCategoryParents` selected `{ parent, slug }` and `readCollectionMembership` selected
+`{ products, slug, status }` — so every category name and collection title was `undefined`, and
+`clean()` would have dropped them silently. Not an error anywhere: a searchable attribute that matches
+nothing.
+
+`removeWordsIfNoResults` deserves its own line because Algolia ANDs query words by default, so
+`merino hoodie` returned **0** and returns **1** with `'lastWords'`. Without it, no-results would be
+the most-visited state on the results page. The cost, recorded because Algolia gives no signal that it
+happened: this is the one place the engine answers a slightly narrower question than the one asked.
+
+**`medium` still does not match size `M`**, and no synonym map ships — **DEV-53**. An Algolia synonym
+expands the query token *globally*, so `medium` → `M` would prefix-match Merino, Moss and Melton inside
+`name`, the highest-ranked attribute, under the live `queryType: 'prefixLast'`. `XL`, `32` and
+`ONE SIZE` are what customers actually type and all match.
+
+### 1.17.3 D-38 — popular searches are curated, and the argument is data quality
+
+The brief assumed Algolia Analytics was gated behind a credential. It is not: the existing write key
+already carries the `analytics` ACL and `getTopSearches` returns data today. The decision rests on what
+it returns.
+
+The measured top search for this application was `{ search: '', count: 18 }` — the **empty string**,
+eighteen times the next — because every faceted `/shop` request sent `query: ''` while Algolia's
+`analytics` parameter defaults **on**. Several other recorded terms were engineer probes matching
+nothing. Rendering that list would offer a customer a "popular search" whose only destination is the
+no-results page: §0.1.17's fake control, arriving with official provenance.
+
+So the terms are an editor-curated array on `site-settings`, **validated against the index** in one
+batched multi-query with any zero-hit term dropped, and an empty surviving list means the section is
+*absent* rather than empty. `indexSearchParams` now sends `analytics: false` for a browse, so the
+corpus stops being polluted — the history already is, and Phase 25 must not read the early window as
+customer behaviour.
+
+Three details the design pass got right and were nearly missed:
+
+- **The cache tag is `site-settings`, not `catalog`.** That is the tag `SiteSettings.afterChange`
+  actually revalidates. Under `catalog`, an editor's save would have invalidated nothing that reads it
+  while every unrelated product save flushed it constantly.
+- **The terms are seeded.** `getPopularSearches` drops unvalidated terms, so an unseeded field means
+  the section renders in zero environments — delivering the *field* rather than the *section*.
+- **The heading is honest.** A curated list is not evidence of popularity; the admin field says so, and
+  the validation is what stops it becoming a link to nowhere.
+
+### 1.17.4 D-39 — the typeahead does not get its own data path
+
+The obvious optimisation is to let the index return names and prices for suggestions, saving a database
+round trip per keystroke. Refused, and the decisive text is not §12.1a's permissive *"return only safe
+display data"* but feature matrix §2's failure row: *"deleted/unpublished product indexed stale:
+product fetch validates current publish state before display."* A row rendered from index fields has
+had no such fetch.
+
+There is also a case no index-freshness policy can ever cover: a product that becomes unlistable
+because the clock passed its `publishedAt` generates no write, so no sync hook fires. Only the
+read-time clause catches it.
+
+`rehydrateProductIds` is therefore extracted and called by **both** the grid and the panel — one path
+from an id to a card. The cost is bounded by four mechanisms, three of them compliance rather than
+optimisation: a two-code-point floor (§12.1d's *"empty query"* and *"1-character query"*), a 200 ms
+trailing debounce, last-request-wins, and a per-session memo.
+
+The debounce is the **only** request-reduction mechanism available: the SDK's Node build constructs its
+transporter with `responsesCache: createNullCache()` and issues requests through `node:https` rather
+than global `fetch`, so neither it nor Next's fetch cache can dedupe a repeated query.
+
+A related correction: both engines now read with `overrideAccess: false, user: null` from one constant.
+D-37's phrase *"the ordinary access-controlled `payload.find`"* was aspirational — the Local API
+defaults to `overrideAccess: true`, so only the explicit `publishedProductWhere` clause was keeping
+drafts out. The answer was right; the safety net was not there.
+
+### 1.17.5 The results page is a third caller, not a second implementation
+
+`q` joined the **one** `CATALOG_PARSERS` map, so `/search` renders through `CatalogPage` and inherits
+feature matrix §2's four requirements — query in the URL, filters and sorting in the URL, a result
+count, pagination — along with canonicalisation, the chips and Back/Forward.
+
+The `/shop?q=` → `/search?q=` redirect is **composed into** the canonical redirect rather than layered
+on top, because two redirects would break the fixed-point property `verify-catalog` check B2 asserts by
+name and §1.16.11 records as the fix for Phase 11's highest-severity defect. Measured single-hop:
+
+```
+/shop?q=hoodie          -> /search?q=hoodie
+/shop?q=%20hoodie%20    -> /search?q=hoodie
+/shop/hoodies?q=merino  -> /search?q=merino&category=hoodies
+```
+
+The third is the one that needed thought: the route's category lives in the path, so moving to
+`/search` without merging it would silently widen the customer's search to the whole catalogue.
+
+**All four "clear" affordances were erasing the search.** `active-filters.tsx`, `catalog-toolbar.tsx`
+and two in `product-grid.tsx` each built a fresh object carrying only `sort` — so on `/search` they
+offered a customer who found nothing a link that threw away what they were looking for. They are in
+three separate components and nothing typed-checked the omission.
+
+`CatalogEmpty` also stopped inferring staleness from a non-zero total and took the flag the engine now
+reports; and the shipped copy *"the search index has not caught up"* is gone, because structure §1 lists
+search indexes among what a customer should never need to understand and the phase that owns search
+should not be the one shipping the vocabulary leak.
+
+### 1.17.6 Three defects a browser found in the panel
+
+None was visible to typecheck, lint or any harness.
+
+**Popular searches could never render.** The panel only fetched when a term reached two characters, so
+the idle sections were markup that could never populate. The fix then failed a *second* time: the line
+deriving `payload` still required a non-null term, so the idle response was discarded the instant it
+arrived. Every unit was individually correct — endpoint, fetch, state write — and the one line
+consuming them disagreed about what counts as a key.
+
+**The ARIA tree and the keyboard model described different things.** Recent and popular searches were in
+the flat option list the arrow keys walk but rendered as `<button>` rather than `role="option"`, so
+`aria-activedescendant` pointed at ids not in the document. A dangling activedescendant is *silent*: the
+attribute is set, nothing matches, and a screen reader announces nothing at all. axe agreed twice over —
+`aria-required-children` (the listbox held groups, headings and buttons rather than options) and
+`aria-required-parent` (options wrapped in `<ul>`/`<li>`, whose implicit list roles break the ownership
+ARIA requires). Both critical.
+
+Fixed by deriving the rendered groups from the same list the keyboard walks. Recorded cost: a product
+suggestion is a `role="option"` div, so it cannot be middle-clicked into a new tab — ARIA does not
+permit an interactive element inside an option, and the results page carries real anchors.
+
+**The panel dropped popular searches during an outage** while `suggest.ts`'s docblock said the
+unavailable payload still carried them. Found by the degraded pass. The code withheld unvalidated terms
+on the theory they might dead-end — but during an outage they lead to the *designed*
+search-unavailable state, so withholding them removed navigation §A.5 requires in order to avoid a page
+that explains itself.
+
+Three more, from the mechanics rather than the UI: three `setState`-in-effect errors were fixed by
+**deleting the state** rather than suppressing the rule (`payload`, `pending` and `active` are all
+derivable, which makes a stale payload under a new term unrepresentable); `payload run` does **not**
+forward extra argv, so `reindex:check` had to become its own file or the command meant to *check* the
+index would have *rebuilt* it; and `reindex:check` reported every field of every product stale
+immediately after a clean rebuild, because `browseObjects` honours the index's
+`attributesToRetrieve: ['objectID']` default like any other read. The check caught its own bug, which is
+the argument for it existing.
+
+### 1.17.7 The harness found a defect it had itself caused
+
+`verify:search` is **200 checks**. On the first run with correct fixtures, eight failed —
+`normaliseSearchTerm` was stripping almost nothing.
+
+The character class had been destroyed two commits earlier by my own cleanup: the pass that removed
+literal control characters from a docblock also ate them **out of the regex literal**, leaving
+`/[-----]/`. That still compiled, still ran, and silently let zero-width spaces, bidi overrides and BEL
+through into a term echoed back as a page title and a filter chip.
+
+A regex with the wrong characters in it is not a syntax error. Typecheck, lint, the build and 144
+catalogue checks all passed over it. Worse: the repo-wide *"0 files affected"* scan run to prove the
+cleanup was safe returned zero **because** the escapes had been destroyed.
+
+Both regexes are now built with `new RegExp` from a string of `\u` escapes — plain ASCII in the file,
+unalterable by any formatter or patch script without the change being visible in review. The harness's
+own fixtures went through the same failure twice (literals made the file binary; escapes were mangled
+to empty strings, turning every assertion into `!term.includes('')`) and are built with
+`String.fromCodePoint`.
+
+The general lesson, and it is new: **a character can be destroyed by tooling without any gate
+noticing.** Types describe shape, lint describes syntax, and neither can see that a character class is
+missing its characters. Anything security-relevant expressed as a literal control character should be
+expressed as a construction instead.
+
+### 1.17.8 What was verified, and how
+
+**`pnpm verify:search` — 200 checks.** Three halves in `verify-catalog.ts`'s shape: pure fixtures for
+§12.1d's ten cases, the state machine's full 72-input cross-product, the byte clamp against ASCII,
+emoji, CJK and combining marks, the URL contract and the index settings; then **real Payload
+documents** — a nested category, a product, a variant and a collection — proving `searchTerms` carries
+the category name, *every ancestor's* name, the collection title, the variant's display colour, the
+colour-family label and the size; then a **live** section, gated on the integration, asserting
+primary/replica parity on four settings, that a hit carries no `_highlightResult`, that stock is
+withheld even when explicitly requested, and the six §12.1a probes.
+
+It exists in that shape because **`verify-shell.ts` contains zero assertions about the search
+overlay** — 676 lines, no match for "overlay". The panel's chrome was covered by a Phase 9 browser pass
+and by nothing that runs at the gate, which raised the stakes on this harness owning the panel's pure
+state machine outright.
+
+No regression elsewhere: `verify:catalog` **144/144**, `verify:access` 45/45, `verify:media` 61/61,
+`verify:shell` 100/100, `verify:home` 173/173. **723 checks across six harnesses.**
+
+**Browser pass — 19 checks**, including the one that mattered most: re-searching from `/search?q=a` to
+`/search?q=b` closes the panel. `overlay-context.tsx` closes on a *pathname* change, so a query-only
+navigation does not close it; the shipped panel hid that by wrapping every link in `<DialogClose>`.
+Also: the combobox contract, `aria-activedescendant` pointing at an element that exists, DOM focus
+staying on the input, recent searches persisting, Escape, no horizontal overflow at 390px, and — twice —
+that both `/search` and `/search?q=hoodie` render **with JavaScript disabled**.
+
+**0 axe-core violations** across 14 surfaces: four results-page states and three panel states, each at
+1440×900 and 390×844.
+
+**Degraded pass**, with the three Algolia variables removed:
+
+| Route | With index | Without |
+|---|---|---|
+| `/shop` | 10 | 10 |
+| `/shop/clothing` | 8 | 8 |
+| `?sort=price-asc` | 10 | 10 |
+| `?priceMax=150` | 2 | 2 |
+| `?availability=in-stock` | 9 | 9 |
+| `/search?q=hoodie` | 1 | controlled state |
+| `/shop?color=black` | 1 | controlled state |
+
+The panel keeps categories, collections, recent and popular. `pnpm reindex:check` reports no drift.
+
+### 1.17.9 What is now owed
+
+- **Quick View, Quick Add and the wishlist control** are still deferred — **DEV-45** stands. A
+  suggestion row links to the PDP and nothing else.
+- **`/product/<slug>` still 404s** (Phase 13), so structure §12's flow cannot be demonstrated to its
+  terminus. The same accepted state Phases 9, 10 and 11 recorded.
+- **Dependent facets** — **DEV-49**. §1.16.10 assigned them to this phase; the reason for deferring is
+  structural and is written out there.
+- **No `metadata`, canonical or `noindex` on `/search`** — **DEV-50**, Phase 24. Redirecting `/shop?q=`
+  here hands Phase 24 exactly one crawlable search namespace rather than two.
+- **No rate limiting on the search path** — **DEV-51**, Phase 26. The floor, the debounce, the six-hit
+  cap and the byte clamp are edge-case handling and cost control, **not** security controls, and the
+  route handler's docblock says so.
+- **No analytics events** — **DEV-52**, Phase 25. `analytics: false` on browse queries is diagnostic
+  hygiene, not event emission.
+- **`medium` does not match `M`** — **DEV-53**.
+- **Typo tolerance reaches four characters or more** (`minWordSizefor1Typo: 4`; measured `hod` → 0,
+  `hoodei` → 1). Feature matrix §2 names typo tolerance without qualifying it; this is the boundary.
+- **The pre-existing analytics corpus is polluted** with `{search: '', count: 18}` and engineer probes.
+  Phase 25 must not read the early window as customer behaviour.
+- **Two Algolia cost questions** could not be answered from the installed package and should be sourced
+  from Algolia's pricing documentation: whether a multi-request `client.search({ requests })` counts as
+  one operation or N, and how `replaceAllObjects` is billed.
+- **A cross-document discrepancy**, logged rather than resolved: feature matrix §35 cites
+  `NORTH01_Claude_Implementation_Plan_Current.md`, a filename that does not exist in this repository.
+  `AGENTS.md`'s precedence list is unambiguous, so nothing depends on it.
+
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -5247,6 +5548,109 @@ to low" grid, priceless, above the most expensive garment in the shop.
 
 *Affects Phase 11.*
 
+---
+
+### DEV-49 — Dependent facet counts are deferred, though §1.16.10 assigned them to this phase
+
+**Notes §1.16.10 says:** *"narrowing the vocabulary to the current filter context is a different
+feature, and it belongs to Phase 12, which is where Algolia is already computing facet
+distributions."*
+
+**We do:** ship independent facets, unchanged from Phase 11, and record the reason here.
+
+**Why:** the premise is false in this architecture. **D-36** chooses the engine *per query*, so most
+query shapes never reach Algolia at all and have no facet distribution to read. Counts that appeared
+under `?color=black` and vanished under `?category=hoodies` would be a control whose meaning depends
+on an implementation detail — and structure §1 lists exactly that among what a customer should never
+need to understand.
+
+Making them consistent means routing every query to Algolia, which abandons D-36 and forfeits the
+guarantee that an outage cannot take the shop down. That trade is not worth a count.
+
+§1.16.10's two clauses are treated differently, as its own wording invites: facet **counts** are
+permissive (*"can widen"*) and are simply not taken; **dependent facets** are assignive
+(*"belongs to"*) and get this deviation.
+
+---
+
+### DEV-50 — No SEO metadata on `/search`
+
+**Plan §24 owns SEO.** `/search` ships with no `metadata` export, no canonical link and no `noindex`.
+
+**Why:** the same deferral Phase 10 and Phase 11 recorded for `/` and `/shop`. Phase 24 also owns a
+question this phase should not answer alone — whether a search results page should be indexable at
+all.
+
+What this phase hands Phase 24 is **one** crawlable search namespace rather than two: `/shop?q=`
+redirects to `/search?q=`, composed into the canonical redirect so no URL redirects twice.
+
+---
+
+### DEV-51 — No rate limiting on the search path
+
+**Plan §26.1a** owns bot protection, and its Turnstile surface list does not name search.
+
+**We do:** ship `/search/suggest` as an unauthenticated, uncapped GET endpoint.
+
+**Why:** phase order, and the same honest position `newsletter/actions.ts` records for its own open
+write path. The two-character floor, the 200 ms debounce, the six-hit cap and the 256-byte clamp are
+§12.1d edge-case handling and cost control. They are **not** security controls and the route handler's
+docblock says so explicitly, because describing a cost control as a security control is how a later
+phase comes to believe a surface is already protected.
+
+---
+
+### DEV-52 — No analytics events
+
+**Plan §25.1a** owns `search_submitted` and the Insights API.
+
+**We do:** emit no events. `indexSearchParams` sets `analytics: false` on a browse query and `true` on
+a text query, and `clickAnalytics` is deliberately not set.
+
+**Why:** phase order — Phase 11 set the precedent by shipping filters and sorts without
+`filter_applied` or `sort_changed`. The `analytics` flag is **diagnostic hygiene rather than event
+emission**: without it every faceted `/shop` request is recorded as a customer searching for the empty
+string, which is measurably what had already happened (`{search: '', count: 18}`, eighteen times the
+next entry). Stopping a metric from lying is not the same as collecting one.
+
+---
+
+### DEV-53 — Long-form size words do not match, and no synonym map ships
+
+**Plan §12.1a lists Size as searchable**, unhedged.
+
+**We do:** deliver it through `searchTerms` — `XL`, `32`, `M` and `ONE SIZE` all match — and accept
+that `medium` does not match `M`.
+
+**Why:** an Algolia synonym expands the query **token globally**, so `medium` → `M` would prefix-match
+Merino, Moss and Melton inside `name`, the highest-ranked attribute, under the live
+`queryType: 'prefixLast'`. It would also be a sixth piece of index state with no owner, no rebuild path
+and no harness coverage.
+
+The seeded sizes are `XS, S, M, L, XL, 30, 32, 34, 36, ONE SIZE`; three quarters of those are literally
+what a customer types. Structure §12 puts the size **filter** after the results page anyway, which is
+where a customer who means "medium" is served.
+
+---
+
+### DEV-54 — `SearchOverlay` lost its `items` prop, and `DEV-37` is closed with an amendment
+
+**DEV-37 said** Phase 12 *"replaces the body of `SearchPanel` and nothing else."*
+
+**We do:** replace the body, and also remove the `items` prop from `SearchOverlay` and add
+`titleHidden` to its `DialogContent`.
+
+**Why:** the panel fetches on open rather than receiving navigation as props, which is what keeps the
+component's signature unchanged — and the signature matters more than it looks, because
+`SearchOverlay` is mounted **twice**: in the frontend layout and again in `global-not-found.tsx`,
+which renders its own `<html>` outside the route group. Any new prop would have to be supplied in both
+or the 404 page's panel would silently lose a section. Removing a prop is the change that makes *no
+future prop* necessary.
+
+`titleHidden` is chrome rather than body — the input sits at the top of the panel and a visible
+"Search" heading above a search field is a label repeated twice. Recorded here rather than claimed as
+"DEV-37 honoured to the letter".
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -5276,5 +5680,7 @@ to low" grid, priceless, above the most expensive garment in the shop.
 | Phase 11 — product catalogue and discovery | 2026-08-30 | Notes §1.16: the per-query engine choice (**D-36**) that reconciles §11.1d, §0 and §A.5, measured against a real Algolia outage; the index that stores no customer-visible data (**D-37**); the `NULLS FIRST` that would have topped the price-desc grid; the nine card states; pagination over load-more; one nuqs parser map for server and client; and four defects — a 320px overflow, a taxonomy flattened by reading `parent` at `depth: 0`, a chip per descendant, and a struck price at 4.15:1. New harness `pnpm verify:catalog` (**122 checks**, including that both engines agree) and `pnpm reindex`. Deviations **DEV-45** through **DEV-48**. Two dependencies added: `nuqs`, `algoliasearch`. |
 
 | Phase 11 — post-implementation audit | 2026-09-02 | Note **§1.16.11**: the committed phase re-read adversarially and every claim reproduced against the running application — **6 defects confirmed** (2 high, 2 medium, 2 low), all fixed. **The headline is a filter a customer could apply and could not remove**: the chip's label came from the *normalised* value while its remove-link filtered the **raw** URL token, so on `/shop?size=m` the href was byte-identical to the page it was on — six products before the click, six after. Closed by **canonicalising the URL** (`?size=m` → `?size=M`, one redirect) rather than by patching the comparison, so every downstream comparison is normalised-against-normalised by construction; unknown values and reversed price ranges are deliberately *not* rewritten, because §11.1d requires the customer be told rather than silently corrected, and `canonicaliseParams` is asserted to be a fixed point so no URL can redirect twice. Second: **the price facet lied about what was applied** — draft state seeded from props and never re-synced, so removing the price chip left `100 / 200` in the inputs and pressing Back left a maximum the customer believed cleared, which a subsequent Apply would silently re-apply. Also: **an out-of-range page was a self-contradicting dead end** ("10 products" above "this part of the shop has no published products", with no pagination to escape by) — now redirects to the last real page; **the filter panel offered sizes of draft products**, verified with a draft-only size that returned zero results, against a docblock claiming the opposite, fixed by extracting `listableVariantWhere` so the vocabulary and the listing share one definition of "listable"; a duplicated `site-settings` read; and one docblock narrower than its code. **The coverage gap mattered more than any single defect**: all ten seeded products were in stock, so three of §11.1b's nine card states had never rendered in a browser — the seed now ships one sold-out and one low-stock product, so `/shop` exercises three availability states in every environment. `verify:catalog` is **144 checks**, up from 122, with a regression for each finding and two rules extracted into the pure module so the harness could hold them; browser pass **36/36** (the old out-of-range assertion encoded the defect and was rewritten); **523 checks** across five harnesses; 0 axe violations across six surfaces. |
+
+| Phase 12 — search / Algolia | 2026-09-07 | Notes **§1.17**: text search over the Phase 11 index. **Three defects in the shipped index were found and fixed before the feature was written**: every sort replica had NO `searchableAttributes` (measured — `black` returned 0 on the primary and 1 on `..._price_asc`, so a text query would have made the sort control silently change the result set); `_highlightResult` returns index text past `attributesToRetrieve`, which would have made D-37's own sentence false in the same commit that enabled search; and `attributesToRetrieve` is **not a security boundary** — measured with the PUBLIC key, a per-request override returned name, slug, price and stock, so D-37 is amended to say it buys staleness, not secrecy, and `unretrievableAttributes` is added as the one real boundary. §12.1a asked for nine searchable fields and four matched nothing (`accessories` 0→2, `essentials` 0→5, `black` 0→1, `Graphite` 0→2, `XL` 0→6, `brushed cashmere` 0→1, `merino hoodie` 0→1); answered by ONE derived `searchTerms` attribute, because Algolia\u2019s Attribute ranking is positional and five entries would impose an arbitrary precedence. **D-38** settles popular searches as editor-curated and index-validated — Algolia Analytics was rejected on measured data quality, not access: its top search was the EMPTY STRING with 18× the next, because every faceted /shop request sent an empty query with `analytics` defaulting on. **D-39** keeps D-37 intact for the typeahead (one `rehydrateProductIds` for grid and panel); **D-40** puts `q` in the one parser map, so `/search` is a third caller of `CatalogPage` and the `/shop?q=` redirect COMPOSES with canonicalisation rather than layering, preserving the fixed-point property. A browser found three panel defects nothing else could: popular searches could never render (twice — the fetch, then the line consuming it); the ARIA tree and the keyboard model described different things, so `aria-activedescendant` pointed at ids not in the document (two critical axe failures); and the panel dropped popular searches during an outage while its docblock said otherwise. **The new harness found a defect it had itself caused**: a cleanup pass had eaten the control characters out of `normaliseSearchTerm`'s regex literal, leaving `/[-----]/` — still compiling, still running, stripping almost nothing, and invisible to typecheck, lint, build and 144 catalogue checks. Both regexes are now built with `new RegExp` from \u escapes. New: `pnpm verify:search` (**200 checks**), `pnpm reindex:check`, `docs/SEARCH.md`. **723 checks across six harnesses**, 19 browser checks, 0 axe violations across 14 surfaces, and a degraded pass proving browsing is untouched without the index. Deviations **DEV-49** through **DEV-54**; **DEV-37 closed**. No dependency added. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

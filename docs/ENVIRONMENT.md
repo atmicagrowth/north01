@@ -321,6 +321,20 @@ optional service to degrade rather than stop the shop.
 | `NEXT_PUBLIC_ALGOLIA_APP_ID` | **public** | 11 | Algolia → API Keys (shown at signup) |
 | `NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY` **†** | **public** | 11 | Algolia → **Search API Key**. Read-only; a write through it is 403 |
 | `ALGOLIA_WRITE_API_KEY` **†** | server | 11 | Algolia → **Write API Key**, *not* the Admin key. Development index only — see below |
+
+**There is deliberately no fourth Algolia variable.** The index name is derived from `appEnv`
+(`catalogIndexName`), because a name that can be set by hand can be set to the production index by
+hand. Adding one to `INTEGRATIONS.algolia` would also make every currently-working three-key
+environment report `partial`, which `getCatalog` treats as unconfigured — instantly disabling colour,
+size and collection filtering across the whole shop.
+
+Note that `integrationStatus('algolia')` requires the **write** key even on the read path. That is
+intentional: a half-configured integration is reported at startup rather than discovered at the first
+query, and the read path degrades gracefully either way.
+
+The public search key's ACL is `['search','listIndexes','settings','browse']` with no index
+restriction. `browse` is what makes `pnpm reindex:check` possible without the write key. Narrowing
+the key to a single index is a reasonable tightening and is not done here.
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | **public** | 17 | Stripe → Developers → API keys. `pk_test_…` |
 | `STRIPE_SECRET_KEY` | server | 17 | same. `sk_test_…` or a restricted `rk_test_…`; **never a `_live_` key outside production** |
 | `STRIPE_WEBHOOK_SECRET` | server | 17 | Stripe → Webhooks → signing secret, `whsec_…` |

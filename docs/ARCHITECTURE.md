@@ -941,6 +941,82 @@ drift.
 
 *Recorded in Phase 11.*
 
+**Amended in Phase 12, and the amendment matters.** This entry originally implied that returning only
+`objectID` was a confidentiality boundary. It is not. `attributesToRetrieve` is an index **default**
+that a per-request parameter overrides — measured with the *public* search key alone, a query asking
+for `['name','slug','priceFromMinor']` returned all three. Nothing confidential is exposed, because
+`buildProductRecord` keeps drafts, scheduled drops and withdrawn products out of the index entirely;
+but the guarantee this decision buys is **staleness**, not secrecy, and it must be described that way.
+
+Two things follow. `attributesToHighlight: []` is mandatory rather than cosmetic: a text query returns
+`_highlightResult` alongside `objectID`, carrying the product name with `<em>` markup plus fit,
+materials and tags — so without it this decision's own sentence becomes false the moment text search
+is enabled. And `unretrievableAttributes: ['inventoryTotal']` is the one setting here that **is** a
+hard boundary, since no search key can override it.
+
+---
+
+### D-38 — Popular searches are curated by an editor, not read from analytics
+
+Plan §12.1c lists *"popular searches"* as a search-panel section and no document says where they come
+from. They are an array on the `site-settings` global, validated against the index once per cache
+window, with any zero-hit term dropped; an empty surviving list means the section is **absent**.
+
+The objection to Algolia Analytics is data quality, not access — the write key already carries the
+`analytics` ACL and `getTopSearches` works. The measured top search for this application was
+`{ search: '', count: 18 }`, the **empty string**, eighteen times the next, because every faceted
+`/shop` request sent `query: ''` while Algolia's `analytics` parameter defaults on; several other
+recorded terms were engineer probes matching nothing. Rendering that list would offer a customer a
+"popular search" whose only destination is the no-results page — §0.1.17's fake control, arriving with
+official provenance.
+
+Recording queries to build a corpus *is* `search_submitted`, which is Phase 25's. Phase 12 sets
+`analytics: false` on browse queries so the corpus stops being polluted, and Phase 25 can feed this
+same field from real behaviour later without changing a line of the reader.
+
+*Recorded in Phase 12.*
+
+---
+
+### D-39 — Suggestions rehydrate from Postgres; D-37 is not relaxed for the typeahead
+
+The obvious optimisation for an as-you-type panel is to let the index return names and prices, saving
+a database round trip per keystroke. It is refused.
+
+Feature matrix §2 requires that a *"deleted/unpublished product indexed stale"* has its *"publish
+state validated before display"*, and a row rendered from index-resident fields has had no such fetch.
+There is also a case no index-freshness policy can ever cover: a product that becomes unlistable
+because the clock passed its `publishedAt` generates no write, so no sync hook fires. Only the
+read-time `publishedProductWhere` clause catches it.
+
+The suggestion path therefore calls the **same** `rehydrateProductIds` the results grid calls — one
+path from an index id to a card, so the two cannot drift. The cost is bounded by four mechanisms,
+three of which are corpus compliance rather than optimisation: a two-code-point floor (§12.1d's
+*"empty query"* and *"1-character query"*), a 200 ms trailing debounce, last-request-wins via an
+`AbortController` and a monotonic request id, and a per-panel-session memo.
+
+Explicitly rejected: caching the suggestion path under `unstable_cache` at any TTL. `catalog.ts`
+already refuses that pattern for a strictly smaller key space, and a free-text term keyed by
+unauthenticated input is worse on every axis.
+
+*Recorded in Phase 12.*
+
+---
+
+### D-40 — A search term joins the one URL parser map
+
+`q` is a member of `CATALOG_PARSERS` rather than a parser of its own, which makes `/search` a third
+caller of `CatalogPage` instead of a second implementation of it. Feature matrix §2's four
+requirements for a full results page — query in the URL, filters and sorting in the URL, a result
+count, pagination — are inherited rather than rebuilt, along with canonicalisation, the filter chips,
+the out-of-range redirect and Back/Forward.
+
+`/shop?q=` redirects to `/search?q=`, composed into the **same** redirect as canonicalisation so no
+URL can redirect twice — the fixed-point property `verify-catalog` check B2 asserts and the notes
+record as the fix for Phase 11's highest-severity defect.
+
+*Recorded in Phase 12.*
+
 ---
 
 ## 5. Current position
