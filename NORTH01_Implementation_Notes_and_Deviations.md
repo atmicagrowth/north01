@@ -5088,6 +5088,117 @@ POST — `next-action` header and all — and replaying it from the same cookie 
 **A page view really does not write a row.** Eight routes including `/cart`, opening the drawer on each:
 no cookie issued and the `carts` table unchanged at 13 rows.
 
+## 1.20 Phase 15 — promotions and discounts
+
+Plan §15.1a–§15.1c. The phase that fills the first of Phase 14's three deferred totals.
+
+**No dependencies added.** `Promotions.ts` was written in Phase 6 and its docblocks already said what
+this phase would do — including two decisions this phase simply honoured rather than revisited.
+
+### 1.20.1 Phase 6 had answered three questions this phase would otherwise have got wrong
+
+- **`timesUsed` is not incremented here.** It moves in **Phase 17**, inside the transaction that
+  finalises payment, for the same reason inventory does. Incrementing anywhere earlier means a code
+  consumed by an abandoned checkout.
+- **`perCustomerLimit` is not a counter.** It is compared against a **count of that customer's paid
+  orders** carrying the promotion, which `orders.promotion` already answers exactly. A second counter
+  would duplicate a fact the orders table owns and would be wrong the first time an order was
+  refunded.
+- **One code at a time is a schema property, not a rule.** `carts.promotion` is a single
+  relationship, so §15.1c's *"multiple codes attempted"* is unrepresentable rather than forbidden —
+  applying a second code replaces the first. **DEV-08**, confirmed.
+
+### 1.20.2 The eight checks, and the order they are reported in
+
+§15.1a lists eight and all eight are named checks. The order they run in is a decision: **only the
+first failure is shown**, so it runs from *"this code is not for you"* to *"this code is not for this
+bag"*, which is also least-to-most actionable. Expired beats under-the-minimum, because a customer
+can add to their bag and cannot change a date.
+
+**`inactive` and `unknownCode` produce the identical sentence.** Telling somebody that a code exists
+but is switched off is telling them a code exists, and a form field that distinguishes the two is a
+way to enumerate an unreleased campaign. Verified in a browser: an inactive code and `NOSUCHCODE`
+return the same string, byte for byte.
+
+**Currency constrains a fixed amount only.** A percentage is dimensionless — 10% off is 10% off in
+any currency — and free shipping has no amount at all. Applying §15.1a's *"currency compatibility"* to
+all three would fail a percentage code in a currency it works perfectly well in.
+
+**The minimum is measured against the whole bag**, not the eligible subset, because
+`Promotions.minimumSubtotalMinor` says in its own description *"compared against the subtotal before
+shipping and tax"*. A code that says "spend 100" means spend 100, not "have 100 of qualifying goods".
+
+### 1.20.3 Eligibility runs the other way round, and the join is why
+
+`Promotions.eligibleCollections` names collections, and the obvious implementation reads
+`product.collections` — which is a Payload **`join`**. A join is virtual and has no column, so it
+comes back as a paginated `{ docs }` object rather than a list of ids, and a caller treating it as an
+array gets an empty one: **a collection-scoped promotion that silently never applies.**
+
+So membership is resolved from the owning side — `collections.products`, the ordered `hasMany` that
+curation writes — and **only when the promotion names collections at all**, which most do not. Phase
+11 learned the same thing about facets. It is the third phase to meet this join from a different
+direction, and the first to meet it before shipping the bug.
+
+### 1.20.4 Rounding is a decision, and the discount can never exceed what it discounts
+
+A percentage of a minor-unit amount is rarely whole. `Math.round`, not `floor`: the discount belongs
+to the customer, and flooring every percentage is a systematic fraction of a penny in the shop's
+favour on every order that has one. Ten per cent of `1005` minor units is `101`, not `100`.
+
+§15.1c names both overflow directions and both are clamped **against the eligible subtotal**, not the
+bag's. A fixed code worth 5000 on a bag holding 20000 of ineligible goods and 2000 of eligible ones
+takes 2000. The clamp is applied to percentages too, even though one at or below 100 cannot overflow
+— the alternative is a rule that holds only while a validator elsewhere keeps `percentage` at or
+below 100, and a discount larger than the bag is a negative total, which is a refund the shop did not
+agree to.
+
+### 1.20.5 The discount is re-decided on every read
+
+Nothing about the *amount* is stored. `carts.promotion` records which code was chosen and that is
+all, so §15.1c's *"expired code during checkout"* and *"code reaches usage limit between cart and
+checkout"* cannot produce a stale discount — there is no stored number to go stale. A code that
+stopped working stays visible in the bag with its reason beside it, and the customer removes it; the
+bag does not quietly charge full price.
+
+This is the same architecture `cart-items` uses for prices, and for the same reason.
+
+### 1.20.6 The `server-only` guard was on the wrong module
+
+`pnpm verify:promotions` failed on its first run with `ERR_MODULE_NOT_FOUND: Cannot find package
+'server-only'` — the harness runs outside Next, where that package cannot resolve.
+
+The fix is structural rather than a workaround. Everything that merely *reads* a promotion takes a
+`Payload` instance as an argument and touches no cookie, request or secret, so it belongs in
+`read.ts` with no guard — exactly how `lib/catalog/query.ts` sits beside `lib/catalog/catalog.ts`.
+The guard belongs on the module that calls `getPayloadClient`, which is the two mutations. **A guard
+on the wrong module does not make anything safer; it only makes it untestable.**
+
+### 1.20.7 What was verified, and how
+
+| Surface | Evidence |
+|---|---|
+| §15.1a's eight checks | 64 harness checks, each named in the plan's own words |
+| §15.1b's four outputs | asserted individually, plus rounding, clamping and eligibility scoping |
+| §15.1c's eight edge cases | all eight, including both overflow directions and case/whitespace |
+| Real documents | the collection normalises on write, a lower-case padded lookup finds it, the unique index refuses a duplicate, and a percentage promotion with no percentage **cannot be stored** |
+| The bag in a browser | 20 checks — apply, messy input, expired, under-minimum, inactive-equals-unknown, fixed amount, free shipping, remove, and the drawer showing the code without offering a second field |
+| Accessibility | 0 axe violations across the six cart surfaces |
+| The rest of the storefront | shell 100, home 183, catalogue 147, search 209, product 80, cart 72 |
+
+### 1.20.8 What is now owed
+
+- **`timesUsed` must be incremented** in Phase 17's payment transaction. Nothing does it yet, so a
+  `usageLimit` is currently enforced against a counter that never moves.
+- **Free shipping must actually make shipping free** — **Phase 16**. The code validates, records and
+  reports itself today; the amount it affects does not exist yet (**DEV-60**).
+- **Revalidation at checkout creation** (§15.1b) — Phase 17. The engine is ready; the caller is not.
+- **A per-customer limit is unenforceable against a guest**, because the count comes from orders and
+  a guest has none (**DEV-59**).
+- **The seeded demo codes stay inactive.** `scripts/seed.ts` says why in one line — *"a live discount
+  code in seed data is a live discount code"* — and this phase did not overrule it. The harness and
+  the browser passes create their own and delete them.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -6504,6 +6615,51 @@ The one estimate that *is* rendered is the free-shipping progress message, and i
 compares the subtotal against `site-settings.freeShippingThresholdMinor`, which is an editor's number
 rather than a rate for a destination. §14.1e asks for it by name.
 
+---
+
+### DEV-59 — A per-customer limit cannot be enforced against a guest
+
+**Plan §15.1a** lists *"per-customer limit not exceeded"* among the checks, without qualification.
+
+**We do:** enforce it for a signed-in customer, by counting their paid orders carrying the code, and
+**count zero for a guest**.
+
+**Why:** the count comes from `orders.promotion`, which is what `Promotions.ts` specifies precisely so
+that a refund cannot leave a stored tally wrong. A guest has no customer id, so there is nothing to
+count against — and the alternatives are worse than the gap. Counting by email would key a limit on a
+field the customer types, so two spellings are two allowances. Counting by cart token would key it on
+a cookie, which is cleared. Both would *look* like enforcement while a single private window defeated
+them, which is the failure mode plan §0.1.17 is about.
+
+The `usageLimit` total is unaffected and does bind on guests, so a code with a global cap is still
+capped. A merchandiser who needs a per-customer limit to mean something should pair it with an
+account requirement, which is a decision for whoever writes the campaign rather than for this code.
+
+---
+
+### DEV-60 — A free-shipping code is validated and recorded, and does not yet change a price
+
+**Plan §15.1b** asks the calculation to return a discount amount, and `Promotions.type` offers
+`free_shipping` as one of three kinds.
+
+**We do:** validate a free-shipping code against all eight of §15.1a's checks, store it on the cart,
+show it in the bag by name, and carry its effect in a `freeShipping` boolean rather than an amount.
+The bag says *"Applies to delivery, which is calculated at checkout."*
+
+**Why:** shipping is **Phase 16**. There is no rate for the code to zero. Returning a discount amount
+of `0` and drawing a `-$0.00` row beside *Free delivery* would read as a code that did nothing —
+which is the shape of fake UI that is hardest to spot, because the number is real and only its
+meaning is wrong. So no Discount row is drawn for this type at all, and a sentence carries the
+promise instead.
+
+A code with an *amount* of zero still draws its row, because that is genuinely surprising and the
+customer should see it. The distinction is deliberate: `null` means *this kind of code has no amount*
+and `0` means *this code is worth nothing today*.
+
+Phase 16 turns the boolean into a rate of zero. Nothing in this phase has to change for that to work,
+which is the same property Phase 14's deferred totals were built with and Phase 14's second sweep
+tested.
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -6541,4 +6697,5 @@ rather than a rate for a destination. §14.1e asks for it by name.
 | Phase 13 — two post-implementation sweeps | 2026-09-07 | Notes **§1.18.10**. Nine findings. **Sweep 1**, against a production build: `history: 'push'` with `shallow: false` writes a history entry synchronously and renders it later, so a second selection made before the server answers leaves an entry whose content describes a **different URL** — Back showed `?size=XS` over a page with no size selected, from 400 ms between clicks on the product page and 150 ms on `/shop/<category>`. Not a Phase 13 regression; the pattern is Phase 11's. `components/url-state.tsx` now owns the write options both call sites duplicated plus the rule that a write made while a navigation is in flight replaces rather than pushes. Walking the whole history in both directions: product **2/5 → 5/5**, catalogue **8/8**. Also: closing the zoom viewer dropped focus onto `<body>` (WCAG 2.4.3), and the product video shipped an empty `<track kind="captions">` — invalid markup asserting a caption track that does not exist. **Sweep 2**, against the docblocks: the swatch row's order depended on which sizes each colour came in, with a tie the query never broke, so the **default colourway could change between requests** — now alphabetical over a totally ordered read; `PRODUCT_IMAGE_SIZES.recommendation` was **never imported**, so the row used the shop card's string and under-claimed by 22%; pointing the same measurement at every `sizes` string found four more wrong, all in the last tier, by up to **+20% at 320px** — every one now within 2%, with the shared container arithmetic in `lib/media/grid.ts` and a *no bare `100vw` unless it really is the viewport* rule in all three harnesses; the size guide's "cells by label" promise lived in a component where nothing could execute it, now a pure module with nine regressions; and `pagination: false` does **not** make `limit` decorative, so the 500-variant cap was a real silent truncation of the size selector and now logs. `verify:product` 49 → **80**. Full sweep: 719 harness checks, 119 browser checks, 0 axe violations. |
 | Phase 14 — cart system | 2026-09-07 | Notes **§1.19**: a server-authoritative bag. Phase 6's schema needed no revisiting — no totals on `carts`, no price snapshot on `cart-items`, and `(cart, variant)` unique, which is §14.1b step 5 as a constraint and is verified against the real database. §14.1b's **seven named edge cases are seven named checks**; summing happens **before** clamping, because two checks that each pass can still add up to more than the warehouse has. §14.1d's five totals: the subtotal is real and discount, shipping and tax are **`null` rather than zero** (**DEV-58**) — a computed `$0.00` beside *Shipping* is the most persuasive kind of fake UI, and `isFinal` flips on its own when Phases 15 and 16 assign those fields. Every control is a `<form>` posting to a Server Action, so the bag works without JavaScript, and **no price crosses the boundary as an input**. **DEV-57**: no Checkout control — Phase 17 owns `/checkout`, and the drawer pins *View bag* instead. Three defects found by running it, two invisible to every gate: a `'use server'` module exporting a constant 500'd at **runtime** with typecheck, lint and build all green; `maxQuantity` clamped the current quantity instead of the ceiling, disabling `+` on every line; and the new bag badge escaped its unpositioned button to sit two pixels past the **document** edge, giving every page a horizontal scrollbar. `verify:cart` is **68 checks**; 34 browser checks, 9 merge checks against a real account, 0 axe violations. |
 | Phase 14 — two post-implementation sweeps | 2026-09-07 | Notes **§1.19.9**. Eight findings. **Sweep 1**, making the world move under an open bag: the line rendered the **stored** quantity beside a subtotal computed from the **effective** one — drop stock to 1 under a line holding 2 and the number on screen times the price on screen did not equal the subtotal on screen; and an unpublished product left a **dead link inside the bag**, because `publishedProductWhere` is the single definition of *listable* and the route honours it. Sixteen adversarial cases held, including a forged cart token, a mutation aimed at another session's line id, a re-enabled Add button posting a sold-out variant, two diverging tabs, a double tap, and **the whole add-to-bag flow with JavaScript switched off** — which was a docblock claim until it was tested. **Sweep 2**, against the docblocks: `resolveCart` resolved a cart by cookie when `customerId === null || !found.customer`, so **a signed-out visitor was handed the previous account holder's bag** — measured as "Bag, 1 item" after signing out on a machine with no session; the condition is now `!found.customer` alone and `logout` clears the cookie. Also: the cart cookie decided `secure` from `process.env.NODE_ENV` while the session cookie uses `appEnv`; *"claimed rather than ignored"* never wrote a `customer`; `LINE_LIMIT` was a **silent cap** — the same `pagination: false` finding Phase 13's sweep made about `VARIANT_LIMIT`, in a new file; and *"the action is idempotent per line"* was false. Three claims held under test, including the forward-looking one: assigning the three deferred totals made the summary render Discount, Shipping, Tax and **Total $237.29** with no component edited. `verify:cart` 68 → **72**. |
+| Phase 15 — promotions and discounts | 2026-09-07 | Notes **§1.20**: a server-authoritative promotion engine, filling the first of Phase 14's three deferred totals. Phase 6 had already answered three questions this phase would otherwise have got wrong — `timesUsed` increments in **Phase 17**'s payment transaction, `perCustomerLimit` is a **count of paid orders** rather than a tally that a refund would falsify, and one-code-at-a-time is a schema property rather than a rule. §15.1a's eight checks and §15.1c's eight edge cases are all named checks. **`inactive` and `unknownCode` return the identical sentence**, byte for byte, so the code field cannot be used to enumerate an unreleased campaign. Eligibility is resolved from `collections.products` and not from `product.collections`, because the latter is a **`join`** — virtual, no column, `{ docs }` rather than an array — and reading it would have produced a collection-scoped promotion that silently never applied; the third phase to meet that join, and the first to meet it before shipping the bug. Rounding is `Math.round` rather than `floor`, because flooring every percentage is a systematic fraction of a penny in the shop's favour. **The discount is re-decided on every read** — only the choice of code is stored — so an expired or exhausted code cannot leave a stale amount. `verify:promotions` failed on its first run with `ERR_MODULE_NOT_FOUND: server-only`: the guard was on the wrong module, and the fix was structural — reads that take a `Payload` argument moved to `read.ts` with no guard, exactly as `catalog/query.ts` sits beside `catalog/catalog.ts`. Deviations **DEV-59** (a per-customer limit is unenforceable against a guest, and the alternatives only look like enforcement) and **DEV-60** (a free-shipping code validates and records but changes no price until Phase 16, and draws no `-$0.00` row). `verify:promotions` **64 checks**, 20 browser checks, 0 axe violations. |
 > **Append this table, and the sections above it, at the end of every phase.**

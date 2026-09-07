@@ -69,6 +69,7 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
             <div className="flex flex-col gap-m">
               <CartSummary
                 currency={cart.currency}
+                discount={cart.discount}
                 locale={cart.locale}
                 shipping={cart.shipping}
                 totals={cart.totals}

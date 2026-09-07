@@ -1,3 +1,5 @@
+import { DiscountForm } from '@/components/cart/discount-form'
+import type { ResolvedPromotion } from '@/lib/promotions/promotions'
 import { formatMinorUnits } from '@/lib/money'
 import type { CartTotals } from '@/lib/cart/rules'
 import type { ShippingProgress } from '@/lib/cart/rules'
@@ -10,15 +12,20 @@ import { cn } from '@/lib/cn'
  * Subtotal, discount, shipping estimate, tax estimate, total. The subtotal is real: it is the sum of
  * live prices for lines that can actually be bought, computed on the server from the database.
  *
- * Discount is **Phase 15**. Shipping and tax are **Phase 16**. `cartTotals` returns `null` for all
- * three, and `null` is not zero: a `£0.00` beside *Shipping* would be a number the customer has every
- * reason to believe and no way to check, which is plan §0.1.17's fake UI in its most persuasive form.
- * So those rows are not rendered at all, and the figure at the bottom is labelled **Subtotal** rather
- * than **Total**, with one sentence saying where the rest arrives.
+ * **Discount is real as of Phase 15**; shipping and tax are still **Phase 16**, and `cartTotals`
+ * returns `null` for those two. `null` is not zero: a `£0.00` beside *Shipping* would be a number the
+ * customer has every reason to believe and no way to check, which is plan §0.1.17's fake UI in its
+ * most persuasive form. So those rows are not rendered at all, and the figure at the bottom is
+ * labelled **Subtotal** rather than **Total**, with one sentence saying where the rest arrives.
  *
- * When Phases 15 and 16 fill those fields, `totals.isFinal` becomes true and this component starts
- * rendering the rows and the word *Total* — **without being edited**. That is the point of the `null`s
- * being in the type rather than the rows being commented out.
+ * A discount of `null` means *no code applied* and draws no row; a discount of `0` means *a code is
+ * applied and currently takes nothing off*, which draws one — because that is surprising and the
+ * customer needs to see it.
+ *
+ * The Discount row appearing when Phase 15 landed is the first half of a claim Phase 14 made and
+ * Phase 14's second sweep tested: when Phase 16 assigns the remaining two, `totals.isFinal` becomes
+ * true and this component starts rendering their rows and the word *Total* — **without being
+ * edited**. Half of it has now happened for real.
  *
  * ### The shipping-progress message is the exception, and it is legitimate
  *
@@ -29,13 +36,26 @@ import { cn } from '@/lib/cn'
  */
 export function CartSummary({
   currency,
+  discount,
   locale,
   shipping,
+  showDiscountForm = false,
   totals,
 }: {
   currency: CurrencyCode
+  /** The applied code, decided against this bag on this read — Phase 15. */
+  discount?: null | ResolvedPromotion
   locale: string
   shipping: null | ShippingProgress
+  /**
+   * Whether to offer the code field.
+   *
+   * The bag **page** offers it; the drawer does not. A drawer is a glance at what went in, and a text
+   * field in it is a second place to type a code, a second place for it to fail, and a second
+   * `aria-live` region competing with the first. An applied code is still *shown* in both, because
+   * that is information rather than a control.
+   */
+  showDiscountForm?: boolean
   totals: CartTotals
 }) {
   const money = (minor: number) => formatMinorUnits(minor, currency, locale) ?? '—'
@@ -80,6 +100,8 @@ export function CartSummary({
           </div>
         ) : null}
       </dl>
+
+      {showDiscountForm || discount ? <DiscountForm discount={discount ?? null} /> : null}
 
       {totals.isFinal ? null : (
         <p className="font-sans text-meta text-foreground-muted">

@@ -84,8 +84,10 @@ export default async function CartPage() {
                 <div className="flex flex-col gap-m lg:sticky lg:top-24">
                   <CartSummary
                     currency={cart.currency}
+                    discount={cart.discount}
                     locale={cart.locale}
                     shipping={cart.shipping}
+                    showDiscountForm
                     totals={cart.totals}
                   />
 

@@ -243,7 +243,17 @@ export type CartTotals = {
   totalMinor: number
 }
 
-export function cartTotals(lines: PricedLine[]): CartTotals {
+export function cartTotals(
+  lines: PricedLine[],
+  /**
+   * The discount Phase 15's engine computed for this bag, or `null` when no code is applied.
+   *
+   * `null` and `0` are still different: `null` means *no promotion*, and the row is not drawn; `0`
+   * means a promotion is applied and currently takes nothing off, which the customer needs to see
+   * because it is surprising. Phase 16 fills `shipping` and `tax` the same way.
+   */
+  discount: null | number = null,
+): CartTotals {
   let subtotalMinor = 0
   let itemCount = 0
 
@@ -255,11 +265,13 @@ export function cartTotals(lines: PricedLine[]): CartTotals {
   }
 
   /*
-   * Typed rather than inferred. `const x = null` narrows to the literal `null`, which makes the
-   * `!== null` below a comparison TypeScript can prove — and it would then be deleted by whoever
-   * tidied the warning, taking `isFinal` with it. Phases 15 and 16 assign here.
+   * `discountMinor` is Phase 15's, and arrives as an argument. Shipping and tax are Phase 16's and
+   * are still `null` — typed rather than inferred, because `const x = null` narrows to the literal
+   * `null`, which would make the `!== null` below a comparison TypeScript can prove and whoever
+   * tidied the warning would delete `isFinal` with it.
    */
-  const discountMinor: null | number = null
+  const discountMinor: null | number =
+    discount === null ? null : Math.min(Math.max(0, Math.floor(discount)), subtotalMinor)
   const shippingMinor: null | number = null
   const taxMinor: null | number = null
 
@@ -270,7 +282,7 @@ export function cartTotals(lines: PricedLine[]): CartTotals {
     shippingMinor,
     subtotalMinor,
     taxMinor,
-    totalMinor: subtotalMinor,
+    totalMinor: Math.max(0, subtotalMinor - (discountMinor ?? 0)),
   }
 }
 

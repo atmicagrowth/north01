@@ -7,6 +7,7 @@ import { cache } from 'react'
 import type { Payload } from 'payload'
 
 import { getCatalogSettings, type CatalogSettings } from '@/lib/catalog/catalog'
+import { resolvePromotion, type ResolvedPromotion } from '@/lib/promotions/promotions'
 import { appEnv } from '@/lib/env.server'
 import { publishedProductWhere } from '@/lib/catalog/query'
 import { resolveProductCards, type ProductCard } from '@/lib/catalog/resolve'
@@ -132,6 +133,15 @@ export type CartLineView = {
 
 export type CartView = {
   currency: CatalogSettings['currency']
+  /**
+   * The applied discount code, decided against **this** bag on **this** read — Phase 15.
+   *
+   * `null` when no code is applied. When a code is applied but no longer valid, this is present with
+   * a `result.reason`, because §15.1c's *"expired code during checkout"* and *"code reaches usage
+   * limit between cart and checkout"* are both cases where the customer must be told rather than
+   * quietly charged full price.
+   */
+  discount: null | ResolvedPromotion
   /** True when the live read disagreed with the stored rows — §14.1e's stale-state banner. */
   drifted: boolean
   id: number
@@ -458,17 +468,56 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
    * visible — §14.1e wants the customer to see it — but paying for it is not on offer, so counting it
    * in the subtotal would quote a price for something that cannot be sold.
    */
+  const buyable = lines.filter((line) => line.unitPriceMinor !== null && line.maxQuantity > 0)
+
+  /*
+   * The promotion is re-decided on **every read**, never read back from a stored amount. The cart
+   * carries which code was chosen and nothing else, so §15.1c's *"expired code during checkout"* and
+   * *"code reaches usage limit between cart and checkout"* cannot produce a stale discount: there is
+   * no stored number to go stale.
+   */
+  const promotionId = relatedId(cart.promotion)
+
+  const discount =
+    promotionId === null
+      ? null
+      : await resolvePromotion(
+          payload,
+          promotionId,
+          /*
+           * `collectionIds` is left empty here on purpose. Membership is owned by the collection —
+           * `products.collections` is a virtual `join` with no column — so `resolvePromotion` fills
+           * it from the other side, and only when the promotion actually names collections.
+           */
+          buyable.map((line) => ({
+            collectionIds: [],
+            productId: line.productId,
+            quantity: line.effectiveQuantity,
+            unitPriceMinor: line.unitPriceMinor as number,
+          })),
+          settings.currency,
+          customerId,
+        )
+
   const totals = cartTotals(
-    lines
-      .filter((line) => line.unitPriceMinor !== null && line.maxQuantity > 0)
-      .map((line) => ({
-        quantity: line.effectiveQuantity,
-        unitPriceMinor: line.unitPriceMinor as number,
-      })),
+    buyable.map((line) => ({
+      quantity: line.effectiveQuantity,
+      unitPriceMinor: line.unitPriceMinor as number,
+    })),
+    /*
+     * A free-shipping code carries its effect in `freeShipping`, not in an amount, so it passes
+     * `null` and draws no Discount row — "Discount −$0.00" beside "Free delivery" reads as a code
+     * that did nothing. A code with an *amount* of zero still draws its row, because that one is
+     * genuinely surprising and the customer should see it. DEV-60.
+     */
+    discount?.result.reason === null && !discount.result.freeShipping
+      ? discount.result.discountMinor
+      : null,
   )
 
   return {
     currency: settings.currency,
+    discount,
     drifted,
     id: cart.id,
     lines,
