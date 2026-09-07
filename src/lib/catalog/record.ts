@@ -305,6 +305,22 @@ export const CATALOG_INDEX_SETTINGS = {
   ],
   /** Only the id crosses the wire. See this module's docblock. */
   attributesToRetrieve: ['objectID'],
+  /**
+   * **Highlighting off, and this is a correctness fix rather than a preference.**
+   *
+   * `attributesToRetrieve: ['objectID']` does NOT suppress `_highlightResult`. Measured against the
+   * live index the moment a text query was first run: a search for `hoodie` returned
+   * `{objectID, _highlightResult}` where the highlight object carried `name`
+   * (`"Heavyweight <em>Hoodie</em>"`), `materials` (`"100% cotton loopback, 500 gsm"`) and `fit` —
+   * customer-visible index text, with markup, on the one code path D-37 says returns an id and
+   * nothing else.
+   *
+   * Phase 11 never met this because `indexSearchParams` hardcodes `query: ''` and an empty query
+   * highlights nothing. Turning text search on would have made D-37's own sentence false in the same
+   * commit, which is the class of defect this project's audits keep finding: prose asserting a
+   * property the code does not have.
+   */
+  attributesToHighlight: [],
   customRanking: ['asc(sortOrder)', 'desc(publishedAtMs)'],
   numericAttributesForFiltering: ['priceFromMinor', 'priceToMinor', 'inventoryTotal'],
   searchableAttributes: ['name', 'tags', 'materials', 'unordered(fit)'],

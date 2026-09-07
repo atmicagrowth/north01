@@ -184,12 +184,23 @@ export async function configureCatalogIndex(
   for (const [suffix, customRanking] of Object.entries(CATALOG_REPLICA_CUSTOM_RANKING)) {
     await client.setSettings({
       indexName: replicaIndexName(indexBase, suffix),
-      indexSettings: {
-        attributesForFaceting: [...CATALOG_INDEX_SETTINGS.attributesForFaceting],
-        attributesToRetrieve: [...CATALOG_INDEX_SETTINGS.attributesToRetrieve],
-        customRanking,
-        numericAttributesForFiltering: [...CATALOG_INDEX_SETTINGS.numericAttributesForFiltering],
-      },
+      /*
+       * **The whole settings object, with only `customRanking` overridden.**
+       *
+       * This used to send a hand-picked four-key subset, and `setSettings` leaves anything it is not
+       * given unchanged — so the replicas were created with **no `searchableAttributes` at all**,
+       * which in Algolia means "search every attribute". Measured on the live index: `black`
+       * returned **0 hits on the primary and 1 hit on `..._price_asc`**, because the replica was
+       * matching against `colorFamilies` while the primary was not.
+       *
+       * That was dormant only because Phase 11 hardcodes `query: ''`. The first text query would
+       * have made `?q=black&sort=price-asc` return a different, differently-ranked set from
+       * `?q=black&sort=featured` — a sort control that silently changes the result set.
+       *
+       * Spreading the whole object is also the only shape that stays correct when a later phase adds
+       * a setting: a subset has to be remembered and will not be.
+       */
+      indexSettings: { ...CATALOG_INDEX_SETTINGS, customRanking },
     })
   }
 }
