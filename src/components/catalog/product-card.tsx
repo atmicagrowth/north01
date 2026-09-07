@@ -56,10 +56,21 @@ import { cn } from '@/lib/cn'
 export function ProductCard({
   card,
   priority = false,
+  sizes = CATALOG_IMAGE_SIZES.productCardGrid,
 }: {
   card: ProductCardModel
   /** The first card of the first page may be the LCP element. Everything else is lazy. */
   priority?: boolean
+  /**
+   * The layout this card is in.
+   *
+   * Defaulted to the shop grid, because that is where most of them live — but it is a **prop**
+   * rather than a constant since Phase 13's second sweep, which measured the product page's
+   * recommendation row rendering this component 313px wide while its hard-coded string promised the
+   * browser 244px. A card is not the same width everywhere it appears, and `sizes` is a promise
+   * about where it is.
+   */
+  sizes?: string
 }) {
   const badge = productCardBadge(card)
   const isUnbuyable = card.state === 'soldOut' || card.state === 'unavailable'
@@ -76,7 +87,7 @@ export function ProductCard({
         <MediaImage
           media={card.image}
           context="productCard"
-          sizes={CATALOG_IMAGE_SIZES.productCardGrid}
+          sizes={sizes}
           priority={priority}
           alt=""
           imageClassName={cn(

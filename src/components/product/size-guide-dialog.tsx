@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { Prose } from '@/components/editorial/prose'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
+import { sizeGuideTable } from '@/lib/product/size-guide'
 import type { SizeGuide } from '@/payload-types'
 
 /**
@@ -22,11 +23,11 @@ import type { SizeGuide } from '@/payload-types'
  * `<th scope>` on both axes. A grid of divs looks identical and tells a screen-reader user nothing
  * about which number belongs to which measurement in which size, which is the entire content.
  *
- * The header row is built from the **first row's** measurement labels. `SizeGuides` stores labels
- * per row rather than once per guide, so a guide whose rows disagree would produce a ragged table;
- * the cells are looked up **by label** rather than by position, so a row that lists its measurements
- * in a different order still lands in the right columns, and a row missing one renders an empty cell
- * instead of shifting everything left.
+ * The header row is built from the **first row's** measurement labels, and every cell is then found
+ * by label rather than by position — so a row that lists its measurements in a different order still
+ * lands in the right columns, and a row missing one renders an empty cell instead of shifting
+ * everything left. That rule lives in `lib/product/size-guide.ts` rather than here, because until
+ * Phase 13's second sweep it was a promise in a comment that nothing could execute.
  *
  * `overflow-x-auto` on a wrapper rather than on the table: a wide table must scroll inside its own
  * box, never make the page scroll sideways — the invariant every browser pass in this project
@@ -35,16 +36,8 @@ import type { SizeGuide } from '@/payload-types'
 export function SizeGuideDialog({ guide }: { guide: SizeGuide }) {
   const [open, setOpen] = useState(false)
 
-  const rows = (guide.rows ?? []).filter((row) => row.size?.trim())
-
-  /* Column order comes from the first row; every cell is then found by label. */
-  const columns = [
-    ...new Set(
-      (rows[0]?.measurements ?? [])
-        .map((measurement) => measurement.label?.trim())
-        .filter((label): label is string => !!label),
-    ),
-  ]
+  /* The rule is in `lib/product/size-guide.ts`, where a harness can reach it. */
+  const { columns, rows } = sizeGuideTable(guide.rows ?? [])
 
   const unit = guide.unit ? ` (${guide.unit})` : ''
 
@@ -88,16 +81,14 @@ export function SizeGuideDialog({ guide }: { guide: SizeGuide }) {
 
                 <tbody>
                   {rows.map((row) => (
-                    <tr className="border-b border-border last:border-0" key={row.id ?? row.size}>
+                    <tr className="border-b border-border last:border-0" key={row.key}>
                       <th className="py-2 pr-m text-left font-normal text-foreground" scope="row">
                         {row.size}
                       </th>
 
-                      {columns.map((column) => (
-                        <td className="py-2 pr-m text-foreground-muted" key={column}>
-                          {(row.measurements ?? []).find(
-                            (measurement) => measurement.label?.trim() === column,
-                          )?.value ?? '—'}
+                      {row.cells.map((cell, index) => (
+                        <td className="py-2 pr-m text-foreground-muted" key={columns[index]}>
+                          {cell ?? '—'}
                         </td>
                       ))}
                     </tr>

@@ -29,6 +29,8 @@ import { developmentDatabase } from '../src/lib/env.core'
 import { publishedProductWhere } from '../src/lib/catalog/query'
 import { loadProductParams } from '../src/lib/product/params'
 import { isRovingKey, rovingIndex, tabbableIndex } from '../src/lib/product/roving'
+import { sizeGuideTable } from '../src/lib/product/size-guide'
+import { CATALOG_IMAGE_SIZES } from '../src/lib/catalog/sizes'
 import { PRODUCT_IMAGE_SIZES } from '../src/lib/product/sizes'
 import {
   buildVariantMatrix,
@@ -349,13 +351,213 @@ check(
 
 check(
   'G: the gallery string has a fixed tier above 1440, where the container stops growing',
-  PRODUCT_IMAGE_SIZES.gallery.includes('(min-width: 1440px) 742px'),
+  PRODUCT_IMAGE_SIZES.gallery.includes('(min-width: 1440px) 756px'),
   PRODUCT_IMAGE_SIZES.gallery,
+)
+
+/*
+ * The rule the second sweep turned three wrong tiers into: only a surface that really is the whole
+ * viewport may END in a bare `100vw`. Everything else lives inside `PageContainer`, whose padding
+ * makes the last tier a subtraction rather than a fraction — and the last tier is the one nobody
+ * re-derives, because it is the one with no media condition to argue with.
+ */
+const FULL_BLEED_PRODUCT_SURFACES = new Set(['zoom'])
+
+for (const [surface, value] of Object.entries(PRODUCT_IMAGE_SIZES)) {
+  const last = value.split(',').at(-1)?.trim()
+
+  check(
+    `G: ${surface} only falls back to a bare 100vw if it really is the viewport`,
+    last !== '100vw' || FULL_BLEED_PRODUCT_SURFACES.has(surface),
+    value,
+  )
+}
+
+/**
+ * The recommendation row and the shop grid render the SAME component at different widths, so the
+ * substantive property is not that the two strings differ — it is that the recommendation's fixed
+ * tier is the **wider** one. It was 22% narrower until the second sweep, because the row reused the
+ * card's constant and the card sits beside a filter rail.
+ */
+const fixedTier = (value: string): number =>
+  Number(/\(min-width: 1440px\) (\d+)px/.exec(value)?.[1] ?? 0)
+
+check(
+  'G: the recommendation card is declared WIDER than a shop-grid card, because it is',
+  fixedTier(PRODUCT_IMAGE_SIZES.recommendation) > fixedTier(CATALOG_IMAGE_SIZES.productCardGrid),
+  `${fixedTier(PRODUCT_IMAGE_SIZES.recommendation)}px vs ${fixedTier(CATALOG_IMAGE_SIZES.productCardGrid)}px`,
+)
+
+check(
+  'G: …and at the measured 313px rather than a round number',
+  fixedTier(PRODUCT_IMAGE_SIZES.recommendation) === 313,
+  PRODUCT_IMAGE_SIZES.recommendation,
 )
 
 check(
   'G: the zoom surface asks for the full viewport — it is the one place that should',
   PRODUCT_IMAGE_SIZES.zoom === '100vw',
+)
+
+/* =================================================================================================
+ * K — The size guide table
+ *
+ * `SizeGuides` stores measurements per ROW, so nothing forces two rows to agree on order or on which
+ * measurements they carry. The dialog promised that cells are found by label; until this sweep the
+ * promise lived in a component and nothing could execute it.
+ * ============================================================================================== */
+
+{
+  const REVERSED = [
+    {
+      size: 'S',
+      measurements: [
+        { label: 'Chest', value: '96' },
+        { label: 'Length', value: '68' },
+      ],
+    },
+    /* The editor typed this row's measurements the other way round. */
+    {
+      size: 'M',
+      measurements: [
+        { label: 'Length', value: '70' },
+        { label: 'Chest', value: '101' },
+      ],
+    },
+    /* And this one is missing a measurement entirely. */
+    { size: 'L', measurements: [{ label: 'Chest', value: '106' }] },
+    /* A row with no size cannot be labelled, so it is not a row. */
+    { size: '  ', measurements: [{ label: 'Chest', value: '999' }] },
+  ]
+
+  const table = sizeGuideTable(REVERSED)
+
+  check(
+    'K: the header comes from the first row',
+    table.columns.join(',') === 'Chest,Length',
+    table.columns.join(','),
+  )
+
+  check(
+    'K: a row that lists its measurements in a DIFFERENT order still lands in the right columns',
+    table.rows.find((row) => row.size === 'M')?.cells.join(',') === '101,70',
+    table.rows.find((row) => row.size === 'M')?.cells.join(','),
+  )
+
+  check(
+    'K: …which is the failure a positional read would make silently',
+    table.rows.find((row) => row.size === 'M')?.cells[0] !== '70',
+  )
+
+  check(
+    'K: a missing measurement leaves an EMPTY cell rather than shifting the row left',
+    JSON.stringify(table.rows.find((row) => row.size === 'L')?.cells) === '["106",null]',
+    JSON.stringify(table.rows.find((row) => row.size === 'L')?.cells),
+  )
+
+  check(
+    'K: a row with no size is dropped — it would render numbers belonging to nothing',
+    table.rows.length === 3,
+    String(table.rows.length),
+  )
+
+  check(
+    'K: every row has exactly one cell per column, so no row can be ragged',
+    table.rows.every((row) => row.cells.length === table.columns.length),
+  )
+
+  check(
+    'K: duplicate labels collapse — two columns with the same heading is not a table',
+    sizeGuideTable([
+      {
+        size: 'S',
+        measurements: [
+          { label: 'Chest', value: '96' },
+          { label: 'Chest', value: '97' },
+        ],
+      },
+    ]).columns.length === 1,
+  )
+
+  check(
+    'K: a guide with no rows produces no columns rather than throwing',
+    sizeGuideTable([]).columns.length === 0 && sizeGuideTable([]).rows.length === 0,
+  )
+
+  check(
+    'K: every row key is unique, even when two rows share a size',
+    new Set(sizeGuideTable([{ size: 'M' }, { size: 'M' }]).rows.map((row) => row.key)).size === 2,
+  )
+}
+
+/* =================================================================================================
+ * J — Colour order
+ *
+ * `ProductVariants.ts` has no colour sort field, so the row's order is decided here. It must not
+ * depend on which sizes a colour comes in, and it must not depend on the order the rows arrive in —
+ * `selectedColor` falls back to the first colour with stock, so an unstable row would change the
+ * default colourway of the page between requests.
+ * ============================================================================================== */
+
+{
+  /* Zinc is made only in XL; Amber in XS. A sizeSortOrder-led read would put Amber first. */
+  const uneven = [
+    variant({ color: 'Zinc', size: 'XL', sizeSortOrder: 50 }),
+    variant({ color: 'Amber', size: 'XS', sizeSortOrder: 10 }),
+  ]
+
+  check(
+    'J: colour order does not depend on which sizes a colour comes in',
+    matrix(uneven)
+      .colors.map((entry) => entry.value)
+      .join(',') === 'Amber,Zinc',
+    matrix(uneven)
+      .colors.map((entry) => entry.value)
+      .join(','),
+  )
+
+  const forwards = [
+    variant({ color: 'Bone', size: 'M', sizeSortOrder: 30 }),
+    variant({ color: 'Ash', size: 'M', sizeSortOrder: 30 }),
+    variant({ color: 'Clay', size: 'M', sizeSortOrder: 30 }),
+  ]
+
+  const backwards = [...forwards].reverse()
+
+  check(
+    'J: …nor on the order the rows arrive in — a tie the query does not break',
+    matrix(forwards)
+      .colors.map((entry) => entry.value)
+      .join(',') ===
+      matrix(backwards)
+        .colors.map((entry) => entry.value)
+        .join(','),
+    `${matrix(forwards).colors.map((e) => e.value)} vs ${matrix(backwards).colors.map((e) => e.value)}`,
+  )
+
+  check(
+    'J: the order is alphabetical, which is the only order the schema can justify',
+    matrix(backwards)
+      .colors.map((entry) => entry.value)
+      .join(',') === 'Ash,Bone,Clay',
+  )
+
+  check(
+    'J: and the default colour is therefore stable across reads',
+    matrix(forwards).selectedColor === matrix(backwards).selectedColor,
+    `${matrix(forwards).selectedColor} / ${matrix(backwards).selectedColor}`,
+  )
+}
+
+check(
+  'J: sizes are still the merchandiser’s order, NOT alphabetical',
+  matrix([
+    variant({ color: 'Bone', size: 'XS', sizeSortOrder: 10 }),
+    variant({ color: 'Bone', size: 'L', sizeSortOrder: 40 }),
+    variant({ color: 'Bone', size: 'M', sizeSortOrder: 30 }),
+  ])
+    .sizes.map((entry) => entry.value)
+    .join(',') === 'XS,M,L',
 )
 
 /* =================================================================================================

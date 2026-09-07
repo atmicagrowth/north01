@@ -1,3 +1,5 @@
+import { THREE_UP_IN_CONTAINER, TWO_UP_IN_CONTAINER } from '@/lib/media/grid'
+
 /**
  * **Every `sizes` string the homepage uses, in one place.**
  *
@@ -42,9 +44,10 @@ export const HOME_IMAGE_SIZES = {
   /** A figure given the whole viewport. */
   figureFullBleed: '100vw',
   /** A figure inside the page gutters. */
-  figureContained: '(min-width: 1440px) 1312px, (min-width: 1024px) 92vw, 100vw',
+  figureContained: '(min-width: 1440px) 1312px, (min-width: 500px) 92vw, calc(100vw - 2.5rem)',
   /** The 7-of-12 media pane in an asymmetric split — 7/12 of the container, capped at 1440px. */
-  splitFeature: '(min-width: 1440px) 765px, (min-width: 1024px) 53vw, 100vw',
+  splitFeature:
+    '(min-width: 1440px) 765px, (min-width: 1024px) 53vw, (min-width: 500px) 92vw, calc(100vw - 2.5rem)',
   /**
    * The full contained width — the same as a contained figure, because that is what it is.
    *
@@ -53,20 +56,33 @@ export const HOME_IMAGE_SIZES = {
    * a 28% shortfall, upscaled, on the one image whose detail the customer is asked to point at.
    * A `sizes` string is a promise about layout, and it is only worth what a measurement says.
    */
-  shopTheLook: '(min-width: 1440px) 1312px, (min-width: 1024px) 92vw, 100vw',
-  /** Four across on desktop, three on tablet, two on a phone. */
-  categoryTile:
-    '(min-width: 1440px) 328px, (min-width: 1024px) 23vw, (min-width: 640px) 31vw, 48vw',
+  shopTheLook: '(min-width: 1440px) 1312px, (min-width: 500px) 92vw, calc(100vw - 2.5rem)',
+  /**
+   * Four across on desktop, three on tablet, two on a phone.
+   *
+   * Every tier was re-measured in Phase 13's second sweep and every tier was over-claiming: the tile
+   * is 301px at 1440 rather than 328, 20.1vw at 1024 rather than 23, 28.1vw at 640 rather than 31,
+   * and 40vw at 320 rather than 48 — **+20% at the narrowest width**. The four-up grid uses `gap-l`
+   * (40px) and the three-up `gap-x-m` (24px), which is the arithmetic the round `vw` figures had
+   * quietly dropped.
+   */
+  categoryTile: `(min-width: 1440px) 301px, (min-width: 1024px) calc(23vw - 30px), (min-width: 640px) ${THREE_UP_IN_CONTAINER}, ${TWO_UP_IN_CONTAINER}`,
   /**
    * Two across below `lg`, four at `lg`. **No three-column tier** — `product-rail.tsx` is
    * `grid-cols-2 lg:grid-cols-4`, unlike the category and social grids, and this string claimed a
    * `sm` tier the component does not have. A `sizes` string is a promise about layout, and it was
    * describing a different component's grid.
    */
-  productTileGrid: '(min-width: 1440px) 328px, (min-width: 1024px) 23vw, 48vw',
+  productTileGrid: `(min-width: 1440px) 301px, (min-width: 1024px) calc(23vw - 30px), ${TWO_UP_IN_CONTAINER}`,
   /** A horizontal rail runs full-bleed, so its tiles really are a fraction of the viewport. */
   productTileRail: '(min-width: 1024px) 22vw, (min-width: 640px) 40vw, 72vw',
-  socialTile: '(min-width: 1440px) 328px, (min-width: 1024px) 23vw, 48vw',
+  /**
+   * The community grid, which is `grid-cols-2 lg:grid-cols-4` like the product rail's grid and so
+   * takes the same tiers. **Corrected by analogy rather than by measurement** — the block is omitted
+   * from a seeded homepage when the media library is empty, which it is, so there was nothing on the
+   * page to measure. Recorded as such rather than presented as measured.
+   */
+  socialTile: `(min-width: 1440px) 301px, (min-width: 1024px) calc(23vw - 30px), ${TWO_UP_IN_CONTAINER}`,
 } as const
 
 export type HomeImageSurface = keyof typeof HOME_IMAGE_SIZES

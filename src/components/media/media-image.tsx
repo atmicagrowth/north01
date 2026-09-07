@@ -172,11 +172,34 @@ function toAsset(record: Media): CloudinaryAsset | null {
  * guide §11 asks for restraint over decoration. It is `aria-hidden` because a missing image is not
  * information — the surrounding content already says what the thing is, and announcing "no image"
  * would be noise in a listing of forty.
+ *
+ * ### `data-sizes` is the only thing here that is not for the customer
+ *
+ * A `sizes` string is a promise about how wide the element will be, and the only way to know whether
+ * it is true is to compare it with the box the element is actually laid out in. When the media
+ * library has records that comparison is free — the `<img>` carries its own `sizes`. When the library
+ * is empty, as it is on a fresh database, every image on the site is one of these placeholders and
+ * there is nothing to measure.
+ *
+ * So the placeholder carries the string too. Phase 13's second sweep used it to resolve all seven of
+ * the project's `sizes` strings the way a browser resolves them and check each against its rendered
+ * width at ten viewports — which found four tiers over-claiming by up to 20% and one under-claiming
+ * by 22%. One attribute on an `aria-hidden` box is a small price for a rule that is otherwise only
+ * checkable by hand, and it disappears the moment a real image exists.
  */
-function Placeholder({ className, style }: { className?: string; style?: CSSProperties }) {
+function Placeholder({
+  className,
+  sizes,
+  style,
+}: {
+  className?: string
+  sizes?: string
+  style?: CSSProperties
+}) {
   return (
     <div
       aria-hidden
+      data-sizes={sizes}
       data-slot="media-placeholder"
       className={cn('w-full bg-surface ring-1 ring-inset ring-border', className)}
       style={style}
@@ -268,7 +291,7 @@ export function MediaImage({
 
   // State 1 — there is no asset at all. The state the entire seeded catalogue is in today.
   if (!record) {
-    return <Placeholder className={cn(frameClass, className)} style={frame} />
+    return <Placeholder className={cn(frameClass, className)} sizes={sizes} style={frame} />
   }
 
   const cloudName = publicEnv.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
@@ -288,7 +311,7 @@ export function MediaImage({
    */
   if (!cloudName || !asset) {
     if (!record.url) {
-      return <Placeholder className={cn(frameClass, className)} style={frame} />
+      return <Placeholder className={cn(frameClass, className)} sizes={sizes} style={frame} />
     }
 
     /*

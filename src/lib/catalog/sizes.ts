@@ -1,3 +1,5 @@
+import { TWO_UP_IN_CONTAINER } from '@/lib/media/grid'
+
 /**
  * **Every `sizes` string the catalogue uses, in one place.**
  *
@@ -37,14 +39,29 @@ export const CATALOG_IMAGE_SIZES = {
   /**
    * A product card in the shop grid — two across on a phone, three beside the filter rail at `lg`,
    * four at `xl`.
+   *
+   * Every tier below 1440 was re-derived from measurement in Phase 13's second sweep. The two above
+   * `lg` sit beside the filter rail, so they are the container **minus a fixed 353px of sidebar and
+   * gaps** rather than a clean fraction of it — `17vw` and `21vw` were the fraction, and each
+   * over-claimed by 5–6%. The bottom tier read `44vw`, which is what a two-up grid measures at about
+   * 700px and not what it measures at 320, where it is 40vw.
+   *
+   * | Viewport | Columns | Measured | Declared now |
+   * |---|---|---|---|
+   * | 1920 | 4 | 240 | 244px |
+   * | 1440 | 4 | 243 | 244px |
+   * | 1280 | 4 | 206 | `23vw - 88px` = 206 |
+   * | 1100 | 3 | 228 | `30.667vw - 109px` = 228 |
+   * | 1024 | 3 | 205 | 205 |
+   * | 640 | 2 | 282 | `46vw - 12px` = 282 |
+   * | 320 | 2 | 128 | `50vw - 32px` = 128 |
    */
-  productCardGrid:
-    '(min-width: 1440px) 244px, (min-width: 1280px) 17vw, (min-width: 1024px) 21vw, 44vw',
+  productCardGrid: `(min-width: 1440px) 244px, (min-width: 1280px) calc(23vw - 88px), (min-width: 1024px) calc(30.667vw - 109px), ${TWO_UP_IN_CONTAINER}`,
   /**
    * The category header image on `/shop/<category>`: full container width, no sidebar beside it.
    * Identical to the homepage's contained figure, because that is what it is.
    */
-  categoryHeader: '(min-width: 1440px) 1312px, (min-width: 1024px) 92vw, 100vw',
+  categoryHeader: '(min-width: 1440px) 1312px, (min-width: 500px) 92vw, calc(100vw - 2.5rem)',
   /**
    * The thumbnail on a search-suggestion row. A fixed 56px box at every width.
    *

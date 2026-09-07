@@ -199,7 +199,22 @@ export function buildVariantMatrix(
 ): VariantMatrix {
   const offered = variants.filter(isOffered)
 
-  /* Colour order follows first appearance, which is the merchandiser's `sizeSortOrder`-sorted read. */
+  /*
+   * **Colour order is alphabetical, and that is a decision rather than a default.**
+   *
+   * `ProductVariants.ts` gives sizes a `sizeSortOrder` and gives colours nothing, so there is no
+   * merchandiser's colour order to follow. Taking first appearance from a `sizeSortOrder`-sorted
+   * read — which is what this did until Phase 13's second sweep — makes a colour's position in the
+   * swatch row depend on **which sizes it happens to come in**: a colour made only in XL sorts after
+   * one made in XS, for a reason no customer can see. Worse, two colours sharing the smallest size
+   * are a tie the query does not break, so the row's order was whatever Postgres returned.
+   *
+   * That order is not cosmetic. `selectedColor` falls back to the first colour with stock, so an
+   * unstable row means the **default colourway of the page** can change between requests.
+   *
+   * Alphabetical is stable, explicable to an editor, and independent of stock. A real merchandised
+   * order needs a field on the collection, which is recorded as owed rather than faked here.
+   */
   const colors: ColorOption[] = []
   const sizeRanks = new Map<string, number>()
 
@@ -215,6 +230,8 @@ export function buildVariantMatrix(
     const existing = sizeRanks.get(size)
     sizeRanks.set(size, existing === undefined ? rank : Math.min(existing, rank))
   }
+
+  colors.sort((a, b) => a.value.localeCompare(b.value))
 
   const byCombination = new Map<string, SelectableVariant>()
   const key = (color: string, size: string) => `${color} ${size}`

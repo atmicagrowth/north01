@@ -4602,6 +4602,11 @@ an empty cell instead of shifting everything left. Verified at 1440×900 and 390
   "be the first to review" state with it.
 - **A multi-frame gallery pass against real assets** — thumbnails, swipe between frames, zoom of a
   frame other than the first. Blocked on the media library having anything in it (§1.18.6).
+- **A merchandised colour order** — `ProductVariants.ts` has a `sizeSortOrder` and no colour
+  equivalent, so the swatch row is alphabetical. That is stable and explicable; it is not a
+  merchandiser's choice. Needs a field on the collection.
+- **A captions field on `Media`** — a product video carrying speech cannot be captioned today, which
+  is a WCAG 1.2.2 failure waiting for the first video to be uploaded.
 - **SEO metadata and product structured data** — Phase 24. `seoField()` is already on the collection.
 - **`generateStaticParams`** — a Phase 30 question, and not obviously right for a page that reads live
   stock.
@@ -4688,6 +4693,118 @@ one; Radix adds it when the panel exists, and the probe read a collapsed trigger
 instrumentation emitting a negative timestamp; zero console errors in four scenarios in development
 and none in production. Both are recorded because a sweep that only lists confirmed defects hides how
 often the instrument is the thing that is broken.
+
+#### Sweep 2 — checking the docblocks against the running application
+
+Five findings. Four of them are a sentence in a comment that was not true of the code beneath it,
+which is the same category §1.17.10 named after Phase 12 and the reason this sweep exists.
+
+**1. The swatch row's order depended on which sizes each colour came in.** `variants.ts` said
+*"colour order follows first appearance, which is the merchandiser's `sizeSortOrder`-sorted read"* —
+and `ProductVariants.ts` has **no colour order field**, so there was no merchandiser's order to
+follow. What the code actually did was take first appearance from a read sorted by size, which means
+a colour made only in XL sorts behind one made in XS, for a reason no customer can see.
+
+Worse, the read was `sort: ['sizeSortOrder', 'size']`, and two colours in the same size are a tie that
+query does not break. The order was whatever Postgres returned — stable in practice today, and stable
+only until an UPDATE moves a tuple or the planner picks a parallel scan.
+
+That is not cosmetic, because `selectedColor` falls back to *the first colour with stock*: an unstable
+row means **the default colourway of the product page can change between requests**. Fixed in two
+places — the read is now totally ordered (`sizeSortOrder, size, color, id`) and the swatch row is
+sorted alphabetically, which is the only order the schema can justify and is independent of stock. A
+real merchandised order needs a field on the collection and is recorded as owed.
+
+**2. `PRODUCT_IMAGE_SIZES.recommendation` existed from the first commit of the phase and nothing
+imported it.** The row is built from `ProductCard`, which hard-coded the shop grid's string — a
+narrower card that sits beside a filter rail. Measured, it promised the browser **244px for a card
+laid out at 313px**: a 22% *under*-claim, the direction that costs picture quality rather than bytes,
+because the browser fetches a rendition too small and the card is upscaled. `ProductCard` now takes
+`sizes` as a prop, defaulted to the shop grid.
+
+A constant that is never imported is not a decision. It is a comment that type-checks — and the
+harness's *"every product sizes string is present and non-empty"* passed on it happily.
+
+**3. Then the same measurement was pointed at every other `sizes` string, and four more were wrong.**
+
+The instrument is worth more than the findings: it resolves a `sizes` string the way a browser does —
+walking the media conditions with `matchMedia`, converting the winning value to pixels with a probe
+element — and compares the answer to the box the element is actually laid out in, on six pages at ten
+viewport widths. `MediaImage`'s placeholder carries `data-sizes` so this stays measurable while the
+media library is empty, which it is.
+
+| String | Was | Measured | Worst error |
+|---|---|---|---|
+| product gallery, bottom tier | `100vw` | 92vw, then `100vw - 2.5rem` | **+14% at 320** |
+| product gallery, fixed tier | `742px` | 756px at 1440 | −2% |
+| shop card, bottom tier | `44vw` | `46vw - 12px` / `50vw - 32px` | +10% at 320 |
+| shop card, 3- and 4-up tiers | `21vw`, `17vw` | container **minus 353px** of rail and gaps | +6% |
+| category / product / social tiles | `328px`, `23vw`, `31vw`, `48vw` | 301px, `23vw - 30px`, … | **+20% at 320** |
+
+Every one of them is the same mistake in the same place: **the last tier, the one with no media
+condition attached to it.** `sizes` is read left to right and the final entry is the fallback, so it
+is the tier nobody re-derives — and for anything inside `PageContainer` it is the tier where the
+container's `clamp(1.25rem, 4vw, 4rem)` padding stops being proportional and becomes a subtraction. A
+single `vw` figure can only be right in one of that clamp's three regimes.
+
+Phase 10's audit corrected two of these strings and wrote *"a `vw` unit measures the viewport; every
+one of these elements lives inside a container"* — and the bottom tiers still said `100vw`. Knowing
+the rule is not the same as having applied it everywhere.
+
+After: **seven distinct strings, none off by more than 2%**, at every page and width measured. The
+shared container arithmetic now lives once, in `lib/media/grid.ts`, instead of being rounded to a
+plausible `vw` three times. Each of the three harnesses gained the rule the finding generalises to:
+*a string may end in a bare `100vw` only if that surface really is the viewport* — three surfaces on
+the homepage qualify, one on the product page, none in the catalogue.
+
+**4. The size guide's central promise lived where nothing could execute it.** The dialog's docblock
+said *"the cells are looked up by label rather than by position, so a row that lists its measurements
+in a different order still lands in the right columns"* — a real risk, because `SizeGuides` stores
+measurements per row and nothing makes two rows agree on order. The rule was correct. It was also
+inside a component, which is the one place this project's rules are not allowed to live.
+
+Moved to `lib/product/size-guide.ts` and given **nine regressions**, including the case the sentence
+describes: a row whose measurements are entered Length-then-Chest still renders 101 under Chest. A
+positional read would print one row's lengths under another row's chests — numbers that look right
+and are wrong, on the page a customer uses to decide what fits.
+
+**5. `pagination: false` does not make `limit` decorative.** `readVariants` passes both, and the
+comment treated 500 as a headroom figure. Measured: a `pagination: false` read with `limit: 2` returns
+**two rows**. So it is a real cap on the one control whose entire job is to be exhaustive — the exact
+failure the explicit read exists to avoid, reintroduced by the guard against it. 500 is far beyond any
+real garment, so it should never bind; it now logs if it ever does, because *should never* and
+*cannot* are different words and only one of them is checkable.
+
+#### Claims that held
+
+Worth recording, because a sweep that lists only failures makes the codebase look worse than it is:
+the nuqs adapter really is scoped — the homepage ships none of it; Shipping & Returns really is one
+policy from `site-settings`, byte-identical across three products; the gallery really is one list laid
+out two ways, a snap scroller at 390px and a vertical stack at 1440; a product in no category really
+does fall back to the curated catalogue and exclude itself, verified against a real uncategorised
+document; and the price range really is scoped to the selected colour.
+
+#### What the two sweeps say about the gates
+
+Nine findings across the two, and the pattern is sharper than Phase 12's:
+
+1. **Three of them were only visible in a production build.** The history-entry defect does not
+   reproduce under `next dev` at any click speed a person can achieve.
+2. **Three were a sentence that was true of an earlier version of the code, or of no version.** The
+   merchandiser's colour order never existed; the caption track never loaded; the `sizes` tiers were
+   derived once and then re-rounded.
+3. **Two were rules living in components**, where this project's own architecture says rules may not
+   live — and both were invisible for exactly that reason.
+4. **Two of my own probes were wrong before the code was**, and both invented a defect rather than
+   hiding one. A probe that asserts the old behaviour will call the fix a regression.
+
+The most useful artefact is not a fix but an instrument: resolving every `sizes` string the way a
+browser resolves it and comparing it to the rendered box turns a class of defect that three phases
+had each corrected by hand into one a machine can find in ninety seconds.
+
+`verify:product` is **80 checks**, up from 49 at the phase commit. Full sweep after both:
+**719 checks across five harnesses**, 119 browser checks, 0 axe violations across 14 surfaces, and
+every `sizes` string within 2% of the box it describes.
 
 # 2. Deviations
 
@@ -6091,4 +6208,5 @@ rather than never meeting it.
 
 | Phase 13 — product detail page | 2026-09-07 | Notes **§1.18**: the `/product/<slug>` route every phase since 9 recorded as owed, and one 404 for all four absences — `publishedProductWhere` is the single definition of *listable*, so a product that cannot be listed cannot be reached by URL (verified: published 1, draft 0, scheduled 0). §13.1c lives in a pure module and the plan's own Black/M–Cream/M example is a named check; colour falls back and size deliberately does not. Variants are read explicitly rather than through the Payload `join`, whose fixed page size would have shipped a size row silently missing its last size. **A pre-commit read found three `role="radiogroup"`s with roving `tabIndex` and no arrow-key handler** — the size row, which is unselected on every arrival from the shop, had **zero of five options reachable by keyboard**, invisible to typecheck, lint, the build, 49 harness checks, 25 browser checks and an axe sweep reporting zero violations, because it is a behaviour rather than a property of the DOM. Fixed in `lib/product/roving.ts` with 11 harness and 19 browser regressions. Also recorded: the media library is empty by design, so the multi-frame gallery is owed a pass against real assets. Deviations **DEV-55** (purchase controls deferred — a sentence, not a disabled button) and **DEV-56** (arrows move focus, Space commits, because `shallow: false` makes every selection a navigation). |
 
+| Phase 13 — two post-implementation sweeps | 2026-09-07 | Notes **§1.18.10**. Nine findings. **Sweep 1**, against a production build: `history: 'push'` with `shallow: false` writes a history entry synchronously and renders it later, so a second selection made before the server answers leaves an entry whose content describes a **different URL** — Back showed `?size=XS` over a page with no size selected, from 400 ms between clicks on the product page and 150 ms on `/shop/<category>`. Not a Phase 13 regression; the pattern is Phase 11's. `components/url-state.tsx` now owns the write options both call sites duplicated plus the rule that a write made while a navigation is in flight replaces rather than pushes. Walking the whole history in both directions: product **2/5 → 5/5**, catalogue **8/8**. Also: closing the zoom viewer dropped focus onto `<body>` (WCAG 2.4.3), and the product video shipped an empty `<track kind="captions">` — invalid markup asserting a caption track that does not exist. **Sweep 2**, against the docblocks: the swatch row's order depended on which sizes each colour came in, with a tie the query never broke, so the **default colourway could change between requests** — now alphabetical over a totally ordered read; `PRODUCT_IMAGE_SIZES.recommendation` was **never imported**, so the row used the shop card's string and under-claimed by 22%; pointing the same measurement at every `sizes` string found four more wrong, all in the last tier, by up to **+20% at 320px** — every one now within 2%, with the shared container arithmetic in `lib/media/grid.ts` and a *no bare `100vw` unless it really is the viewport* rule in all three harnesses; the size guide's "cells by label" promise lived in a component where nothing could execute it, now a pure module with nine regressions; and `pagination: false` does **not** make `limit` decorative, so the 500-variant cap was a real silent truncation of the size selector and now logs. `verify:product` 49 → **80**. Full sweep: 719 harness checks, 119 browser checks, 0 axe violations. |
 > **Append this table, and the sections above it, at the end of every phase.**

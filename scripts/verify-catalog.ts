@@ -212,6 +212,15 @@ check(
   CATALOG_IMAGE_SIZES.productCardGrid,
 )
 
+/* Nothing in the catalogue is full-bleed — every image sits inside `PageContainer`. */
+for (const [surface, value] of Object.entries(CATALOG_IMAGE_SIZES)) {
+  check(
+    `A: ${surface} does not fall back to a bare 100vw — it is inside the container`,
+    value.split(',').at(-1)?.trim() !== '100vw',
+    value,
+  )
+}
+
 /* =================================================================================================
  * B — Plan §11.1d's edge cases
  * ============================================================================================== */

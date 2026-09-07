@@ -6,6 +6,7 @@ import { ProductGallery } from '@/components/product/product-gallery'
 import { VariantSelector } from '@/components/product/variant-selector'
 import { Badge } from '@/components/ui/badge'
 import { Link } from '@/components/ui/link'
+import { PRODUCT_IMAGE_SIZES } from '@/lib/product/sizes'
 import { inventoryMessage, priceRangeForColor } from '@/lib/product/variants'
 import type { ProductView } from '@/lib/product/product'
 import type { Media } from '@/payload-types'
@@ -177,7 +178,7 @@ export function ProductPage({ view }: { view: ProductView }) {
             <ul className="grid grid-cols-2 gap-x-m gap-y-l lg:grid-cols-4">
               {recommendations.map((card) => (
                 <li key={card.id}>
-                  <ProductCard card={card} />
+                  <ProductCard card={card} sizes={PRODUCT_IMAGE_SIZES.recommendation} />
                 </li>
               ))}
             </ul>

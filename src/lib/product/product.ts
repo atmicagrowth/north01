@@ -41,7 +41,17 @@ const STOREFRONT_ACCESS = { overrideAccess: false, user: null } as const
 /** Two hops: `gallery[].image` and `variants[].image` are the only relationships the page renders. */
 const PRODUCT_DEPTH = 2
 
-/** Every size of every colour. A selector that is missing a row is worse than no selector. */
+/**
+ * Every size of every colour.
+ *
+ * `pagination: false` does **not** make `limit` decorative — measured, a `pagination: false` read
+ * with `limit: 2` returns two rows. So this is a real cap, on the one control whose entire job is to
+ * be exhaustive, and reaching it would drop sizes from the selector with nothing to show for it.
+ *
+ * 500 is far beyond any real garment — ten colours in ten sizes is a hundred — so the cap should
+ * never bind. `readVariants` logs if it ever does, because "should never" and "cannot" are different
+ * words and only one of them is checkable.
+ */
 const VARIANT_LIMIT = 500
 
 export type ProductView = {
@@ -111,10 +121,24 @@ async function readVariants(payload: Payload, productId: number): Promise<Select
     depth: 1,
     limit: VARIANT_LIMIT,
     pagination: false,
-    sort: ['sizeSortOrder', 'size'],
+    /*
+     * A TOTAL order. `(sizeSortOrder, size)` leaves two colours in the same size tied, and a tie is
+     * whatever the planner returns — stable until a VACUUM, an UPDATE that moves the tuple, or a
+     * parallel scan says otherwise. `id` last makes the read reproducible; see `buildVariantMatrix`
+     * for why the swatch row no longer depends on this order at all.
+     */
+    sort: ['sizeSortOrder', 'size', 'color', 'id'],
     ...STOREFRONT_ACCESS,
     where: { product: { equals: productId } },
   })
+
+  if (docs.length >= VARIANT_LIMIT) {
+    payload.logger.error(
+      { productId, variants: docs.length },
+      `A product reached the ${VARIANT_LIMIT}-variant read cap. The size selector may be missing ` +
+        'rows — raise VARIANT_LIMIT in lib/product/product.ts.',
+    )
+  }
 
   return docs.map((variant) => ({
     active: variant.active,

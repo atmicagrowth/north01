@@ -898,6 +898,24 @@ for (const [surface, value] of Object.entries(HOME_IMAGE_SIZES)) {
 }
 
 /*
+ * Only three homepage surfaces are genuinely the whole viewport. The rest sit inside
+ * `PageContainer`, whose `clamp(1.25rem, 4vw, 4rem)` padding means their last tier is a subtraction
+ * — the tier Phase 13's second sweep found over-claiming by up to 20% at 320px, because a bare
+ * `100vw` fallback has no media condition to make anyone re-check it.
+ */
+const FULL_BLEED_HOME_SURFACES = new Set(['collectionFeature', 'figureFullBleed', 'hero'])
+
+for (const [surface, value] of Object.entries(HOME_IMAGE_SIZES)) {
+  const last = value.split(',').at(-1)?.trim()
+
+  check(
+    `sizes: ${surface} only falls back to a bare 100vw if it really is the viewport`,
+    last !== '100vw' || FULL_BLEED_HOME_SURFACES.has(surface),
+    value,
+  )
+}
+
+/*
  * The Lexical link node stores whatever an editor typed — `LinkFeature()` is registered with no
  * field override — so `Prose` re-validates it at render. The rule is pulled from the real module
  * rather than restated here: a copy would pass while the component shipped the old one, which is
