@@ -119,42 +119,87 @@ export function buildSuggestions({
  * not on the page. A dangling id is silent: the attribute is set, no element matches, and the
  * screen reader announces nothing at all.
  */
-export function suggestionOptions(payload: SuggestionPayload): {
+export type SuggestionOption = {
+  /** The visible heading of the group this option belongs to, and that group's accessible name. */
+  group: string
   href: null | string
   id: string
   kind: 'category' | 'collection' | 'product' | 'term'
   label: string
-}[] {
+  /** Index into `payload.products`, for the rows that carry a thumbnail and a price. */
+  productIndex: null | number
+}
+
+export function suggestionOptions(payload: SuggestionPayload): SuggestionOption[] {
   return [
     ...payload.products.map((product, index) => ({
+      group: 'Products',
       href: product.href,
       id: `search-option-product-${index}`,
       kind: 'product' as const,
       label: product.name,
+      productIndex: index,
     })),
     ...payload.categories.map((entry, index) => ({
+      group: 'Categories',
       href: entry.href,
       id: `search-option-category-${index}`,
       kind: 'category' as const,
       label: entry.label,
+      productIndex: null,
     })),
     ...payload.collections.map((entry, index) => ({
+      group: 'Collections',
       href: entry.href,
       id: `search-option-collection-${index}`,
       kind: 'collection' as const,
       label: entry.label,
+      productIndex: null,
     })),
     ...payload.recent.map((entry, index) => ({
+      group: 'Recent searches',
       href: null,
       id: `search-option-recent-${index}`,
       kind: 'term' as const,
       label: entry,
+      productIndex: null,
     })),
     ...payload.popular.map((entry, index) => ({
+      group: 'Popular searches',
       href: null,
       id: `search-option-popular-${index}`,
       kind: 'term' as const,
       label: entry,
+      productIndex: null,
     })),
   ]
+}
+
+/**
+ * The options grouped for rendering, in the order they appear.
+ *
+ * Derived from `suggestionOptions` rather than assembled separately, because the two had drifted:
+ * recent and popular searches were in the keyboard list and rendered as `<button>` instead of
+ * `role="option"`, so `aria-activedescendant` pointed at ids that were not in the document and axe
+ * reported `aria-required-children` and `aria-required-parent` as critical failures.
+ *
+ * One derivation means the ARIA tree, the arrow-key order and the visible grouping are the same
+ * thing rather than three descriptions of one intention.
+ */
+export function suggestionGroups(
+  options: SuggestionOption[],
+): { label: string; options: SuggestionOption[] }[] {
+  const groups: { label: string; options: SuggestionOption[] }[] = []
+
+  for (const option of options) {
+    const existing = groups.find((group) => group.label === option.group)
+
+    if (existing) {
+      existing.options.push(option)
+    } else {
+      groups.push({ label: option.group, options: [option] })
+    }
+  }
+
+  return groups
 }

@@ -6,7 +6,6 @@ import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore }
 
 import { MediaImage } from '@/components/media/media-image'
 import { useShellOverlay } from '@/components/shell/overlay-context'
-import { Link } from '@/components/ui/link'
 import { cn } from '@/lib/cn'
 import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import {
@@ -20,7 +19,7 @@ import {
   readRecentSearches,
   shouldReplaceHistory,
 } from '@/lib/catalog/search'
-import { suggestionOptions, type SuggestionPayload } from '@/lib/catalog/suggest'
+import { suggestionGroups, suggestionOptions, type SuggestionPayload } from '@/lib/catalog/suggest'
 
 /**
  * **Plan §12.1c's panel.** The seven sections, inside the dialog Phase 9 already built.
@@ -38,8 +37,13 @@ import { suggestionOptions, type SuggestionPayload } from '@/lib/catalog/suggest
  *
  * ARIA 1.2's combobox pattern, inside Radix's dialog: `role="combobox"` on the input,
  * `aria-expanded`, `aria-controls`, `aria-autocomplete="list"` and `aria-activedescendant` pointing
- * at the active option's id. One `role="listbox"` containing `role="group"` sections, so arrow keys
- * walk a single list across three visual groups.
+ * at the active option's id. One `role="listbox"` containing `role="group"` sections, each holding
+ * `role="option"` elements **directly** — no `<ul>`/`<li>` between them, because their implicit
+ * list roles break the ownership ARIA requires and axe reports it as critical.
+ *
+ * Every group, every option and the arrow-key order come from ONE derivation (`suggestionOptions`
+ * then `suggestionGroups`), so the ARIA tree and the keyboard model cannot describe different
+ * things — which they did until the browser pass caught it.
  *
  * **DOM focus never leaves the input.** Moving it into the list would fight Radix's `FocusScope`,
  * and it is not what the pattern asks for: the active option is communicated by
@@ -186,14 +190,24 @@ export function SearchPanel() {
    * **No synchronous `setState` here.** The only write happens inside `.then`, after a real
    * response — everything the old version reset up-front is derived below instead.
    */
-  useEffect(() => {
-    if (searchable === null) {
-      return
-    }
+  /*
+   * The key is the term, or the EMPTY STRING when there is nothing searchable yet.
+   *
+   * That empty-string fetch is not a nicety — it is what makes §12.1c's *popular searches* section
+   * exist at all. An earlier version returned early when there was no term, so the panel never asked
+   * the server anything until the customer typed two characters, and the idle sections were dead
+   * markup that could never populate. The browser pass caught it; nothing else could have, because
+   * every unit involved was individually correct.
+   *
+   * The empty request is cheap by construction: the handler makes no Algolia call below the floor,
+   * and both loaders behind it are cached.
+   */
+  const fetchKey = searchable ?? ''
 
-    if (memo.current.has(searchable)) {
-      const cached = memo.current.get(searchable) as SuggestionPayload
-      const timer = setTimeout(() => setFetched({ payload: cached, term: searchable }), 0)
+  useEffect(() => {
+    if (memo.current.has(fetchKey)) {
+      const cached = memo.current.get(fetchKey) as SuggestionPayload
+      const timer = setTimeout(() => setFetched({ payload: cached, term: fetchKey }), 0)
 
       return () => clearTimeout(timer)
     }
@@ -201,48 +215,63 @@ export function SearchPanel() {
     const id = (requestId.current += 1)
     const controller = new AbortController()
 
-    const timer = setTimeout(() => {
-      void fetch(`${SEARCH_PATH}/suggest?q=${encodeURIComponent(searchable)}`, {
-        signal: controller.signal,
-      })
-        .then((response) => (response.ok ? (response.json() as Promise<SuggestionPayload>) : null))
-        .then((next) => {
-          if (id !== requestId.current) {
-            return
-          }
-
-          const payload = next ?? { ...EMPTY_PAYLOAD, state: 'unavailable' as const }
-
-          memo.current.set(searchable, payload)
-          setFetched({ payload, term: searchable })
+    const timer = setTimeout(
+      () => {
+        void fetch(`${SEARCH_PATH}/suggest?q=${encodeURIComponent(fetchKey)}`, {
+          signal: controller.signal,
         })
-        .catch(() => {
-          if (id !== requestId.current) {
-            return
-          }
+          .then((response) =>
+            response.ok ? (response.json() as Promise<SuggestionPayload>) : null,
+          )
+          .then((next) => {
+            if (id !== requestId.current) {
+              return
+            }
 
-          /*
-           * An aborted request is not a failure — it is a customer who kept typing. Only a real
-           * failure reaches here with a current id, and it renders as `unavailable` rather than as
-           * an empty list, so an outage is never mistaken for "nothing matched".
-           */
-          setFetched({
-            payload: { ...EMPTY_PAYLOAD, state: 'unavailable' },
-            term: searchable,
+            const payload = next ?? { ...EMPTY_PAYLOAD, state: 'unavailable' as const }
+
+            memo.current.set(fetchKey, payload)
+            setFetched({ payload, term: fetchKey })
           })
-        })
-    }, SUGGEST_DEBOUNCE_MS)
+          .catch(() => {
+            if (id !== requestId.current) {
+              return
+            }
+
+            /*
+             * An aborted request is not a failure — it is a customer who kept typing. Only a real
+             * failure reaches here with a current id, and it renders as `unavailable` rather than as
+             * an empty list, so an outage is never mistaken for "nothing matched".
+             */
+            setFetched({
+              payload: { ...EMPTY_PAYLOAD, state: 'unavailable' },
+              term: fetchKey,
+            })
+          })
+      },
+      fetchKey === '' ? 0 : SUGGEST_DEBOUNCE_MS,
+    )
 
     return () => {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [searchable])
+    /*
+     * An idle fetch is not debounced — there is nothing to debounce, and waiting 200ms to show the
+     * popular list makes the panel feel slow on the one interaction that has no typing in it.
+     */
+  }, [fetchKey])
 
-  /** Results belong to a term. A payload for a term the customer has moved past is not shown. */
-  const payload =
-    searchable !== null && fetched?.term === searchable ? fetched.payload : EMPTY_PAYLOAD
-  const pending = searchable !== null && fetched?.term !== searchable
+  /**
+   * Results belong to a key, and the key is the term **or the empty string**.
+   *
+   * This read `searchable !== null && ...` until the browser pass caught it: with an empty input
+   * `searchable` is null, so the idle payload was discarded the instant it arrived and §12.1c's
+   * popular-searches section could never render. The fetch was correct and the endpoint was correct;
+   * the one line that consumed them disagreed about what counts as a key.
+   */
+  const payload = fetched?.term === fetchKey ? fetched.payload : EMPTY_PAYLOAD
+  const pending = fetched?.term !== fetchKey
 
   const merged: SuggestionPayload = {
     ...payload,
@@ -330,11 +359,13 @@ export function SearchPanel() {
     submit(term)
   }
 
-  const sections: { items: typeof options; label: string }[] = [
-    { items: options.filter((option) => option.kind === 'product'), label: 'Products' },
-    { items: options.filter((option) => option.kind === 'category'), label: 'Categories' },
-    { items: options.filter((option) => option.kind === 'collection'), label: 'Collections' },
-  ]
+  /*
+   * Groups are DERIVED from the same flat list the arrow keys walk. They used to be rebuilt here by
+   * filtering on `kind`, which silently dropped recent and popular searches from the rendered
+   * listbox while leaving them in the keyboard model — so `aria-activedescendant` pointed at ids
+   * that were not in the document.
+   */
+  const groups = suggestionGroups(options)
 
   const showState =
     merged.state === 'unavailable' || (merged.state === 'empty' && !pending && searchable !== null)
@@ -396,72 +427,78 @@ export function SearchPanel() {
         role="listbox"
         aria-label="Search suggestions"
       >
-        {sections.map((section) =>
-          section.items.length === 0 ? null : (
-            <div key={section.label} role="group" aria-label={section.label}>
-              <p className="mb-s mt-m font-sans text-meta uppercase text-foreground-muted first:mt-0">
-                {section.label}
-              </p>
+        {groups.map((group) => (
+          <div key={group.label} role="group" aria-label={group.label}>
+            {/*
+              Decoration: the group already carries the same words as its accessible name, so
+              announcing the heading again would read every label twice.
+            */}
+            <p
+              aria-hidden="true"
+              className="mb-s mt-m font-sans text-meta uppercase text-foreground-muted first:mt-0"
+            >
+              {group.label}
+            </p>
 
-              <ul className="flex flex-col">
-                {section.items.map((option) => {
-                  const index = options.indexOf(option)
-                  const product =
-                    option.kind === 'product'
-                      ? merged.products[Number(option.id.split('-').at(-1))]
-                      : undefined
+            {group.options.map((option) => {
+              const index = options.indexOf(option)
+              const product =
+                option.productIndex === null ? undefined : merged.products[option.productIndex]
 
-                  return (
-                    <li key={option.id}>
-                      <Link
-                        aria-selected={index === active}
-                        className={cn(
-                          'flex items-center gap-s py-2 text-body-sm',
-                          index === active && 'bg-surface',
-                        )}
-                        href={option.href ?? '#'}
-                        id={option.id}
-                        onClick={(event) => {
-                          event.preventDefault()
+              return (
+                /*
+                 * A `div`, not an `<a>` or a `<button>`.
+                 *
+                 * ARIA requires `role="option"` to be owned directly by its `listbox` or `group`, and
+                 * an interactive element inside an option is not part of the pattern. Wrapping these
+                 * in `<ul>`/`<li>` — which is what the first version did — inserts implicit
+                 * list/listitem roles between the two and breaks that ownership: axe reported
+                 * `aria-required-parent` as a critical failure.
+                 *
+                 * The cost, recorded honestly: a product suggestion cannot be middle-clicked open in
+                 * a new tab. Activation is click and Enter. The results page carries real anchors,
+                 * and the panel is an enhancement over it.
+                 */
+                <div
+                  aria-selected={index === active}
+                  className={cn(
+                    'flex cursor-pointer items-center gap-s py-2 text-body-sm',
+                    index === active && 'bg-surface',
+                  )}
+                  id={option.id}
+                  key={option.id}
+                  onClick={() => {
+                    if (option.href) {
+                      go(option.href)
+                    } else {
+                      submit(option.label)
+                    }
+                  }}
+                  role="option"
+                >
+                  {product ? (
+                    <span className="w-14 shrink-0">
+                      <MediaImage
+                        alt=""
+                        context="thumbnail"
+                        media={product.image}
+                        sizes={CATALOG_IMAGE_SIZES.searchSuggestionThumb}
+                      />
+                    </span>
+                  ) : null}
 
-                          if (option.href) {
-                            go(option.href)
-                          }
-                        }}
-                        role="option"
-                        variant="unstyled"
-                      >
-                        {product ? (
-                          <span className="w-14 shrink-0">
-                            <MediaImage
-                              alt=""
-                              context="thumbnail"
-                              media={product.image}
-                              sizes={CATALOG_IMAGE_SIZES.searchSuggestionThumb}
-                            />
-                          </span>
-                        ) : null}
+                  <span className="min-w-0 flex-1 truncate text-foreground">{option.label}</span>
 
-                        <span className="min-w-0 flex-1 truncate text-foreground">
-                          {option.label}
-                        </span>
-
-                        {product?.priceLabel ? (
-                          <span className="shrink-0 font-sans text-meta text-foreground-muted">
-                            {product.priceLabel}
-                          </span>
-                        ) : null}
-                      </Link>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          ),
-        )}
-
-        <TermSection items={merged.recent} label="Recent searches" onPick={submit} />
-        <TermSection items={merged.popular} label="Popular searches" onPick={submit} />
+                  {product?.priceLabel ? (
+                    <span className="shrink-0 font-sans text-meta text-foreground-muted">
+                      {product.priceLabel}
+                    </span>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        ))}
       </div>
 
       {showState ? (
@@ -484,47 +521,6 @@ export function SearchPanel() {
           View all results
         </button>
       ) : null}
-    </div>
-  )
-}
-
-/**
- * Recent and popular searches.
- *
- * They are **buttons that submit a search**, not links — activating one runs the query rather than
- * navigating to a document, and a `<button>` says that to a screen reader without an `aria-label`
- * explaining it. Absent when empty, never an empty heading.
- */
-function TermSection({
-  items,
-  label,
-  onPick,
-}: {
-  items: string[]
-  label: string
-  onPick: (term: string) => void
-}) {
-  if (items.length === 0) {
-    return null
-  }
-
-  return (
-    <div>
-      <p className="mb-s mt-m font-sans text-meta uppercase text-foreground-muted">{label}</p>
-
-      <ul className="flex flex-col">
-        {items.map((entry) => (
-          <li key={entry}>
-            <button
-              className="w-full py-2 text-left font-sans text-body-sm text-foreground"
-              onClick={() => onPick(entry)}
-              type="button"
-            >
-              {entry}
-            </button>
-          </li>
-        ))}
-      </ul>
     </div>
   )
 }

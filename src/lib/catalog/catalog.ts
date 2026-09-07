@@ -729,12 +729,22 @@ const loadPopularSearches = unstable_cache(
       .filter((term): term is string => typeof term === 'string' && term.trim() !== '')
       .map((term) => term.trim())
 
-    if (terms.length === 0 || integrationStatus('algolia') !== 'configured') {
-      /*
-       * With no index to check against, an unvalidated term could lead to a dead end -- so the
-       * section is withheld entirely rather than shown on trust.
-       */
+    if (terms.length === 0) {
       return []
+    }
+
+    if (integrationStatus('algolia') !== 'configured') {
+      /*
+       * **Unvalidated, but still offered.** §A.5 requires the catalogue to stay navigable when the
+       * search service is not, and during an outage a popular search leads to the *designed*
+       * search-unavailable state rather than to a dead end — so withholding the section would remove
+       * navigation to avoid a page that already explains itself.
+       *
+       * Validation exists for the NORMAL case, where a curated term that has stopped matching would
+       * lead to a real no-results page with no explanation. That is the fake control §0.1.17 forbids;
+       * an honest outage notice is not.
+       */
+      return terms
     }
 
     try {
