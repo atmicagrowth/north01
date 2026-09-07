@@ -14,7 +14,12 @@ import {
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
-import { getCatalog, getCatalogSettings, getCatalogVocabulary } from '@/lib/catalog/catalog'
+import {
+  getCatalog,
+  getCatalogSettings,
+  getCatalogVocabulary,
+  getCuratedProducts,
+} from '@/lib/catalog/catalog'
 import {
   canonicaliseParams,
   catalogHref,
@@ -22,6 +27,7 @@ import {
   outOfRangePage,
   type CatalogParams,
 } from '@/lib/catalog/query'
+import { SEARCH_PATH } from '@/lib/catalog/search'
 import { formatMinorUnits } from '@/lib/money'
 
 /**
@@ -65,6 +71,8 @@ export async function CatalogPage({
   lede,
   params,
   routeCategory = null,
+  routeQuery = null,
+  scope = 'filters',
   title,
 }: {
   basePath: string
@@ -72,6 +80,10 @@ export async function CatalogPage({
   lede?: null | string
   params: CatalogParams
   routeCategory?: null | string
+  /** The term that IS this route, on `/search`. Standing in a search is not filtering by one. */
+  routeQuery?: null | string
+  /** Which failure sentence an outage should use — see `unavailableCopy`. */
+  scope?: 'filters' | 'search'
   title: string
 }) {
   const vocabulary = await getCatalogVocabulary()
@@ -85,8 +97,29 @@ export async function CatalogPage({
    * `CatalogResults` deliberately: redirecting from inside the suspense boundary would paint a shell
    * and a grid of skeletons first, then throw them away.
    */
+  /*
+   * **One redirect, not two.** The canonical form and the destination path are decided together and
+   * emitted once.
+   *
+   * Layering a `/shop?q=` -> `/search?q=` redirect on top of the existing canonical redirect would
+   * make `/shop?q=%20hoodie%20` redirect twice — and `verify-catalog`'s check B2 is literally named
+   * "canonicalisation is a FIXED POINT: no URL can redirect twice", recorded in the notes as the fix
+   * for Phase 11's highest-severity defect. Composing them keeps that property true.
+   *
+   * On `/shop/<category>?q=`, the route's category is merged into the params before the href is
+   * built. Without that the category lives only in the path, and moving to `/search` would silently
+   * widen the customer's search to the whole catalogue.
+   */
   const canonical = canonicaliseParams(params, vocabulary)
-  const canonicalHref = catalogHref(basePath, canonical)
+  const movesToSearch = canonical.q !== null && basePath !== SEARCH_PATH
+
+  const target = movesToSearch ? SEARCH_PATH : basePath
+  const targetParams =
+    movesToSearch && routeCategory
+      ? { ...canonical, category: [...new Set([routeCategory, ...canonical.category])] }
+      : canonical
+
+  const canonicalHref = catalogHref(target, targetParams)
 
   if (canonicalHref !== catalogHref(basePath, params)) {
     redirect(canonicalHref)
@@ -126,6 +159,8 @@ export async function CatalogPage({
                 basePath={basePath}
                 params={canonical}
                 routeCategory={routeCategory}
+                routeQuery={routeQuery}
+                scope={scope}
               />
             </Suspense>
           </div>
@@ -146,14 +181,24 @@ async function CatalogResults({
   basePath,
   params,
   routeCategory,
+  routeQuery,
+  scope,
 }: {
   basePath: string
   params: CatalogParams
   routeCategory: null | string
+  routeQuery: null | string
+  scope: 'filters' | 'search'
 }) {
-  const [{ ignored, query, result, vocabulary }, settings] = await Promise.all([
+  const [{ ignored, query, result, vocabulary }, settings, curated] = await Promise.all([
     getCatalog(params, routeCategory),
     getCatalogSettings(),
+    /*
+     * Loaded alongside rather than after, and from Postgres only. It renders on the two screens
+     * where the index has just failed, so fetching it from the index would guarantee it is missing
+     * exactly when structure §12 asks for it.
+     */
+    getCuratedProducts(4),
   ])
 
   const formatPrice = (minor: number): null | string =>
@@ -182,12 +227,13 @@ async function CatalogResults({
     redirect(catalogHref(basePath, { ...params, page: lastPage === 1 ? null : lastPage }))
   }
 
-  const isFiltered = isFilteredQuery(query, routeCategory)
+  const isFiltered = isFilteredQuery(query, routeCategory, routeQuery)
 
   return (
     <div className="flex flex-col gap-l">
       <CatalogToolbar
         basePath={basePath}
+        exhaustive={result.exhaustive}
         ignored={ignored}
         params={params}
         routeCategory={routeCategory}
@@ -201,6 +247,7 @@ async function CatalogResults({
         params={params}
         query={query}
         routeCategory={routeCategory}
+        routeQuery={routeQuery}
         vocabulary={vocabulary}
       />
 
@@ -208,21 +255,25 @@ async function CatalogResults({
         <CatalogUnavailable
           basePath={basePath}
           categories={vocabulary.categories.filter((category) => category.parent === null)}
-          sort={params.sort}
+          curated={curated}
+          params={params}
+          scope={scope}
         />
       ) : result.products.length === 0 ? (
         <CatalogEmpty
           basePath={basePath}
           categories={vocabulary.categories.filter((category) => category.parent === null)}
+          curated={curated}
           isFiltered={isFiltered}
-          sort={params.sort}
+          params={params}
+          stale={result.stale}
+          term={routeQuery}
           /*
            * The count, so the copy cannot contradict it. After the redirect above the only way to
            * reach this with a non-zero total is a search index that still holds ids Postgres has
            * stopped returning — plan §12.1d's "deleted product still in index", which deserves its
            * own sentence rather than the flat claim that the shop is empty.
            */
-          total={result.totalProducts}
         />
       ) : (
         <>

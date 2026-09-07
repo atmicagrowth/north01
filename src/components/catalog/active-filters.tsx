@@ -41,6 +41,7 @@ export function ActiveFilters({
   params,
   query,
   routeCategory,
+  routeQuery,
   vocabulary,
 }: {
   basePath: string
@@ -48,9 +49,11 @@ export function ActiveFilters({
   params: CatalogParams
   query: CatalogQuery
   routeCategory?: null | string
+  /** The term that IS the route. It is the page title, so it gets no chip — see below. */
+  routeQuery?: null | string
   vocabulary: CatalogVocabulary
 }) {
-  const chips = activeFilterChips(query, vocabulary, formatPrice, routeCategory)
+  const chips = activeFilterChips(query, vocabulary, formatPrice, routeCategory, routeQuery)
 
   if (chips.length === 0) {
     return null
@@ -102,7 +105,7 @@ export function ActiveFilters({
       </ul>
 
       {chips.length > 1 ? (
-        <Link href={catalogHref(basePath, { sort: params.sort })} variant="meta">
+        <Link href={catalogHref(basePath, { q: params.q, sort: params.sort })} variant="meta">
           Clear all
         </Link>
       ) : null}

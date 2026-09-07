@@ -1,6 +1,7 @@
 import { ProductCard, ProductCardSkeleton } from '@/components/catalog/product-card'
 import { Link } from '@/components/ui/link'
 import { CATALOG_PAGE_SIZE, catalogHref, type CatalogParams } from '@/lib/catalog/query'
+import { SEARCH_COPY, unavailableCopy } from '@/lib/catalog/search'
 import type { CatalogResult, ProductCard as ProductCardModel } from '@/lib/catalog/resolve'
 import type { CategoryOption } from '@/lib/catalog/query'
 import { cn } from '@/lib/cn'
@@ -95,49 +96,63 @@ export function ProductGridSkeleton({ count = CATALOG_PAGE_SIZE }: { count?: num
 export function CatalogEmpty({
   basePath,
   categories,
+  curated = [],
   isFiltered,
-  sort,
-  total = 0,
+  params,
+  stale = false,
+  term = null,
 }: {
   basePath: string
   /** A handful of top-level categories, as the way back into a catalogue that is not empty. */
   categories: CategoryOption[]
+  /** Structure §12: "offer popular/curated products when available". Postgres-backed. */
+  curated?: ProductCardModel[]
   isFiltered: boolean
-  sort: CatalogParams['sort']
+  params: CatalogParams
   /**
-   * What the engine said the result size was.
+   * The engine found hits and Postgres refused them all.
    *
-   * Normally `0`, and the copy assumes so. A **non-zero** total with nothing to render is the one
-   * state where the old copy was actively false: it claimed the shop had no published products
-   * while the toolbar counted them. It survives only as plan §12.1d's *"deleted product still in
-   * index"* — ids the search index still holds that Postgres has stopped returning — so it gets a
-   * sentence that says what actually happened.
+   * A **different sentence** from "nothing matched", because "nothing matched" would be false —
+   * something matched and has just gone. This replaced an inference from a non-zero total, which was
+   * the same guess made less reliably.
    */
-  total?: number
+  stale?: boolean
+  /** The search term, when this is a search rather than a filtered browse. */
+  term?: null | string
 }) {
-  const isStale = total > 0
+  const copy = stale ? SEARCH_COPY.stale : SEARCH_COPY.empty
+
+  const title = stale
+    ? copy.title
+    : term
+      ? `Nothing matched \u201C${term}\u201D.`
+      : isFiltered
+        ? 'Nothing matches those filters.'
+        : 'Nothing here yet.'
+
+  const body = stale
+    ? copy.body
+    : term
+      ? copy.body
+      : isFiltered
+        ? 'Try removing a filter, or start from a category below.'
+        : 'This part of the shop has no published products at the moment.'
 
   return (
     <div className="flex flex-col items-start gap-m py-xl" data-slot="catalog-empty">
-      <p className="font-display text-heading-m text-foreground">
-        {isStale
-          ? 'Those products are no longer available.'
-          : isFiltered
-            ? 'Nothing matches those filters.'
-            : 'Nothing here yet.'}
-      </p>
+      <p className="font-display text-heading-m text-foreground">{title}</p>
 
-      <p className="max-w-measure font-sans text-body text-foreground-muted">
-        {isStale
-          ? 'They were withdrawn moments ago and the search index has not caught up. Try again, or start from a category below.'
-          : isFiltered
-            ? 'Try removing a filter, or start from a category below.'
-            : 'This part of the shop has no published products at the moment.'}
-      </p>
+      <p className="max-w-measure font-sans text-body text-foreground-muted">{body}</p>
 
       <div className="flex flex-wrap items-center gap-m">
-        {isFiltered || isStale ? (
-          <Link href={catalogHref(basePath, { sort })} variant="meta">
+        {isFiltered || stale ? (
+          /*
+           * `q` is preserved. All four "clear" affordances in this phase used to build a fresh
+           * object carrying only `sort`, which on /search silently erased the search itself —
+           * offering a customer who found nothing a link that throws away what they were looking
+           * for.
+           */
+          <Link href={catalogHref(basePath, { q: params.q, sort: params.sort })} variant="meta">
             Clear filters
           </Link>
         ) : null}
@@ -148,6 +163,13 @@ export function CatalogEmpty({
           </Link>
         ))}
       </div>
+
+      {curated.length > 0 ? (
+        <div className="mt-l w-full">
+          <p className="mb-l font-sans text-meta uppercase text-foreground-muted">Worth a look</p>
+          <ProductGrid cards={curated} />
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -168,12 +190,25 @@ export function CatalogEmpty({
 export function CatalogUnavailable({
   basePath,
   categories,
-  sort,
+  curated = [],
+  params,
+  scope = 'filters',
 }: {
   basePath: string
   categories: CategoryOption[]
-  sort: CatalogParams['sort']
+  curated?: ProductCardModel[]
+  params: CatalogParams
+  /**
+   * What the customer was doing when it broke.
+   *
+   * On `/shop` a colour filter failed and only the filter is broken; on `/search` the search itself
+   * is. The shipped copy told everyone to "clear the filters to see everything", which on a search
+   * results page offers to erase the thing they came for.
+   */
+  scope?: 'filters' | 'search'
 }) {
+  const copy = unavailableCopy(scope)
+
   return (
     <div
       className="flex flex-col items-start gap-m py-xl"
@@ -184,18 +219,13 @@ export function CatalogUnavailable({
        */
       role="status"
     >
-      <p className="font-display text-heading-m text-foreground">
-        Filtering is briefly unavailable.
-      </p>
+      <p className="font-display text-heading-m text-foreground">{copy.title}</p>
 
-      <p className="max-w-measure font-sans text-body text-foreground-muted">
-        Colour, size and collection filters run on a search service that is not responding. The shop
-        itself is unaffected — browse by category, or clear the filters to see everything.
-      </p>
+      <p className="max-w-measure font-sans text-body text-foreground-muted">{copy.body}</p>
 
       <div className="flex flex-wrap items-center gap-m">
-        <Link href={catalogHref(basePath, { sort })} variant="meta">
-          Clear filters
+        <Link href={catalogHref(basePath, { q: params.q, sort: params.sort })} variant="meta">
+          {scope === 'search' ? 'Clear filters' : 'Clear filters'}
         </Link>
 
         {categories.slice(0, 6).map((category) => (
@@ -204,6 +234,13 @@ export function CatalogUnavailable({
           </Link>
         ))}
       </div>
+
+      {curated.length > 0 ? (
+        <div className="mt-l w-full">
+          <p className="mb-l font-sans text-meta uppercase text-foreground-muted">Worth a look</p>
+          <ProductGrid cards={curated} />
+        </div>
+      ) : null}
     </div>
   )
 }

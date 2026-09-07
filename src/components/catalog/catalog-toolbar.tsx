@@ -20,6 +20,7 @@ import type { IgnoredFilter } from '@/lib/catalog/query'
  */
 export function CatalogToolbar({
   basePath,
+  exhaustive = true,
   ignored,
   params,
   routeCategory,
@@ -27,6 +28,8 @@ export function CatalogToolbar({
   vocabulary,
 }: {
   basePath: string
+  /** False when the engine stopped counting precisely — the label then says "About …". */
+  exhaustive?: boolean
   ignored: IgnoredFilter[]
   params: CatalogParams
   routeCategory?: null | string
@@ -43,7 +46,7 @@ export function CatalogToolbar({
           newsletter form, which announced nothing on a failed submit.
         */}
         <p aria-live="polite" className="font-sans text-meta uppercase text-foreground-muted">
-          {productCountLabel(total)}
+          {productCountLabel(total, exhaustive)}
         </p>
 
         {/*
@@ -98,6 +101,7 @@ function IgnoredNotice({
 
   const unknown = ignored.filter((entry) => entry.reason === 'unknown')
   const reversed = ignored.filter((entry) => entry.reason === 'reversed')
+  const truncated = ignored.filter((entry) => entry.reason === 'truncated')
 
   return (
     <p
@@ -123,7 +127,16 @@ function IgnoredNotice({
         <>The price range was the wrong way round, so it was swapped. </>
       ) : null}
 
-      <Link href={catalogHref(basePath, { sort: params.sort })} variant="meta">
+      {/*
+        §12.1d's "very long query". A paste of a whole paragraph is clamped to 256 BYTES, and the
+        customer is told the shop used the first part of it — rather than being shown results for a
+        sentence they cannot see in the address bar.
+      */}
+      {truncated.length > 0 ? (
+        <>That search was very long, so only the first part of it was used. </>
+      ) : null}
+
+      <Link href={catalogHref(basePath, { q: params.q, sort: params.sort })} variant="meta">
         Clear filters
       </Link>
     </p>

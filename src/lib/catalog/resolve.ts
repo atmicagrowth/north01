@@ -352,8 +352,20 @@ export function activeFilterChips(
   vocabulary: CatalogVocabulary,
   formatPrice: (minor: number) => null | string,
   routeCategory?: null | string,
+  /**
+   * The term that IS the route.
+   *
+   * On `/search?q=merino` the term is the page title, so a chip for it would be a second copy of the
+   * heading whose only action is to leave the page. On `/shop?q=merino` it IS a filter over a
+   * browse, and gets a removable chip like any other.
+   */
+  routeQuery?: null | string,
 ): { facet: string; label: string; value: string }[] {
   const chips: { facet: string; label: string; value: string }[] = []
+
+  if (query.q !== null && !routeQuery) {
+    chips.push({ facet: 'q', label: `“${query.q}”`, value: query.q })
+  }
 
   const label = (options: FacetOption[], value: string): string =>
     options.find((option) => option.value === value)?.label ?? value
