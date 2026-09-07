@@ -4422,6 +4422,190 @@ violations across 14 surfaces, no index drift, and the degraded pass re-run to c
 is gone and browsing is untouched.
 
 
+## 1.18 Phase 13 — product detail page
+
+Plan §13.1a–§13.1f. The page every link in the storefront has pointed at since Phase 9, and the first
+one where a customer chooses something.
+
+**No dependencies added.** Everything here is Radix, nuqs, `MediaImage` and Payload, all present
+since Phase 8.
+
+### 1.18.1 The route that had 404'd since Phase 9
+
+`documentHref('products', slug)` has returned `/product/<slug>` since Phase 9. The homepage rails, the
+mega menu's featured products, the shop grid, the search suggestions and the search results page all
+resolve their links through it, and until this phase **every one of those links 404'd**. Phases 10, 11
+and 12 each recorded it under *"what is now owed"*. It is closed.
+
+**One 404 for four different absences.** A slug that does not exist, a draft, a drop scheduled for
+next week and a product whose every variant has been withdrawn all return `null` from `getProduct`
+and land on the same page. That is not laziness about error states — `publishedProductWhere` is the
+**single definition of listable**, shared with both catalogue engines and the search indexer, so a
+product that cannot appear in a listing cannot be reached by typing its URL either. There is no back
+door around the rule, and the 404 leaks nothing: an unpublished product and a nonexistent one are
+indistinguishable from outside, which is what stops a URL being a way to enumerate next season's line.
+
+Verified against real documents rather than reasoned about: the harness publishes a product, reads it
+by slug, sets `status: 'draft'` and reads again, then sets `publishedAt` a week out and reads a third
+time. **1, 0, 0.**
+
+### 1.18.2 §13.1c is a rule, so it lives in a module the harness can import
+
+`lib/product/variants.ts` imports nothing from Next and nothing runnable from Payload. It is the same
+split every phase since 9 has kept, and it is what lets `pnpm verify:product` walk plan §13.1c's whole
+combination table without a browser, a request or a database.
+
+**The plan's own example is a named check.** §13.1c states it concretely — *"if Black / M exists but
+Cream / M does not: Black selectable, Cream M disabled, do not permit submission of Cream / M"* — so
+the harness asserts it concretely, in seven checks. A screenshot of a customer who happened to pick a
+combination that works proves nothing about the one that does not.
+
+**Colour falls back; size does not.** This asymmetry is the phase's one real design decision. A stale
+link carrying an unknown colour resolves to the first colour with stock, because a product page with
+no colour selected is a page nobody can buy from. A stale link carrying an unknown **size** resolves
+to *no size* — picking a size on a customer's behalf is how somebody ends up buying the wrong one. A
+colour is a way of looking at the product; a size is a commitment. Both cases set `invalidSelection`,
+and the page says *"That combination is not available — showing what we do have."*
+
+**Three states, not two.** `active: false` is withdrawn and does not appear at all; `inventoryQuantity: 0`
+is sold out and appears, listed, struck through, with *"Sold out in this size"*; a combination that was
+never made is `missing` and reads *"not made in this colour"*. Collapsing any two of those would lose
+the information a shopper most wants — whether the garment is made in their size at all.
+
+### 1.18.3 The join would have shipped a size selector missing its last size
+
+`products.variants` is a Payload `join` field. A join populates at a fixed `defaultLimit` with no
+control over which columns come back, which is fine for a card and wrong for a control whose entire
+job is to be **exhaustive**: a product with more sizes than the join's page would render a size row
+silently missing its last size, and nothing in the page would look broken.
+
+So `readVariants` is one explicit query — `pagination: false`, `limit: 500`, sorted by the
+merchandiser's `sizeSortOrder` — and the question does not arise. This is the same reasoning Phase 11
+applied when it found that a `join` has no column and therefore cannot be *filtered* on; here the
+problem is not the filter but the page size.
+
+### 1.18.4 What is not on this page — DEV-55
+
+Structure §7 puts **Quantity**, **Add to Bag**, **Buy Now**, **Wishlist** and reviews on this page.
+None of them ships, and none of them can: the cart is Phase 14, checkout is Phase 17, the wishlist is
+Phase 20 and reviews are Phase 21. §13.1f is itself explicit that an empty star histogram must not be
+shown, and a catalogue with no reviews is exactly that state.
+
+What ships in their place is **a sentence, not a disabled button**. A greyed-out *Add to Bag* still
+reads as a broken shop rather than an unfinished one, and §0.1.17's rule is about not implying the
+capability at all. The selector already resolves and exposes the exact variant Phase 14 will need, so
+the controls slot in beneath it without the page being rebuilt. Recorded as **DEV-55**.
+
+### 1.18.5 A `role="radiogroup"` is a promise about the keyboard, and three of them were not keeping it
+
+Found in the pre-commit read, on code that had already passed typecheck, lint, the build, 49 harness
+checks, 25 browser checks and an axe sweep reporting **zero** violations.
+
+The colour row, the size row and the gallery thumbnails all rendered `role="radiogroup"` with
+`role="radio"` children and a roving `tabIndex` — and **no arrow-key handler**. Roving `tabIndex` is
+only half of the ARIA 1.2 pattern, and it is the half that takes something away: it leaves the group a
+single tab stop and marks every other option `tabIndex={-1}`. Without the arrow keys that supply the
+other half, those options are not reachable by keyboard **at all**.
+
+On the size row it was worse than that. Before a size is chosen nothing is selected, so *every* option
+carried `tabIndex={-1}` and the entire control was skipped by Tab. That is the state every arrival
+from the shop is in.
+
+| Group | Before | After |
+|---|---|---|
+| Colour | 1 of 2 reachable | 2 of 2 |
+| Size (no selection) | **0 of 5 reachable** | 5 of 5 |
+| Gallery thumbnails | 1 of *n* reachable | *n* of *n* |
+
+**Why every gate missed it.** axe tests the DOM as it stands, and the DOM was correct — one tab stop,
+correct roles, correct `aria-checked`. What was missing was a *behaviour over time*, which is
+§1.17's category 3 almost word for word: *"a browser and a running application are where state over
+time lives."* The harness missed it because there was nothing to import; the arithmetic did not exist
+yet.
+
+**The fix, and the one place it departs from ARIA.** `lib/product/roving.ts` holds the index
+arithmetic — both axes, because `flex-wrap` turns one row of sizes into two on a phone and a customer
+whose row has wrapped reaches for Down before Right; wrapping at the ends, because a radio group is a
+closed set; and `tabbableIndex(-1) === 0`, which is the fix for the unreachable size row stated as a
+function.
+
+ARIA's radio pattern ordinarily **selects on arrow** — focus and selection travel together. This
+selector does not, and the reason is `shallow: false`: every selection is a server round-trip that
+re-resolves the variant, the price and the stock message. Arrowing across six sizes to reach the
+seventh would fire six navigations and leave the customer looking at whichever landed last. So arrows
+move focus and **Space or Enter commits** — the manual-activation variant ARIA describes for controls
+whose selection has a real cost — and `aria-checked` therefore continues to mean *selected* rather than
+*focused*. The gallery thumbnails keep selection-follows-focus, because changing which photograph
+shows is client state and costs nothing.
+
+**Unavailable options are visited, not skipped.** That is the whole point of `aria-disabled` over
+`disabled`: a keyboard user arrives at XS, hears *"XS, sold out in this colour"*, and learns exactly
+what the strike-through tells a sighted customer. Measured across the five sizes of a colour with one
+gap: `false,false,false,false,true` — every option visited, including the one that cannot be bought.
+
+Regressions: **11 harness checks** on the arithmetic and **19 browser checks** on the wiring, including
+that arrowing fires no navigation, that Space on an unavailable size changes nothing, and that Tab
+still leaves the group.
+
+### 1.18.6 The gallery has never rendered a photograph, and that is a data gap rather than a defect
+
+The media library on the development database is **empty — zero documents** — and by design:
+`scripts/seed.ts` creates no assets, because plan §6's brief is content only and Phase 8 built the
+placeholder path precisely so an empty library renders a deliberate neutral box at the right aspect
+ratio. The seed's homepage composition already adapts to this, writing six sections instead of ten.
+
+The consequence for this phase is worth stating plainly rather than leaving to be discovered: with no
+media, every product has one gallery frame and that frame is a placeholder, so **§13.1a's thumbnail
+row, the snap scroller's movement between frames, and zoom of any frame but the first have never
+rendered.** The single-frame path is exercised — the scroller, the zoom dialog and the placeholder all
+behave — and the thumbnails' keyboard arithmetic is covered by the harness, but the multi-frame
+gallery is owed a pass against real assets. Recorded in §1.18.9.
+
+It also means the storefront's photography is uniformly absent, which has been true since Phase 10 and
+is not something this phase changed.
+
+### 1.18.7 Three smaller decisions
+
+**Shipping & Returns comes from `site-settings`, not from the product.** `SiteSettings.ts` says so in
+as many words, and gap **G-08** already records that the dedicated `/help/*` pages must render these
+same fields rather than a second copy. A per-product shipping policy is a promise an editor can make
+in one place and forget in ninety. `CatalogSettings` gained the two fields; the page reads them from
+the same cached settings object every other surface uses.
+
+**An accordion that opens onto a gap is a fake control wearing a chevron.** Every one of §13.1e's five
+panels is conditional on having content, and the rich-text ones go through `hasProse` rather than
+`!== null` — an editor who selects a body and deletes it leaves a Lexical root containing one empty
+paragraph, which is truthy. That is the Phase 10 defect, brought forward as a rule.
+
+**The size guide is a `<table>`, and its cells are found by label.** Measurements are two-dimensional
+data, so real `<th scope>` on both axes. `SizeGuides` stores labels per row rather than once per guide,
+so the header comes from the first row and every cell is then looked up **by label** — a row that lists
+its measurements in a different order still lands in the right columns, and a row missing one renders
+an empty cell instead of shifting everything left. Verified at 1440×900 and 390×844: five rows, columns
+`SIZE / CHEST (CM) / LENGTH (CM)`, no horizontal page overflow, zero axe violations.
+
+### 1.18.8 What was verified, and how
+
+| Surface | Evidence |
+|---|---|
+| §13.1c's combination table | 60 harness checks, including the plan's Black/M–Cream/M example by name |
+| The page in a browser | 25 checks — disabled sets differing by colour, sold-out and low-stock copy, invalid queries, price movement, URL round-trip and Back |
+| Keyboard | 19 checks across the two variant rows |
+| Accessibility | 0 axe violations across 14 surfaces, plus the size-guide dialog at two widths |
+| Draft / scheduled / withdrawn | real documents, created and deleted under the **D-10** guard |
+| The rest of the storefront | `verify:search` 209, `verify:catalog` 144, `verify:shell` 100, `verify:home` 173 |
+
+### 1.18.9 What is now owed
+
+- **Add to Bag, Buy Now and Quantity** — Phase 14 and Phase 17. The variant is already resolved for them.
+- **Wishlist** — Phase 20. **Rating, review count, distribution and entries** — Phase 21, and §13.1f's
+  "be the first to review" state with it.
+- **A multi-frame gallery pass against real assets** — thumbnails, swipe between frames, zoom of a
+  frame other than the first. Blocked on the media library having anything in it (§1.18.6).
+- **SEO metadata and product structured data** — Phase 24. `seoField()` is already on the collection.
+- **`generateStaticParams`** — a Phase 30 question, and not obviously right for a page that reads live
+  stock.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -5736,6 +5920,60 @@ future prop* necessary.
 "Search" heading above a search field is a label repeated twice. Recorded here rather than claimed as
 "DEV-37 honoured to the letter".
 
+---
+
+### DEV-55 — The product page ships without its purchase controls
+
+**Structure §7 and plan §13.1b** put Quantity, Add to Bag, Buy Now, Wishlist and a rating on this page.
+
+**We do:** ship the gallery, the identity, the price, an authoritative variant selector, live stock
+messaging, the size guide, the five detail accordions and recommendations — and, in place of the
+purchase controls, **one sentence**: *"Online ordering opens shortly. Everything here — colours, sizes
+and live stock — is the real catalogue."*
+
+**Why:** phase order, and §0.1.17. The cart is **Phase 14**, checkout is **Phase 17**, the wishlist is
+**Phase 20** and reviews are **Phase 21**; §13.1d's own add-to-cart revalidation rules describe a
+server action that has nothing to write to yet. A button that looks like it adds to a bag and does not
+is exactly what §0.1.17 forbids, and on this page it is a worse lie than a missing button, because the
+customer only discovers it after making a purchase decision.
+
+A **disabled** button would not fix that — a greyed-out *Add to Bag* reads as a broken shop rather than
+an unfinished one, and the rule is about not implying the capability at all. Quantity is omitted for a
+second reason: its only consumer is Add to Bag, so shipping it alone would be a stepper that changes a
+number nothing reads.
+
+§13.1f is the one place the plan agrees in advance: *"do not show an empty star histogram."* A
+catalogue with no reviews is that state, so the rating, the count, the distribution and the entries all
+wait for Phase 21 together.
+
+`buildVariantMatrix` already resolves and exposes the exact variant id, price and stock a cart line
+needs, so Phase 14 adds controls beneath the selector rather than rebuilding the page.
+
+---
+
+### DEV-56 — The variant selector moves focus with the arrows but commits only on Space or Enter
+
+**ARIA 1.2's radio group pattern** selects on arrow: focus and selection travel together, and
+`aria-checked` follows focus.
+
+**We do:** move focus with the arrow keys, Home and End, and commit the selection only on Space or
+Enter. `aria-checked` tracks the **selection**, never the focus. The gallery thumbnails keep
+selection-follows-focus.
+
+**Why:** the selection is a URL parameter written with `shallow: false`, so every commit is a server
+round-trip that re-resolves the variant, the price, the stock message and the disabled set. Arrowing
+across six sizes to reach the seventh would fire six navigations and leave the customer looking at
+whichever one landed last — which is not a slower version of the right behaviour, it is the wrong
+answer on screen. ARIA describes exactly this as the manual-activation variant, for controls whose
+selection has a real cost.
+
+The thumbnails do not need it: changing which photograph is showing is client state and costs nothing,
+so they follow the pattern as written.
+
+Unavailable sizes are **visited** by the arrow keys rather than skipped, which is the point of
+`aria-disabled` over `disabled` — the customer meets XS and hears that it is sold out in this colour
+rather than never meeting it.
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -5767,5 +6005,7 @@ future prop* necessary.
 | Phase 11 — post-implementation audit | 2026-09-02 | Note **§1.16.11**: the committed phase re-read adversarially and every claim reproduced against the running application — **6 defects confirmed** (2 high, 2 medium, 2 low), all fixed. **The headline is a filter a customer could apply and could not remove**: the chip's label came from the *normalised* value while its remove-link filtered the **raw** URL token, so on `/shop?size=m` the href was byte-identical to the page it was on — six products before the click, six after. Closed by **canonicalising the URL** (`?size=m` → `?size=M`, one redirect) rather than by patching the comparison, so every downstream comparison is normalised-against-normalised by construction; unknown values and reversed price ranges are deliberately *not* rewritten, because §11.1d requires the customer be told rather than silently corrected, and `canonicaliseParams` is asserted to be a fixed point so no URL can redirect twice. Second: **the price facet lied about what was applied** — draft state seeded from props and never re-synced, so removing the price chip left `100 / 200` in the inputs and pressing Back left a maximum the customer believed cleared, which a subsequent Apply would silently re-apply. Also: **an out-of-range page was a self-contradicting dead end** ("10 products" above "this part of the shop has no published products", with no pagination to escape by) — now redirects to the last real page; **the filter panel offered sizes of draft products**, verified with a draft-only size that returned zero results, against a docblock claiming the opposite, fixed by extracting `listableVariantWhere` so the vocabulary and the listing share one definition of "listable"; a duplicated `site-settings` read; and one docblock narrower than its code. **The coverage gap mattered more than any single defect**: all ten seeded products were in stock, so three of §11.1b's nine card states had never rendered in a browser — the seed now ships one sold-out and one low-stock product, so `/shop` exercises three availability states in every environment. `verify:catalog` is **144 checks**, up from 122, with a regression for each finding and two rules extracted into the pure module so the harness could hold them; browser pass **36/36** (the old out-of-range assertion encoded the defect and was rewritten); **523 checks** across five harnesses; 0 axe violations across six surfaces. |
 
 | Phase 12 — search / Algolia | 2026-09-07 | Notes **§1.17**: text search over the Phase 11 index. **Three defects in the shipped index were found and fixed before the feature was written**: every sort replica had NO `searchableAttributes` (measured — `black` returned 0 on the primary and 1 on `..._price_asc`, so a text query would have made the sort control silently change the result set); `_highlightResult` returns index text past `attributesToRetrieve`, which would have made D-37's own sentence false in the same commit that enabled search; and `attributesToRetrieve` is **not a security boundary** — measured with the PUBLIC key, a per-request override returned name, slug, price and stock, so D-37 is amended to say it buys staleness, not secrecy, and `unretrievableAttributes` is added as the one real boundary. §12.1a asked for nine searchable fields and four matched nothing (`accessories` 0→2, `essentials` 0→5, `black` 0→1, `Graphite` 0→2, `XL` 0→6, `brushed cashmere` 0→1, `merino hoodie` 0→1); answered by ONE derived `searchTerms` attribute, because Algolia\u2019s Attribute ranking is positional and five entries would impose an arbitrary precedence. **D-38** settles popular searches as editor-curated and index-validated — Algolia Analytics was rejected on measured data quality, not access: its top search was the EMPTY STRING with 18× the next, because every faceted /shop request sent an empty query with `analytics` defaulting on. **D-39** keeps D-37 intact for the typeahead (one `rehydrateProductIds` for grid and panel); **D-40** puts `q` in the one parser map, so `/search` is a third caller of `CatalogPage` and the `/shop?q=` redirect COMPOSES with canonicalisation rather than layering, preserving the fixed-point property. A browser found three panel defects nothing else could: popular searches could never render (twice — the fetch, then the line consuming it); the ARIA tree and the keyboard model described different things, so `aria-activedescendant` pointed at ids not in the document (two critical axe failures); and the panel dropped popular searches during an outage while its docblock said otherwise. **The new harness found a defect it had itself caused**: a cleanup pass had eaten the control characters out of `normaliseSearchTerm`'s regex literal, leaving `/[-----]/` — still compiling, still running, stripping almost nothing, and invisible to typecheck, lint, build and 144 catalogue checks. Both regexes are now built with `new RegExp` from \u escapes. New: `pnpm verify:search` (**200 checks**), `pnpm reindex:check`, `docs/SEARCH.md`. **723 checks across six harnesses**, 19 browser checks, 0 axe violations across 14 surfaces, and a degraded pass proving browsing is untouched without the index. Deviations **DEV-49** through **DEV-54**; **DEV-37 closed**. No dependency added. |
+
+| Phase 13 — product detail page | 2026-09-07 | Notes **§1.18**: the `/product/<slug>` route every phase since 9 recorded as owed, and one 404 for all four absences — `publishedProductWhere` is the single definition of *listable*, so a product that cannot be listed cannot be reached by URL (verified: published 1, draft 0, scheduled 0). §13.1c lives in a pure module and the plan's own Black/M–Cream/M example is a named check; colour falls back and size deliberately does not. Variants are read explicitly rather than through the Payload `join`, whose fixed page size would have shipped a size row silently missing its last size. **A pre-commit read found three `role="radiogroup"`s with roving `tabIndex` and no arrow-key handler** — the size row, which is unselected on every arrival from the shop, had **zero of five options reachable by keyboard**, invisible to typecheck, lint, the build, 49 harness checks, 25 browser checks and an axe sweep reporting zero violations, because it is a behaviour rather than a property of the DOM. Fixed in `lib/product/roving.ts` with 11 harness and 19 browser regressions. Also recorded: the media library is empty by design, so the multi-frame gallery is owed a pass against real assets. Deviations **DEV-55** (purchase controls deferred — a sentence, not a disabled button) and **DEV-56** (arrows move focus, Space commits, because `shallow: false` makes every selection a navigation). |
 
 > **Append this table, and the sections above it, at the end of every phase.**

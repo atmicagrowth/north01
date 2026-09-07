@@ -117,12 +117,24 @@ export type CatalogSettings = {
   currency: CurrencyCode
   locale: string
   lowStockThreshold: number
+  /**
+   * The shipping and returns prose, for Phase 13's *Shipping & Returns* accordion.
+   *
+   * Read here rather than by the product page because `SiteSettings.ts` is explicit that these are
+   * **one policy with one source** — gap **G-08** already records that the dedicated `/help/*` pages
+   * must render these same fields rather than a second copy. A page that fetched them itself would
+   * be the first of those copies.
+   */
+  returnsPolicy: unknown
+  shippingPolicy: unknown
 }
 
 const DEFAULT_SETTINGS: CatalogSettings = {
   currency: DEFAULT_CURRENCY,
   locale: 'en-US',
   lowStockThreshold: 5,
+  returnsPolicy: null,
+  shippingPolicy: null,
 }
 
 /**
@@ -151,6 +163,8 @@ async function readSettings(payload: Payload): Promise<CatalogSettings> {
       typeof settings.lowStockThreshold === 'number' && settings.lowStockThreshold >= 1
         ? settings.lowStockThreshold
         : DEFAULT_SETTINGS.lowStockThreshold,
+    returnsPolicy: settings.returnsPolicy ?? null,
+    shippingPolicy: settings.shippingPolicy ?? null,
   }
 }
 

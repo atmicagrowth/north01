@@ -1,0 +1,197 @@
+import { ProductCard } from '@/components/catalog/product-card'
+import { PageContainer } from '@/components/layout/page-container'
+import { Section, SectionHeading } from '@/components/layout/section'
+import { ProductDetails } from '@/components/product/product-details'
+import { ProductGallery } from '@/components/product/product-gallery'
+import { VariantSelector } from '@/components/product/variant-selector'
+import { Badge } from '@/components/ui/badge'
+import { Link } from '@/components/ui/link'
+import { inventoryMessage, priceRangeForColor } from '@/lib/product/variants'
+import type { ProductView } from '@/lib/product/product'
+import type { Media } from '@/payload-types'
+
+/**
+ * **The product page**, in structure §7's order:
+ *
+ * ```
+ * Gallery → identity → price → colour → size → details → you may also like
+ * ```
+ *
+ * Two of that list's nodes are deliberately absent and one is deferred; the reasons are below and in
+ * **DEV-55**. Everything else is here.
+ *
+ * ---
+ *
+ * ### What is not on this page, and why that is not an omission
+ *
+ * Structure §7 puts **Quantity**, **Add to Bag** and reviews between size and the detail sections.
+ * None of them ships, because none of them can:
+ *
+ * - **Add to Bag / Buy Now** need a cart. The cart is **Phase 14** and checkout is **Phase 17**. A
+ *   button that looks like it adds to a bag and does not is precisely what plan §0.1.17 forbids, and
+ *   it is a worse lie than a missing button because the customer only learns the truth after
+ *   committing to a purchase decision.
+ * - **Quantity** is a control whose only consumer is Add to Bag. Shipping it alone would be a
+ *   stepper that changes a number nothing reads.
+ * - **Rating and reviews** (§13.1b, §13.1f) need the reviews collection populated and moderated,
+ *   which is **Phase 21**. §13.1f is explicit that an empty star histogram must not be shown, and a
+ *   catalogue with no reviews is exactly that state.
+ * - **Wishlist** is **Phase 20**.
+ *
+ * What ships instead is the whole of the page that *can* be true today: the gallery, the identity,
+ * an authoritative variant selector, live stock messaging, the size guide, the detail accordions and
+ * recommendations. The purchase controls arrive in Phase 14 and slot in below the selector, which is
+ * why the selector already resolves and exposes the exact variant they will need.
+ *
+ * ### The price is the selected variant's, and it moves
+ *
+ * §13.1c: *"Update price if variant pricing differs."* Before a size is chosen the page shows the
+ * range **for the selected colour** — not for the product — because a page showing bone's price
+ * under a black swatch is quoting a price the customer cannot have. Once a size is chosen the price
+ * is that variant's exactly.
+ */
+export function ProductPage({ view }: { view: ProductView }) {
+  const { matrix, product, recommendations, settings, sizeGuide, variants } = view
+
+  const gallery = (product.gallery ?? [])
+    .map((entry) =>
+      typeof entry.image === 'object' && entry.image ? (entry.image as Media) : null,
+    )
+    .filter((frame): frame is Media => frame !== null)
+
+  /*
+   * A variant's own photograph leads the gallery when the colour is selected — §13.1c's "update
+   * displayed media if available". It is prepended rather than substituted, so the product's other
+   * frames stay reachable; a colourway with one photograph should not hide the rest of the garment.
+   */
+  const variantImage =
+    matrix.selected && typeof matrix.selected.image === 'object' && matrix.selected.image
+      ? (matrix.selected.image as Media)
+      : null
+
+  const frames = variantImage
+    ? [variantImage, ...gallery.filter((frame) => frame.id !== variantImage.id)]
+    : gallery
+
+  const priceLabel =
+    matrix.selected?.priceLabel ??
+    priceRangeForColor(variants, matrix.selectedColor, settings.currency, settings.locale)
+
+  const stock = inventoryMessage(matrix.selected)
+
+  const video = typeof product.video === 'object' && product.video ? (product.video as Media) : null
+
+  return (
+    <>
+      <Section spacing="tight">
+        <PageContainer>
+          <div className="grid gap-l lg:grid-cols-12">
+            <div className="lg:col-span-7">
+              <ProductGallery alt={product.name} frames={frames} video={video} />
+            </div>
+
+            <div className="flex flex-col gap-l lg:col-span-5">
+              <div className="flex flex-col gap-s">
+                <div className="flex flex-wrap items-center gap-s">
+                  {product.isNew ? <Badge variant="accent">New</Badge> : null}
+                  {product.isLimitedEdition ? <Badge variant="accent">Limited</Badge> : null}
+                </div>
+
+                <h1 className="font-display text-heading-m text-foreground">{product.name}</h1>
+
+                {product.shortDescription ? (
+                  <p className="max-w-measure font-sans text-body text-foreground-muted">
+                    {product.shortDescription}
+                  </p>
+                ) : null}
+              </div>
+
+              <p className="flex items-baseline gap-s font-sans text-body">
+                {priceLabel ? (
+                  <span className="text-foreground">{priceLabel}</span>
+                ) : (
+                  <span className="text-foreground-muted">Currently unavailable</span>
+                )}
+
+                {matrix.selected?.compareAtLabel ? (
+                  <s className="text-foreground-disabled">
+                    <span className="sr-only">was </span>
+                    {matrix.selected.compareAtLabel}
+                  </s>
+                ) : null}
+              </p>
+
+              <VariantSelector
+                colors={matrix.colors}
+                selectedColor={matrix.selectedColor}
+                selectedSize={matrix.selectedSize}
+                sizes={matrix.sizes}
+              />
+
+              {/*
+                One live region for everything the selection changes, so a screen-reader user hears
+                the consequence of picking a size rather than having to go looking for it.
+              */}
+              <div aria-live="polite" className="flex flex-col gap-1">
+                {matrix.invalidSelection ? (
+                  <p className="font-sans text-body-sm text-foreground-muted">
+                    That combination is not available — showing what we do have.
+                  </p>
+                ) : null}
+
+                {stock ? <p className="font-sans text-body-sm text-foreground">{stock}</p> : null}
+
+                {matrix.selectedSize === null && matrix.sizes.length > 0 ? (
+                  <p className="font-sans text-body-sm text-foreground-muted">
+                    Choose a size to see availability.
+                  </p>
+                ) : null}
+              </div>
+
+              {/*
+                The honest placeholder for the purchase controls. It is a SENTENCE, not a disabled
+                button: a greyed-out "Add to Bag" would still read as a broken shop rather than an
+                unfinished one, and §0.1.17's rule is about not implying a capability at all.
+              */}
+              <p className="border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
+                Online ordering opens shortly. Everything here — colours, sizes and live stock — is
+                the real catalogue.
+              </p>
+
+              <ProductDetails
+                product={product}
+                returnsPolicy={settings.returnsPolicy}
+                shippingPolicy={settings.shippingPolicy}
+                sizeGuide={sizeGuide}
+              />
+            </div>
+          </div>
+        </PageContainer>
+      </Section>
+
+      {recommendations.length > 0 ? (
+        <Section divider="top" spacing="tight">
+          <PageContainer>
+            <SectionHeading className="mb-l">You may also like</SectionHeading>
+
+            <ul className="grid grid-cols-2 gap-x-m gap-y-l lg:grid-cols-4">
+              {recommendations.map((card) => (
+                <li key={card.id}>
+                  <ProductCard card={card} />
+                </li>
+              ))}
+            </ul>
+          </PageContainer>
+        </Section>
+      ) : null}
+
+      <Section spacing="tight">
+        <PageContainer>
+          <Link href="/shop" variant="meta">
+            Back to the shop
+          </Link>
+        </PageContainer>
+      </Section>
+    </>
+  )
+}
