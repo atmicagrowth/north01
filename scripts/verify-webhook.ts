@@ -680,6 +680,74 @@ try {
       .delete({ collection: 'promotions', id: promotion.id, overrideAccess: true })
       .catch(() => undefined)
   }
+
+  /* ====================================== L — the promotion counter's race, found by sweep 2 */
+  {
+    const promotion = await payload.create({
+      collection: 'promotions',
+      data: {
+        active: true,
+        code: `WHRACE${suffix}`,
+        percentage: 10,
+        timesUsed: 0,
+        type: 'percentage',
+      } as never,
+      overrideAccess: true,
+    })
+
+    /*
+     * **Two different payments against one code, in flight at the same instant.**
+     *
+     * K increments twice in sequence and passes whether the counter is an expression or a
+     * `read + 1` — sweep 1's lesson restated: a sequential test of a concurrency guard tests
+     * nothing. These are two *different* orders, so neither §17.1d barrier applies and both are
+     * genuinely owed an increment. Read-then-write lands on 1, and a code with a `usageLimit` is
+     * then silently honoured more often than the shop agreed to.
+     */
+    const first = await makeStock(5, 'o')
+    const second = await makeStock(5, 'p')
+
+    const orders = await Promise.all([
+      makeOrder([{ productId: first.product.id, quantity: 1, variantId: first.variant.id }], 'O'),
+      makeOrder([{ productId: second.product.id, quantity: 1, variantId: second.variant.id }], 'P'),
+    ])
+
+    for (const order of orders) {
+      await payload.update({
+        collection: 'orders',
+        data: { promotion: promotion.id },
+        id: order.id,
+        overrideAccess: true,
+      })
+    }
+
+    await Promise.all(
+      orders.map((order) =>
+        applyStripeEvent(payload, {
+          eventType: 'checkout.session.completed',
+          orderId: order.id,
+          paymentIntentId: null,
+        }),
+      ),
+    )
+
+    const counted = await payload.findByID({
+      collection: 'promotions',
+      depth: 0,
+      id: promotion.id,
+      overrideAccess: true,
+    })
+
+    check(
+      'L: **two concurrent payments on one code both count** — an expression update, not `read + 1`',
+      counted.timesUsed === 2,
+      String(counted.timesUsed),
+    )
+
+    await payload
+      .delete({ collection: 'promotions', id: promotion.id, overrideAccess: true })
+      .catch(() => undefined)
+  }
 } finally {
   await cleanup()
 }

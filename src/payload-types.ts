@@ -1626,7 +1626,7 @@ export interface Address {
 export interface Order {
   id: number;
   /**
-   * Moved to Paid only by a signature-verified Stripe webhook — never by a browser reaching the success page.
+   * Set by a signature-verified Stripe webhook. Not editable here — reaching the success page is not payment, and neither is typing in this box.
    */
   paymentStatus:
     'draft' | 'checkout_started' | 'pending_payment' | 'paid' | 'payment_failed' | 'refunded' | 'cancelled';

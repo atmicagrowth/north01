@@ -27,6 +27,7 @@ import Stripe from 'stripe'
 
 import config from '../src/payload.config'
 
+import { countWebhookDelivery } from '../src/lib/checkout/events'
 import { developmentDatabase } from '../src/lib/env.core'
 import {
   canTransition,
@@ -506,6 +507,32 @@ try {
     'G: **the same event id cannot be inserted twice** — the first idempotency barrier is a constraint',
     duplicate === null,
     duplicate === null ? '' : 'a duplicate event row was accepted',
+  )
+
+  /*
+   * **The delivery counter, added by sweep 2.** A duplicate is not an error — Stripe retries after
+   * network failures, timeouts and deploys — so the row counts the deliveries instead. Three at once,
+   * because that is the only arrangement that can tell an expression update apart from a `read + 1`:
+   * the latter has all three read 1 and all three write 2. The stakes here are only an operational
+   * column, which is why it is a good place to be strict about the shape rather than the cost.
+   */
+  await Promise.all([
+    countWebhookDelivery(payload, first.id),
+    countWebhookDelivery(payload, first.id),
+    countWebhookDelivery(payload, first.id),
+  ])
+
+  const counted = await payload.findByID({
+    collection: 'stripe-events',
+    depth: 0,
+    id: first.id,
+    overrideAccess: true,
+  })
+
+  check(
+    'G: **three concurrent redeliveries all count** — the counter is an expression, not `read + 1`',
+    Number(counted.attempts) === 4,
+    String(counted.attempts),
   )
 
   /* Two orders may not claim one payment. */

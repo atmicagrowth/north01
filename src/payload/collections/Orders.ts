@@ -2,7 +2,7 @@ import { randomInt } from 'crypto'
 
 import type { CollectionConfig } from 'payload'
 
-import { isAdmin, isStaff, nobody, ownedByCustomer } from '../access'
+import { isAdmin, isStaff, nobody, nobodyField, ownedByCustomer } from '../access'
 import { addressFields } from '../fields/address'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
@@ -140,11 +140,30 @@ export const Orders: CollectionConfig = {
               type: 'row',
               fields: [
                 {
+                  /*
+                   * **Not editable from a browser, by anyone.**
+                   *
+                   * `AGENTS.md` states it without qualification: *"Only a signature-verified Stripe
+                   * webhook marks an order paid."* Phase 17 made that structural in three places —
+                   * the state machine refuses `draft → paid`, the success page has no write path,
+                   * and `fulfil.ts` is the only code that writes the value — and Phase 17's second
+                   * sweep found the fourth door still open: a staff member could type it here.
+                   *
+                   * `nobodyField` is what closes it, and `readOnly` is only how the panel says so.
+                   * Field access is skipped for `overrideAccess: true`, so the webhook's own write
+                   * is unaffected — which is the whole point: the server path stays open and the
+                   * browser path does not exist.
+                   *
+                   * Administrative transitions that are *not* payment facts — cancelling an order,
+                   * recording a refund — belong to §18.1c as deliberate actions with their own
+                   * reasons and audit, not as a free-text edit of the field the webhook owns.
+                   */
                   name: 'paymentStatus',
                   type: 'select',
                   required: true,
                   defaultValue: 'draft',
                   index: true,
+                  access: { update: nobodyField },
                   options: [
                     { label: 'Draft', value: 'draft' },
                     { label: 'Checkout started', value: 'checkout_started' },
@@ -155,9 +174,10 @@ export const Orders: CollectionConfig = {
                     { label: 'Cancelled', value: 'cancelled' },
                   ],
                   admin: {
+                    readOnly: true,
                     width: '50%',
                     description:
-                      'Moved to Paid only by a signature-verified Stripe webhook — never by a browser reaching the success page.',
+                      'Set by a signature-verified Stripe webhook. Not editable here — reaching the success page is not payment, and neither is typing in this box.',
                   },
                 },
                 {

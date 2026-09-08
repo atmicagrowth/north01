@@ -346,25 +346,20 @@ async function finalisePaidOrder(
     const promotionId = relatedId(order.promotion)
 
     if (promotionId !== null) {
-      const promotion = await payload
-        .findByID({
-          collection: 'promotions',
-          depth: 0,
-          id: promotionId,
-          overrideAccess: true,
-          req,
-        })
-        .catch(() => null)
-
-      if (promotion) {
-        await payload.update({
-          collection: 'promotions',
-          data: { timesUsed: (promotion.timesUsed ?? 0) + 1 },
-          id: promotionId,
-          overrideAccess: true,
-          req,
-        })
-      }
+      /*
+       * An expression, for the same reason the decrement above is one. This counter is what a
+       * `usageLimit` is measured against, so a lost update here does not merely miscount — it lets a
+       * code be honoured more often than the shop agreed to. Two customers paying with one code at
+       * the same instant are two *different* orders, so neither §17.1d barrier applies and both are
+       * genuinely owed an increment; a `read + 1` gives them one between them.
+       *
+       * Phase 17's second sweep found this by grepping for the **shape** of the first sweep's defect
+       * rather than for another instance of it. `verify-webhook.ts` section L holds it, and section K
+       * — which increments twice in sequence — passes either way, which is the point.
+       */
+      await session.db.execute(
+        sql`UPDATE "promotions" SET "times_used" = "times_used" + 1 WHERE "id" = ${promotionId}`,
+      )
     }
 
     /* The bag is history now. §14's `converted` status exists for exactly this moment. */

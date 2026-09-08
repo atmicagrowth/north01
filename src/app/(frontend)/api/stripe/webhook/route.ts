@@ -1,5 +1,6 @@
 import type Stripe from 'stripe'
 
+import { countWebhookDelivery } from '@/lib/checkout/events'
 import { applyStripeEvent } from '@/lib/checkout/fulfil'
 import { isHandledEventType, parseOrderReference } from '@/lib/checkout/rules'
 import { isStripeConfigured, stripeClient, stripeWebhookSecret } from '@/lib/checkout/stripe'
@@ -25,14 +26,15 @@ import { getPayloadClient } from '@/lib/payload'
  * verification would fail for every event, and the natural "fix" is to stop verifying. The body is
  * read as text, verified, and only then parsed by the SDK.
  *
- * ### Why it always answers 200, and what that is not
+ * ### What each status code means, and why 200 is the default rather than the rule
  *
  * Stripe retries any non-2xx response with backoff for days. That is correct for *"we could not
  * process this yet"* and actively harmful for *"this is not for us"* — an unrecognised event type
- * retried for three days is noise that buries a real failure.
+ * retried for three days is noise that buries a real failure. So the responses split four ways:
  *
- * So the responses split three ways:
- *
+ * - **503** when Stripe is not configured. The one degradation that must not be quiet: nothing can be
+ *   verified, so nothing can be safely acknowledged, and a silent 200 would make Stripe discard real
+ *   payment events for the length of a misconfiguration.
  * - **400** for a signature that does not verify. Not a retry — a forgery, a misconfigured secret, or
  *   a proxy that rewrote the body. Retrying cannot fix any of them.
  * - **500** for an event we *should* have handled and could not. Stripe retries, which is what we
@@ -130,12 +132,7 @@ export async function POST(request: Request): Promise<Response> {
     const seen = docs[0]
 
     if (seen) {
-      await payload.update({
-        collection: 'stripe-events',
-        data: { attempts: (seen.attempts ?? 1) + 1 },
-        id: seen.id,
-        overrideAccess: true,
-      })
+      await countWebhookDelivery(payload, seen.id)
     }
 
     return new Response('Already processed.', { status: 200 })

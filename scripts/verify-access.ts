@@ -403,6 +403,65 @@ try {
     }),
   )
 
+  /* ---- §17's invariant, closed by Phase 17's second sweep ---- */
+
+  /*
+   * `AGENTS.md`: *"Only a signature-verified Stripe webhook marks an order paid."* Phase 17 built
+   * three mechanisms for that and left a fourth door open — `Orders.access.update` is `isStaff`,
+   * so an admin could simply type it. `nobodyField` on the field closes it.
+   *
+   * Field-level access does not *throw*; Payload drops the field and applies the rest of the
+   * update. So this asserts the **value**, not an error — the update is allowed to succeed and
+   * required not to have moved the payment status. The tracking number proves the write landed,
+   * which is what tells a working denial apart from an update that failed for some other reason.
+   */
+  await payload.update({
+    collection: 'orders',
+    data: { paymentStatus: 'paid', trackingNumber: `${PREFIX}-sweep-tracking` },
+    id: aliceOrder.id,
+    overrideAccess: false,
+    user: adminUser,
+  })
+
+  const afterAdminEdit = await payload.findByID({
+    collection: 'orders',
+    depth: 0,
+    id: aliceOrder.id,
+    overrideAccess: true,
+  })
+
+  check(
+    '**an admin cannot mark an order paid from the panel** — only the Stripe webhook may',
+    afterAdminEdit.paymentStatus === 'draft',
+    String(afterAdminEdit.paymentStatus),
+  )
+
+  check(
+    '…and the rest of that same edit still applied, so the denial is the field and not the write',
+    afterAdminEdit.trackingNumber === `${PREFIX}-sweep-tracking`,
+    String(afterAdminEdit.trackingNumber),
+  )
+
+  const afterServerWrite = await payload.update({
+    collection: 'orders',
+    data: { paymentStatus: 'checkout_started' },
+    id: aliceOrder.id,
+    overrideAccess: true,
+  })
+
+  check(
+    '…while the server path is untouched — `overrideAccess` skips field access, as the webhook needs',
+    afterServerWrite.paymentStatus === 'checkout_started',
+    String(afterServerWrite.paymentStatus),
+  )
+
+  await payload.update({
+    collection: 'orders',
+    data: { paymentStatus: 'draft' },
+    id: aliceOrder.id,
+    overrideAccess: true,
+  })
+
   const malloryOrders = await payload.find({
     collection: 'orders',
     overrideAccess: false,
