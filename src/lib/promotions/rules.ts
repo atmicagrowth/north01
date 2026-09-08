@@ -31,6 +31,8 @@
  * you"* to *"this code is not for this bag"*, which is also least-to-most actionable.
  */
 
+import { toMinorAmount, toWholeCount } from '@/lib/money'
+
 /** Trim and upper-case — the same normalisation `fields/slug.ts` applies on the way into the database. */
 export function normalisePromotionCode(raw: string): string {
   return raw.trim().toUpperCase()
@@ -110,8 +112,7 @@ export type DiscountResult = {
 
 const subtotalOf = (lines: DiscountLine[]): number =>
   lines.reduce(
-    (total, line) =>
-      total + Math.max(0, Math.floor(line.unitPriceMinor)) * Math.max(0, Math.floor(line.quantity)),
+    (total, line) => total + toMinorAmount(line.unitPriceMinor) * toWholeCount(line.quantity),
     0,
   )
 
@@ -256,7 +257,7 @@ export function calculateDiscount(
   const raw =
     promotion.type === 'percentage'
       ? Math.round((eligibleSubtotalMinor * Math.max(0, promotion.percentage ?? 0)) / 100)
-      : Math.max(0, Math.floor(promotion.valueMinor ?? 0))
+      : toMinorAmount(promotion.valueMinor ?? 0)
 
   const discountMinor = Math.min(raw, eligibleSubtotalMinor)
 

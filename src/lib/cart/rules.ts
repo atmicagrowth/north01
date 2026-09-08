@@ -1,4 +1,4 @@
-import { toMinorAmount } from '@/lib/money'
+import { toMinorAmount, toWholeCount } from '@/lib/money'
 
 /**
  * **Plan §14's arithmetic, as pure functions.**
@@ -70,7 +70,7 @@ export function clampQuantity(
   maxPerLine: number,
 ): ClampedQuantity {
   const policy = Math.max(1, Math.min(Math.floor(maxPerLine), QUANTITY_HARD_CAP))
-  const wanted = Math.max(0, Math.floor(requested))
+  const wanted = toWholeCount(requested)
 
   if (
     !availability ||
@@ -81,7 +81,7 @@ export function clampQuantity(
     return { clampedBy: 'soldOut', quantity: 0 }
   }
 
-  const stock = Math.max(0, Math.floor(availability.inventoryQuantity))
+  const stock = toWholeCount(availability.inventoryQuantity)
 
   if (stock === 0) {
     return { clampedBy: 'soldOut', quantity: 0 }
@@ -278,7 +278,7 @@ export function cartTotals(
   let itemCount = 0
 
   for (const line of lines) {
-    const quantity = toMinorAmount(line.quantity)
+    const quantity = toWholeCount(line.quantity)
 
     subtotalMinor += toMinorAmount(line.unitPriceMinor) * quantity
     itemCount += quantity
@@ -349,7 +349,7 @@ export function shippingProgress(
     return null
   }
 
-  const subtotal = Math.max(0, Math.floor(subtotalMinor))
+  const subtotal = toMinorAmount(subtotalMinor)
   const threshold = Math.floor(thresholdMinor)
 
   if (threshold === 0) {

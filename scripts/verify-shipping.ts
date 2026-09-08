@@ -29,6 +29,7 @@ import {
   type ShippingQuoteInput,
 } from '../src/lib/shipping/rules'
 import {
+  decideDeferredTax,
   isCalculableAddress,
   PENDING_TAX,
   taxableBaseMinor,
@@ -383,6 +384,33 @@ check(
 check(
   'E: every tax result carries a provider reference slot, per §16.1c',
   'providerRef' in PENDING_TAX && 'providerRef' in UNAVAILABLE_TAX,
+)
+
+check(
+  'E: the deferred provider answers pending while there is no address',
+  decideDeferredTax(taxRequest()).status === 'pending_address',
+)
+
+check(
+  'E: …and REFUSES TO GUESS when handed one — a deferral must not start inventing numbers',
+  decideDeferredTax(
+    taxRequest({ address: { city: null, country: 'US', postalCode: null, region: null } }),
+  ).status === 'unavailable',
+)
+
+check(
+  'E: …answering "unavailable" rather than "not_required", which would be a claim about tax law',
+  decideDeferredTax(
+    taxRequest({ address: { city: null, country: 'US', postalCode: null, region: null } }),
+  ).status !== 'not_required',
+)
+
+check(
+  'E: neither answer ever carries an amount',
+  decideDeferredTax(taxRequest()).amountMinor === null &&
+    decideDeferredTax(
+      taxRequest({ address: { city: null, country: 'GB', postalCode: null, region: null } }),
+    ).amountMinor === null,
 )
 
 check(

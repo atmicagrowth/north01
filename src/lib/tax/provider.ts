@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { isCalculableAddress, PENDING_TAX, type TaxRequest, type TaxResult } from './rules'
+import { decideDeferredTax, type TaxRequest, type TaxResult } from './rules'
 
 /**
  * **Plan §16.1c's `TaxProvider` interface**, and the implementation this phase can honestly ship.
@@ -40,23 +40,12 @@ export type TaxProvider = {
 /**
  * The provider Phase 16 ships: it answers honestly and calculates nothing.
  *
- * The `isCalculableAddress` branch is not dead code waiting for a future — it is the assertion that
- * this provider will refuse to invent a number even if one day it is handed an address. A deferral
- * that quietly started guessing when its inputs improved would be worse than one that never worked.
+ * The decision is in `rules.ts` rather than here, so `pnpm verify:shipping` can execute it: this
+ * module's `server-only` guard is correct — a real provider holds an API key — and `server-only`
+ * cannot resolve outside Next, which would otherwise make the one claim worth testing untestable.
  */
 export const deferredTaxProvider: TaxProvider = {
-  calculate: (request) =>
-    Promise.resolve(
-      isCalculableAddress(request.address)
-        ? /*
-           * An address exists and this provider still cannot answer, because it is not a tax engine.
-           * `unavailable` rather than `not_required`: "we could not calculate" is true, "no tax
-           * applies" would be a guess, and Phase 17 must be able to tell them apart because one of
-           * them is allowed to proceed to payment and the other is not.
-           */
-          { amountMinor: null, providerRef: null, status: 'unavailable' as const }
-        : PENDING_TAX,
-    ),
+  calculate: (request) => Promise.resolve(decideDeferredTax(request)),
   id: 'deferred',
 }
 

@@ -106,6 +106,27 @@ export const UNAVAILABLE_TAX: TaxResult = {
   status: 'unavailable',
 }
 
+/**
+ * **What the deferred provider answers**, as a pure function so it can be executed by a harness.
+ *
+ * The provider itself is `server-only` — correctly, because a real one holds an API key — and
+ * `server-only` cannot resolve outside Next. That makes its *decision* untestable unless the decision
+ * lives somewhere else, which is the same split every rule in this project has, and the same lesson
+ * Phase 15 learned when its guard sat on the module the harness needed.
+ *
+ * The claim being made testable is the one that matters: **this provider never invents a number.**
+ * Handed an address it still cannot answer — it is a deferral, not a tax engine — and it says
+ * `unavailable` rather than `not_required`, because *"we could not calculate"* is true and *"no tax
+ * applies"* would be a guess. Phase 17 must be able to tell those apart: one may proceed to payment
+ * and the other may not.
+ *
+ * A deferral that quietly began guessing once its inputs improved would be more dangerous than one
+ * that never worked, because nobody would be watching it.
+ */
+export function decideDeferredTax(request: TaxRequest): TaxResult {
+  return isCalculableAddress(request.address) ? UNAVAILABLE_TAX : PENDING_TAX
+}
+
 export const TAX_COPY = {
   /** What the bag says while there is no address. */
   pending: 'Taxes are calculated at checkout.',

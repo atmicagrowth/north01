@@ -316,6 +316,31 @@ check(
   calculateDiscount([], promo({ eligibleProductIds: [] }), ctx()).discountMinor === 0,
 )
 
+/* Phase 16's second sweep found the unsafe clamp idiom here too — a discount is money. */
+check(
+  'C: a NaN line price cannot make the discount NaN',
+  calculateDiscount([bagLine({ unitPriceMinor: Number.NaN })], promo({ percentage: 10 }), ctx())
+    .discountMinor === 0,
+  String(
+    calculateDiscount([bagLine({ unitPriceMinor: Number.NaN })], promo({ percentage: 10 }), ctx())
+      .discountMinor,
+  ),
+)
+
+check(
+  'C: a NaN fixed amount discounts nothing rather than NaN',
+  calculateDiscount(BAG, promo({ type: 'fixed', valueMinor: Number.NaN }), ctx()).discountMinor ===
+    0,
+)
+
+check(
+  'C: …and the final subtotal stays a real number throughout',
+  Number.isFinite(
+    calculateDiscount(BAG, promo({ type: 'fixed', valueMinor: Number.NaN }), ctx())
+      .finalSubtotalMinor,
+  ),
+)
+
 /* =================================================================================================
  * D — §15.1c's eight edge cases
  * ============================================================================================== */

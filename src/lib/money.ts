@@ -104,6 +104,18 @@ export function formatPriceRange(
  * zero, negative is zero, fractional is floored. One definition, so the three modules that handle
  * money cannot disagree about what an unusable number means.
  */
-export function toMinorAmount(value: unknown): number {
+function nonNegativeInteger(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
 }
+
+export const toMinorAmount = nonNegativeInteger
+
+/**
+ * The same coercion, for a **count** rather than an amount.
+ *
+ * Two names for one implementation, because a quantity is not money and calling `toMinorAmount` on a
+ * number of jackets would be a small lie that the next reader has to decode. The shared body is the
+ * point: Phase 16's second sweep found the unsafe idiom in five more places after the first sweep
+ * fixed the three it had happened to test, and three of those five were quantities.
+ */
+export const toWholeCount = nonNegativeInteger

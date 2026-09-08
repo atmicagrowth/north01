@@ -153,6 +153,29 @@ check(
 
 check('A: a negative quantity resolves to none', clampQuantity(-5, stocked(), 10).quantity === 0)
 
+/*
+ * Phase 16's second sweep: `Math.max(0, Math.floor(x))` reads like a clamp and passes `NaN` straight
+ * through, because `Math.floor(NaN)` is `NaN` and `Math.max(0, NaN)` is `NaN`. It was in five places
+ * this project had not tested. These are the cart's.
+ */
+check(
+  'A: a NaN quantity resolves to none rather than to NaN',
+  clampQuantity(Number.NaN, stocked(), 10).quantity === 0,
+  String(clampQuantity(Number.NaN, stocked(), 10).quantity),
+)
+
+check(
+  'A: NaN stock is treated as no stock, not as unlimited stock',
+  clampQuantity(5, stocked({ inventoryQuantity: Number.NaN }), 10).quantity === 0,
+  String(clampQuantity(5, stocked({ inventoryQuantity: Number.NaN }), 10).quantity),
+)
+
+check(
+  'A: an Infinite quantity is bounded by the policy rather than becoming Infinity',
+  clampQuantity(Number.POSITIVE_INFINITY, stocked({ inventoryQuantity: 50 }), 10).quantity === 0,
+  String(clampQuantity(Number.POSITIVE_INFINITY, stocked({ inventoryQuantity: 50 }), 10).quantity),
+)
+
 check(
   'A: a policy below one is still at least one — a shop cannot forbid buying anything',
   clampQuantity(1, stocked(), 0).quantity === 1,
@@ -429,6 +452,22 @@ check(
 check(
   'C: a fractional quantity is floored — a bag cannot hold half a jacket',
   cartTotals([{ quantity: 2.7, unitPriceMinor: 100 }]).subtotalMinor === 200,
+)
+
+check(
+  'C: a NaN price cannot make the subtotal NaN',
+  cartTotals([{ quantity: 1, unitPriceMinor: Number.NaN }]).subtotalMinor === 0,
+  String(cartTotals([{ quantity: 1, unitPriceMinor: Number.NaN }]).subtotalMinor),
+)
+
+check(
+  'C: a NaN quantity cannot either',
+  cartTotals([{ quantity: Number.NaN, unitPriceMinor: 500 }]).subtotalMinor === 0,
+)
+
+check(
+  'D: a NaN subtotal cannot produce a NaN progress fraction — it would render width: NaN%',
+  Number.isFinite(shippingProgress(Number.NaN, 10_000)?.fraction ?? Number.NaN),
 )
 
 /* =================================================================================================

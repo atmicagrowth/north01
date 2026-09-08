@@ -5429,6 +5429,55 @@ it will be run again. Among them:
 - **Shipping is added after the discount**, so a coupon can never discount delivery — a `$10.00` bag
   with a `$10.00` code and `$9.95` delivery totals `$9.95`, not `$0.00`.
 
+#### Sweep 2 — the same defect, in five places the first sweep did not touch
+
+**One finding, and it is the first sweep's finding generalised.**
+
+Sweep 1 fixed `Math.max(0, Math.floor(x))` in the three places it had happened to probe. Sweep 2
+grepped for the idiom instead of testing for it, and found **five more**:
+
+| Where | What a `NaN` would have done |
+|---|---|
+| `clampQuantity` — the requested quantity | a `NaN` quantity written toward the database |
+| `clampQuantity` — the stock figure | `NaN` stock read as *unlimited* rather than as none |
+| `shippingProgress` — the subtotal | `style="width: NaN%"` on the progress bar |
+| `subtotalOf` in the promotion engine | **a `NaN` discount** |
+| the fixed-amount discount | **a `NaN` discount**, again |
+
+Two of those five are money, and one of them is the number a customer is charged.
+
+That the first sweep found three and missed five is the lesson worth keeping: **a sweep that tests
+inputs finds instances, and a sweep that reads for the pattern finds the class.** Both were needed,
+and the cheap one was the second.
+
+Fixed with one implementation under two honest names in `lib/money.ts` — `toMinorAmount` for money and
+`toWholeCount` for quantities, because calling the money function on a number of jackets is a small
+lie the next reader has to decode. Six regressions across `verify-cart` and `verify-promotions` hold
+each case.
+
+#### The one claim that could not be tested, and what was done about it
+
+`deferredTaxProvider` claims it *"refuses to invent a number even if one day it is handed an
+address"* — the single most important sentence in the tax boundary, because a provider that quietly
+began guessing once its inputs improved is one nobody would be watching.
+
+It was untestable. The provider carries `server-only`, correctly — a real one holds an API key — and
+`server-only` cannot resolve outside Next, so no harness could execute it. The same shape as Phase
+15's finding, arriving from the opposite direction: there the guard was on the wrong module, here it
+is on the right one and the *decision* was in the wrong place.
+
+`decideDeferredTax` moved to `tax/rules.ts` and the provider is now three lines that call it. Four
+checks assert what the sentence promised: pending without an address, **`unavailable` with one**,
+never `not_required` — which would be a claim about tax law rather than about this provider — and
+never an amount in either case.
+
+#### What held
+
+The bag's drawer and its page were measured against each other at both threshold states and agree row
+for row, which is the invariant §1.21.2 was written to protect: `{"Subtotal":"$75.00","Delivery
+(estimated)":"$9.95"}` from both, and `Free` from both above the threshold. `verify-shipping` is
+**97 checks**; the full sweep is **961 across eight harnesses**.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -6967,4 +7016,5 @@ Phase 17 replaces one exported constant. Nothing that reads a `TaxResult` change
 | Phase 15 — promotions and discounts | 2026-09-07 | Notes **§1.20**: a server-authoritative promotion engine, filling the first of Phase 14's three deferred totals. Phase 6 had already answered three questions this phase would otherwise have got wrong — `timesUsed` increments in **Phase 17**'s payment transaction, `perCustomerLimit` is a **count of paid orders** rather than a tally that a refund would falsify, and one-code-at-a-time is a schema property rather than a rule. §15.1a's eight checks and §15.1c's eight edge cases are all named checks. **`inactive` and `unknownCode` return the identical sentence**, byte for byte, so the code field cannot be used to enumerate an unreleased campaign. Eligibility is resolved from `collections.products` and not from `product.collections`, because the latter is a **`join`** — virtual, no column, `{ docs }` rather than an array — and reading it would have produced a collection-scoped promotion that silently never applied; the third phase to meet that join, and the first to meet it before shipping the bug. Rounding is `Math.round` rather than `floor`, because flooring every percentage is a systematic fraction of a penny in the shop's favour. **The discount is re-decided on every read** — only the choice of code is stored — so an expired or exhausted code cannot leave a stale amount. `verify:promotions` failed on its first run with `ERR_MODULE_NOT_FOUND: server-only`: the guard was on the wrong module, and the fix was structural — reads that take a `Payload` argument moved to `read.ts` with no guard, exactly as `catalog/query.ts` sits beside `catalog/catalog.ts`. Deviations **DEV-59** (a per-customer limit is unenforceable against a guest, and the alternatives only look like enforcement) and **DEV-60** (a free-shipping code validates and records but changes no price until Phase 16, and draws no `-$0.00` row). `verify:promotions` **64 checks**, 20 browser checks, 0 axe violations. |
 | Phase 15 — two post-implementation sweeps | 2026-09-07 | Notes **§1.20.9**. **No defects** — the first phase where both sweeps came back empty, recorded with the reasons rather than as a result. **Sweep 1**, hostile input: SQL-shaped and script-shaped codes, a 500-character one, a null byte and whitespace were each refused with a readable reason and nothing echoed unescaped; a code that **exists but is switched off** got the same sentence an unknown code gets; the form posts **`["code"]`** and nothing else; and applying a code, emptying the bag and refilling it with a different product produced a **recomputed** discount (`−$44.00` → `−$33.00`) rather than a stale one, because only the choice of code is stored. **Sweep 2** measured the one claim made on reasoning alone: collection eligibility had been corrected during the build — reading `collections.products` instead of the `join` on `product.collections` — without ever being run. Verified end to end: 50% off *Archive* takes `−$37.50` off a member, is refused on a non-member, and in a `$555.00` mixed bag discounts only the eligible `$75.00` line. Nothing about a promotion reaches the page: no eligibility lists, no minimum, no usage limits, no counter, not even the id. One probe was wrong before the code was, counting React's own `$ACTION_*` fields as data the form posts. |
 | Phase 16 — shipping and tax boundaries | 2026-09-07 | Notes **§1.21**: the two provider interfaces, built before the phase that consumes them. The phase turns on one distinction — **a price is knowable without an address; eligibility is not** — so `destinationKnown` carries it, the bag quotes `$9.95` under the threshold and `Free` above it labelled *"Delivery (estimated)"*, and §17.1a re-quotes with the real address. §16.1d's coupon case is answered explicitly: the threshold reads the **discounted** subtotal, so applying a coupon can take free delivery away — measured, a `$555.00` bag with a 90% code drops to `$55.50` of spend and delivery returns to `$9.95`. The care was that **two surfaces read that number**: the progress sentence was reading the raw subtotal and would have promised free delivery directly above a delivery charge, which Phase 15 had made reachable and nothing had yet noticed. **DEV-60 closed** — a free-shipping code now zeroes Standard and *only* Standard, because a code that silently upgraded a customer to Overnight is a promotion nobody wrote. **DEV-61**: the tax provider is the §16.1c interface with a deferral behind it, not Stripe Tax — the SDK belongs to Phase 17 and there is no destination to calculate against; it returns `pending_address`, never `0`, and refuses to guess even if handed an address. The harness also found a **design flaw in Phase 14's totals**: `isFinal` required a discount, so a bag with no code applied could never show a final Total — `null` had been doing duty as both *"do not draw this row"* and *"unknown"*, and only the second belongs in that test. `verify:shipping` **68 checks**, 12 browser checks, 0 axe violations. |
+| Phase 16 — two post-implementation sweeps | 2026-09-07 | Notes **§1.21.8**. One defect, found twice at different resolutions. **Sweep 1** discovered that `Math.max(0, Math.floor(x))` — the guard in every money calculation in this project — is **not a clamp**: `Math.floor(NaN)` is `NaN`, so `taxableBaseMinor` returned `NaN`, a value bound for a tax provider and in Phase 17 a payment processor. The identical input passed through `quoteShipping` cleanly **by luck**, because `NaN >= threshold` is false and the comparison happened to fall the safe way. **Sweep 2** then grepped for the idiom rather than testing for it and found **five more instances** the first sweep had not touched — including a `NaN` discount, twice. A sweep that tests inputs finds instances; a sweep that reads for the pattern finds the class. Fixed with one implementation under two honest names, `toMinorAmount` and `toWholeCount`. Sweep 2 also found the tax provider's most important claim — *"refuses to invent a number even if handed an address"* — **untestable**, because `server-only` is correctly on that module and cannot resolve outside Next; the decision moved to `tax/rules.ts` and four checks now assert it answers `unavailable` rather than `not_required`, which would be a claim about tax law. Twenty-four hostile inputs held and were folded into the committed harness. The drawer and the bag page were measured against each other at both threshold states and agree row for row. `verify:shipping` 68 → **97**, `verify:cart` 72 → **78**, `verify:promotions` 64 → **67**. |
 > **Append this table, and the sections above it, at the end of every phase.**
