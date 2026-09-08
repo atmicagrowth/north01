@@ -8,6 +8,10 @@ import type { Payload } from 'payload'
 
 import { getCatalogSettings, type CatalogSettings } from '@/lib/catalog/catalog'
 import { resolvePromotion, type ResolvedPromotion } from '@/lib/promotions/promotions'
+import { shippingProvider } from '@/lib/shipping/provider'
+import type { ShippingQuote } from '@/lib/shipping/rules'
+import { taxProvider } from '@/lib/tax/provider'
+import type { TaxResult } from '@/lib/tax/rules'
 import { appEnv } from '@/lib/env.server'
 import { publishedProductWhere } from '@/lib/catalog/query'
 import { resolveProductCards, type ProductCard } from '@/lib/catalog/resolve'
@@ -150,6 +154,10 @@ export type CartView = {
   /** Feature matrix §10 again: products related to what is in the bag. */
   recommendations: ProductCard[]
   shipping: null | ShippingProgress
+  /** Phase 16's quote for this bag. `destinationKnown` is false until checkout has an address. */
+  shippingQuote: ShippingQuote
+  /** Phase 16's tax boundary. `pending_address` on every bag, because there is no address yet. */
+  tax: TaxResult
   totals: CartTotals
 }
 
@@ -499,21 +507,58 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
           customerId,
         )
 
-  const totals = cartTotals(
-    buyable.map((line) => ({
-      quantity: line.effectiveQuantity,
-      unitPriceMinor: line.unitPriceMinor as number,
-    })),
-    /*
-     * A free-shipping code carries its effect in `freeShipping`, not in an amount, so it passes
-     * `null` and draws no Discount row — "Discount −$0.00" beside "Free delivery" reads as a code
-     * that did nothing. A code with an *amount* of zero still draws its row, because that one is
-     * genuinely surprising and the customer should see it. DEV-60.
-     */
+  const priced = buyable.map((line) => ({
+    quantity: line.effectiveQuantity,
+    unitPriceMinor: line.unitPriceMinor as number,
+  }))
+
+  /*
+   * A free-shipping code carries its effect in `freeShipping`, not in an amount, so it passes `null`
+   * and draws no Discount row — "Discount −$0.00" beside "Free delivery" reads as a code that did
+   * nothing. A code with an *amount* of zero still draws its row, because that one is genuinely
+   * surprising and the customer should see it. DEV-60.
+   */
+  const discountMinor =
     discount?.result.reason === null && !discount.result.freeShipping
       ? discount.result.discountMinor
-      : null,
+      : null
+
+  const subtotalMinor = priced.reduce(
+    (total, line) => total + line.unitPriceMinor * line.quantity,
+    0,
   )
+
+  /*
+   * **Phase 16.** The bag has no address, so this quote prices without one — which the static
+   * provider can do honestly, because its prices come from the cart and only its *eligibility* comes
+   * from the destination. `destinationKnown` is false and the summary says so.
+   *
+   * A bag with nothing in it is not quoted at all: charging delivery on an empty bag is a number with
+   * nothing under it.
+   */
+  const shippingQuote = await shippingProvider.quote({
+    currency: settings.currency,
+    destination: null,
+    discountMinor: discountMinor ?? 0,
+    freeShippingPromotion: discount?.result.reason === null && discount.result.freeShipping,
+    freeShippingThresholdMinor: settings.freeShippingThresholdMinor,
+    subtotalMinor,
+  })
+
+  const quotedRate =
+    priced.length === 0
+      ? null
+      : (shippingQuote.rates.find((rate) => rate.id === shippingQuote.defaultRateId) ?? null)
+
+  const tax = await taxProvider.calculate({
+    address: null,
+    currency: settings.currency,
+    discountMinor: discountMinor ?? 0,
+    shippingMinor: quotedRate?.amountMinor ?? 0,
+    subtotalMinor,
+  })
+
+  const totals = cartTotals(priced, discountMinor, quotedRate?.amountMinor ?? null, tax.amountMinor)
 
   return {
     currency: settings.currency,
@@ -523,7 +568,18 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
     lines,
     locale: settings.locale,
     recommendations: await readCartRecommendations(payload, lines, settings),
-    shipping: shippingProgress(totals.subtotalMinor, settings.freeShippingThresholdMinor),
+    /*
+     * **The discounted subtotal**, which is the number `quoteShipping` compares against the
+     * threshold. Reading the raw subtotal here would let the sentence say "free delivery" beside a
+     * rate that charges for it — §16.1d's *"free-shipping threshold crossed because of a coupon"*,
+     * arriving as two surfaces disagreeing rather than as a wrong number.
+     */
+    shipping: shippingProgress(
+      Math.max(0, totals.subtotalMinor - (totals.discountMinor ?? 0)),
+      settings.freeShippingThresholdMinor,
+    ),
+    shippingQuote,
+    tax,
     totals,
   }
 })

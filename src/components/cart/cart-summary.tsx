@@ -1,4 +1,6 @@
 import { DiscountForm } from '@/components/cart/discount-form'
+import type { ShippingQuote } from '@/lib/shipping/rules'
+import { TAX_COPY, type TaxResult } from '@/lib/tax/rules'
 import type { ResolvedPromotion } from '@/lib/promotions/promotions'
 import { formatMinorUnits } from '@/lib/money'
 import type { CartTotals } from '@/lib/cart/rules'
@@ -39,7 +41,9 @@ export function CartSummary({
   discount,
   locale,
   shipping,
+  shippingQuote,
   showDiscountForm = false,
+  tax,
   totals,
 }: {
   currency: CurrencyCode
@@ -47,6 +51,10 @@ export function CartSummary({
   discount?: null | ResolvedPromotion
   locale: string
   shipping: null | ShippingProgress
+  /** Phase 16's quote. `destinationKnown` decides whether the row is a price or an estimate. */
+  shippingQuote?: ShippingQuote
+  /** Phase 16's tax boundary. Its `status` decides what the footnote says. */
+  tax?: TaxResult
   /**
    * Whether to offer the code field.
    *
@@ -81,8 +89,18 @@ export function CartSummary({
 
         {totals.shippingMinor === null ? null : (
           <div className="flex items-baseline justify-between">
-            <dt className="text-foreground-muted">Shipping</dt>
-            <dd className="text-foreground">{money(totals.shippingMinor)}</dd>
+            <dt className="text-foreground-muted">
+              {/*
+                "Estimated" is not hedging — it is the difference between a price and a promise. The
+                static provider prices from the cart, so the number is right; what it has not checked
+                is whether we ship to wherever this is going, because nothing has asked for an address
+                yet. Checkout re-quotes with the real one.
+              */}
+              {shippingQuote?.destinationKnown === false ? 'Delivery (estimated)' : 'Delivery'}
+            </dt>
+            <dd className="text-foreground">
+              {totals.shippingMinor === 0 ? 'Free' : money(totals.shippingMinor)}
+            </dd>
           </div>
         )}
 
@@ -105,7 +123,13 @@ export function CartSummary({
 
       {totals.isFinal ? null : (
         <p className="font-sans text-meta text-foreground-muted">
-          Delivery and any taxes are calculated at checkout.
+          {/*
+            One sentence, and which one depends on what is actually unknown. Before Phase 16 both
+            delivery and tax were missing and the sentence said so; now delivery has a number and only
+            tax does not, and a footnote still promising to calculate delivery would be describing an
+            older version of this page.
+          */}
+          {tax?.status === 'unavailable' ? TAX_COPY.unavailable : TAX_COPY.pending}
         </p>
       )}
     </div>

@@ -72,6 +72,8 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
                 discount={cart.discount}
                 locale={cart.locale}
                 shipping={cart.shipping}
+                shippingQuote={cart.shippingQuote}
+                tax={cart.tax}
                 totals={cart.totals}
               />
 

@@ -225,8 +225,10 @@ export type PricedLine = {
  * the most persuasive kind, because a customer has no way to tell a computed zero from a placeholder.
  *
  * `isFinal` is what the UI reads to decide between *"Total"* and *"Subtotal — shipping and tax
- * calculated at checkout"*. It is false while anything is `null`, and it will become true on its own
- * when Phases 15 and 16 fill the fields in; no component needs changing for that to happen.
+ * calculated at checkout"*. It is false while anything is `null`. Phase 15 filled `discount` and
+ * Phase 16 filled `shipping`; `tax` is still `null` on every bag, because tax is a function of a
+ * destination and the address form belongs to checkout. No component changed for either of those to
+ * start rendering, which was the property this shape was built for.
  */
 export type CartTotals = {
   /** Phase 15. `null` until promotions can be validated. */
@@ -253,6 +255,22 @@ export function cartTotals(
    * because it is surprising. Phase 16 fills `shipping` and `tax` the same way.
    */
   discount: null | number = null,
+  /**
+   * The shipping amount Phase 16's provider quoted, or `null` when none has been quoted.
+   *
+   * A *quote* is enough to fill this: the static provider prices from the cart rather than from the
+   * destination, so a bag with no address still has an honest number. What it does not have is
+   * confirmed **eligibility**, which is why the bag labels it an estimate.
+   */
+  shipping: null | number = null,
+  /**
+   * The tax amount, or `null` when it is not known — which is every bag today, because tax is a
+   * function of a destination and no surface collects one before checkout.
+   *
+   * `null` and `0` are different claims: `0` says no tax is owed, and a checkout acting on a `0` that
+   * really meant *unknown* would undercharge every order in a taxable jurisdiction.
+   */
+  tax: null | number = null,
 ): CartTotals {
   let subtotalMinor = 0
   let itemCount = 0
@@ -272,17 +290,30 @@ export function cartTotals(
    */
   const discountMinor: null | number =
     discount === null ? null : Math.min(Math.max(0, Math.floor(discount)), subtotalMinor)
-  const shippingMinor: null | number = null
-  const taxMinor: null | number = null
+  const shippingMinor: null | number = shipping === null ? null : Math.max(0, Math.floor(shipping))
+  const taxMinor: null | number = tax === null ? null : Math.max(0, Math.floor(tax))
 
   return {
     discountMinor,
-    isFinal: discountMinor !== null && shippingMinor !== null && taxMinor !== null,
+    /*
+     * **Two questions were conflated here, and the harness found it.**
+     *
+     * `null` was doing two jobs: *do not draw this row* and *this component is unknown*. For shipping
+     * and tax they are the same thing. For a **discount** they are not — a bag with no code applied
+     * has `discountMinor: null` and a perfectly knowable total, because no discount contributes
+     * nothing. Requiring it made `isFinal` unreachable for every bag without a code, which is most
+     * of them.
+     *
+     * So `isFinal` asks only about the components that can be *unknown*: a discount that is absent is
+     * known to be zero.
+     */
+    isFinal: shippingMinor !== null && taxMinor !== null,
     itemCount,
     shippingMinor,
     subtotalMinor,
     taxMinor,
-    totalMinor: Math.max(0, subtotalMinor - (discountMinor ?? 0)),
+    totalMinor:
+      Math.max(0, subtotalMinor - (discountMinor ?? 0)) + (shippingMinor ?? 0) + (taxMinor ?? 0),
   }
 }
 

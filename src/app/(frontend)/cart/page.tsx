@@ -87,7 +87,9 @@ export default async function CartPage() {
                     discount={cart.discount}
                     locale={cart.locale}
                     shipping={cart.shipping}
+                    shippingQuote={cart.shippingQuote}
                     showDiscountForm
+                    tax={cart.tax}
                     totals={cart.totals}
                   />
 

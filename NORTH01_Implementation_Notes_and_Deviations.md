@@ -5272,6 +5272,125 @@ The honest reading is that the sweeps found nothing because the *cheap* defects 
 already, in earlier phases, and their fixes were carried forward. It is not evidence that a sweep is
 no longer worth running — it is evidence that the corpus of lessons is doing its job.
 
+## 1.21 Phase 16 — shipping and tax boundaries
+
+Plan §16.1a–§16.1d. The phase whose title is the deliverable: **boundaries**, built before the thing
+that will consume them, so that Phase 17 has interfaces to call rather than decisions to make.
+
+**No dependencies added**, and one deliberately not added — see §1.21.4.
+
+### 1.21.1 The distinction the whole phase turns on
+
+**A price is knowable without an address. Eligibility is not.**
+
+The static provider's prices come from the *cart* — a threshold on the subtotal, a fixed amount — and
+not from where the parcel is going. What the destination decides is whether we will send it there at
+all. So a bag with no address can honestly quote a **price**, and must not claim **eligibility**.
+
+`ShippingQuote.destinationKnown` carries that difference. When it is false every rate is
+`eligible: true` because nothing has been ruled out — *not* because anything has been confirmed — and
+the bag labels the row **"Delivery (estimated)"** and says why. §17.1a's preflight re-quotes with the
+real address, which is what **DEV-11** already committed it to.
+
+That is what makes it honest for the bag to show a number at all, which it now does: `$9.95` under
+the threshold, `Free` above it.
+
+### 1.21.2 §16.1d's coupon case, and the two surfaces that had to agree
+
+> *"Free-shipping threshold crossed because of a coupon."*
+
+A discount moves the subtotal, so the shop must decide which number the threshold compares against.
+**The discounted subtotal.** A threshold is a statement about what the customer spends, and after a
+coupon they spend less; comparing against the pre-discount figure would give delivery away on every
+discounted order forever, measured against a number the customer never sees.
+
+The consequence is visible and has to be: **applying a coupon can take free delivery away.** Measured
+end to end — a `$555.00` bag with a 90% code becomes `$55.50` of spend, drops below the `$150.00`
+threshold, and delivery reverts to `$9.95`.
+
+The part that needed care is that **two surfaces read this number**: the rate, and the bag's
+shipping-progress sentence. The sentence was reading the *raw* subtotal, which was correct until
+Phase 15 shipped discounts and would have produced "Standard delivery is free on this order" printed
+directly above a delivery charge. Both now read the same discounted figure, and the same measurement
+confirms it: the message becomes *"$94.50 away from free standard delivery"* — `$150.00 − $55.50` —
+at the same moment the rate returns.
+
+Getting two surfaces from one number rather than two is the specific lesson §1.18.5 and §1.19.9 both
+recorded, applied before the bug rather than after.
+
+### 1.21.3 A free-shipping code waives Standard and nothing else — DEV-60 closed
+
+Phase 15 validated `free_shipping` codes, recorded them and reported them, but had no rate to zero.
+It has one now: `waivable` marks which methods a waiver may touch and **only Standard is marked**.
+
+"Free shipping" means the delivery the shop offers as standard. A code that silently upgraded a
+customer to Overnight would be a promotion nobody wrote, costing real money per order. Verified: a
+free-shipping code takes a `$9.95` Standard rate to `Free` on a bag well under the threshold, and
+leaves Express at `$19.95` and Overnight at `$34.95`.
+
+### 1.21.4 The tax provider answers honestly and calculates nothing — DEV-61
+
+§16.1c says Stripe Tax *"may be"* the initial provider. It is not this one, for two reasons that are
+both phase order rather than preference: the Stripe SDK, its secret and its webhook all belong to
+**Phase 17** and `AGENTS.md` forbids installing a later phase's dependencies early; and there is
+**nothing to calculate**, because tax is a function of a destination and no surface in this
+application collects one yet.
+
+So `deferredTaxProvider` returns `pending_address` and says so. That is not a stub — it is the correct
+answer to every question this application can currently ask. What it must never do is return `0`: a
+tax amount of zero is a *claim that no tax is owed*, and a checkout acting on a zero that really meant
+*unknown* would undercharge every order in a taxable jurisdiction.
+
+`TaxResult.amountMinor` is therefore nullable while `status` is not, and the four statuses are
+distinct on purpose: `calculated`, `not_required` (zero, and that zero is a fact), `pending_address`,
+and `unavailable` (§16.1d's *"tax service unavailable"*). Phase 17 must be able to tell the last two
+apart, because one may proceed to payment and the other may not.
+
+The provider also refuses to guess **if it is one day handed an address** — it answers `unavailable`
+rather than inventing a number. A deferral that quietly started guessing when its inputs improved
+would be worse than one that never worked.
+
+### 1.21.5 The harness found a design flaw in Phase 14's totals
+
+`CartTotals.isFinal` required *discount, shipping and tax* all to be non-null. Writing the check
+`cartTotals(line, null, 0, 0).isFinal === true` made it fail, and the failure was the code's rather
+than the test's.
+
+`null` had been doing two jobs: **"do not draw this row"** and **"this component is unknown"**. For
+shipping and tax those are the same thing. For a discount they are not — a bag with **no code
+applied** has `discountMinor: null` and a perfectly knowable total, because no discount contributes
+nothing. As written, `isFinal` was unreachable for every bag without a promotion, which is most of
+them, and the bug would have surfaced in Phase 17 as *"the total only appears when you use a coupon."*
+
+`isFinal` now asks only about the components that can genuinely be unknown. Two regressions hold the
+distinction.
+
+### 1.21.6 What was verified, and how
+
+| Surface | Evidence |
+|---|---|
+| §16.1a's normalised fields | 68 harness checks; every rate asserted to carry all six, plus a reason when ineligible |
+| The static rate card | threshold, fixed prices, waiver scope, and the cheapest-eligible default |
+| §16.1b's validation | the rate returned is the **quote's**, never the request's; a nonexistent method and an ineligible one give different reasons |
+| §16.1d's six edge cases | all six, including *"address changes after shipping method selection"* as the same id revalidating against a new quote |
+| §16.1c's contract | request and result shapes, the taxable base, and that neither `pending_address` nor `unavailable` can carry a zero |
+| The bag in a browser | 7 checks — no quote on an empty bag, `$9.95` under the threshold, `Free` above it, the estimate label, and the footnote narrowing to tax alone |
+| DEV-60 and the coupon case | 5 checks against live promotions |
+| The rest of the storefront | shell 100, home 183, catalogue 147, search 209, product 80, cart 72, promotions 64 |
+
+### 1.21.7 What is now owed
+
+- **A real tax provider** — Phase 17, with Stripe Tax and an address (**DEV-61**).
+- **A shipping-method selector.** Phase 16 quotes; nothing chooses. `validateSelectedRate` is built
+  and tested for §17.1a's preflight to call, and `orders.shippingMethodCode` is waiting for its
+  answer.
+- **Re-quoting at checkout creation** with the real destination — §16.1b, and the reason
+  `destinationKnown` exists.
+- **Writing the authoritative amounts onto the order.** §16.1d's closing sentence; `orders` already
+  has `shippingMinor`, `taxMinor`, `shippingMethodCode` and `shippingMethodLabel` waiting.
+- **A rate card an operator can change.** It is code today (§16.1a's *"static provider"*), which is
+  right for a demo and wrong for a shop that changes its delivery prices.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -6733,6 +6852,43 @@ Phase 16 turns the boolean into a rate of zero. Nothing in this phase has to cha
 which is the same property Phase 14's deferred totals were built with and Phase 14's second sweep
 tested.
 
+---
+
+### DEV-61 — The tax provider is a boundary with a deferral behind it, not Stripe Tax
+
+**Plan §16.1c says** Stripe Tax *"may be the initial provider"*, and the phase prompt says to *"use
+Stripe Tax as the initial tax provider"*.
+
+**We do:** ship the `TaxProvider` interface exactly as §16.1c specifies it — five inputs, three
+outputs, no provider vocabulary anywhere in the shape — and implement it with a provider that returns
+`pending_address` and calculates nothing.
+
+**Why:** two reasons, both phase order rather than preference.
+
+The Stripe SDK, its secret key and its webhook signature belong to **Phase 17**, and `AGENTS.md` is
+explicit: *"Do not build a later phase's feature early, and do not install its dependencies early."*
+Installing `stripe` here to compute a number that nothing charges would be exactly that, and would put
+a live-key guard, a webhook route and a secret in the environment a phase before anything verifies
+them.
+
+And there is nothing to calculate. Tax is a function of a destination; no surface in this application
+collects one, because the address form is checkout's. Every request this provider can currently
+receive has `address: null`, and the honest answer to *"what tax is owed to an unknown place"* is not
+a number.
+
+**What makes this a boundary rather than a stub** is that the deferral is visible in the type. The
+result is `{ amountMinor: null, status: 'pending_address', providerRef: null }`, and `amountMinor` is
+**never** `0` for a state that means *unknown* — a zero is a claim that no tax is owed, and a checkout
+acting on one would undercharge every order in a taxable jurisdiction. The four statuses are distinct
+precisely so Phase 17 can tell *"no tax applies here"* from *"the tax service is down"*, because one
+of those may proceed to payment and the other may not.
+
+The provider also refuses to guess if it is handed an address, answering `unavailable` rather than
+inventing a figure. A deferral that quietly began guessing once its inputs improved would be more
+dangerous than one that never worked, because nobody would be watching it.
+
+Phase 17 replaces one exported constant. Nothing that reads a `TaxResult` changes.
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -6772,4 +6928,5 @@ tested.
 | Phase 14 — two post-implementation sweeps | 2026-09-07 | Notes **§1.19.9**. Eight findings. **Sweep 1**, making the world move under an open bag: the line rendered the **stored** quantity beside a subtotal computed from the **effective** one — drop stock to 1 under a line holding 2 and the number on screen times the price on screen did not equal the subtotal on screen; and an unpublished product left a **dead link inside the bag**, because `publishedProductWhere` is the single definition of *listable* and the route honours it. Sixteen adversarial cases held, including a forged cart token, a mutation aimed at another session's line id, a re-enabled Add button posting a sold-out variant, two diverging tabs, a double tap, and **the whole add-to-bag flow with JavaScript switched off** — which was a docblock claim until it was tested. **Sweep 2**, against the docblocks: `resolveCart` resolved a cart by cookie when `customerId === null || !found.customer`, so **a signed-out visitor was handed the previous account holder's bag** — measured as "Bag, 1 item" after signing out on a machine with no session; the condition is now `!found.customer` alone and `logout` clears the cookie. Also: the cart cookie decided `secure` from `process.env.NODE_ENV` while the session cookie uses `appEnv`; *"claimed rather than ignored"* never wrote a `customer`; `LINE_LIMIT` was a **silent cap** — the same `pagination: false` finding Phase 13's sweep made about `VARIANT_LIMIT`, in a new file; and *"the action is idempotent per line"* was false. Three claims held under test, including the forward-looking one: assigning the three deferred totals made the summary render Discount, Shipping, Tax and **Total $237.29** with no component edited. `verify:cart` 68 → **72**. |
 | Phase 15 — promotions and discounts | 2026-09-07 | Notes **§1.20**: a server-authoritative promotion engine, filling the first of Phase 14's three deferred totals. Phase 6 had already answered three questions this phase would otherwise have got wrong — `timesUsed` increments in **Phase 17**'s payment transaction, `perCustomerLimit` is a **count of paid orders** rather than a tally that a refund would falsify, and one-code-at-a-time is a schema property rather than a rule. §15.1a's eight checks and §15.1c's eight edge cases are all named checks. **`inactive` and `unknownCode` return the identical sentence**, byte for byte, so the code field cannot be used to enumerate an unreleased campaign. Eligibility is resolved from `collections.products` and not from `product.collections`, because the latter is a **`join`** — virtual, no column, `{ docs }` rather than an array — and reading it would have produced a collection-scoped promotion that silently never applied; the third phase to meet that join, and the first to meet it before shipping the bug. Rounding is `Math.round` rather than `floor`, because flooring every percentage is a systematic fraction of a penny in the shop's favour. **The discount is re-decided on every read** — only the choice of code is stored — so an expired or exhausted code cannot leave a stale amount. `verify:promotions` failed on its first run with `ERR_MODULE_NOT_FOUND: server-only`: the guard was on the wrong module, and the fix was structural — reads that take a `Payload` argument moved to `read.ts` with no guard, exactly as `catalog/query.ts` sits beside `catalog/catalog.ts`. Deviations **DEV-59** (a per-customer limit is unenforceable against a guest, and the alternatives only look like enforcement) and **DEV-60** (a free-shipping code validates and records but changes no price until Phase 16, and draws no `-$0.00` row). `verify:promotions` **64 checks**, 20 browser checks, 0 axe violations. |
 | Phase 15 — two post-implementation sweeps | 2026-09-07 | Notes **§1.20.9**. **No defects** — the first phase where both sweeps came back empty, recorded with the reasons rather than as a result. **Sweep 1**, hostile input: SQL-shaped and script-shaped codes, a 500-character one, a null byte and whitespace were each refused with a readable reason and nothing echoed unescaped; a code that **exists but is switched off** got the same sentence an unknown code gets; the form posts **`["code"]`** and nothing else; and applying a code, emptying the bag and refilling it with a different product produced a **recomputed** discount (`−$44.00` → `−$33.00`) rather than a stale one, because only the choice of code is stored. **Sweep 2** measured the one claim made on reasoning alone: collection eligibility had been corrected during the build — reading `collections.products` instead of the `join` on `product.collections` — without ever being run. Verified end to end: 50% off *Archive* takes `−$37.50` off a member, is refused on a non-member, and in a `$555.00` mixed bag discounts only the eligible `$75.00` line. Nothing about a promotion reaches the page: no eligibility lists, no minimum, no usage limits, no counter, not even the id. One probe was wrong before the code was, counting React's own `$ACTION_*` fields as data the form posts. |
+| Phase 16 — shipping and tax boundaries | 2026-09-07 | Notes **§1.21**: the two provider interfaces, built before the phase that consumes them. The phase turns on one distinction — **a price is knowable without an address; eligibility is not** — so `destinationKnown` carries it, the bag quotes `$9.95` under the threshold and `Free` above it labelled *"Delivery (estimated)"*, and §17.1a re-quotes with the real address. §16.1d's coupon case is answered explicitly: the threshold reads the **discounted** subtotal, so applying a coupon can take free delivery away — measured, a `$555.00` bag with a 90% code drops to `$55.50` of spend and delivery returns to `$9.95`. The care was that **two surfaces read that number**: the progress sentence was reading the raw subtotal and would have promised free delivery directly above a delivery charge, which Phase 15 had made reachable and nothing had yet noticed. **DEV-60 closed** — a free-shipping code now zeroes Standard and *only* Standard, because a code that silently upgraded a customer to Overnight is a promotion nobody wrote. **DEV-61**: the tax provider is the §16.1c interface with a deferral behind it, not Stripe Tax — the SDK belongs to Phase 17 and there is no destination to calculate against; it returns `pending_address`, never `0`, and refuses to guess even if handed an address. The harness also found a **design flaw in Phase 14's totals**: `isFinal` required a discount, so a bag with no code applied could never show a final Total — `null` had been doing duty as both *"do not draw this row"* and *"unknown"*, and only the second belongs in that test. `verify:shipping` **68 checks**, 12 browser checks, 0 axe violations. |
 > **Append this table, and the sections above it, at the end of every phase.**
