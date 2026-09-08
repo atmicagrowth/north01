@@ -907,12 +907,8 @@ const FULL_BLEED_HOME_SURFACES = new Set([
   'collectionFeature',
   'figureFullBleed',
   'hero',
-  /*
-   * `heroSplit` is a column beside the statement on desktop and the whole band below 768px, where the
-   * grid collapses and the frame carries no gutter of its own. So its last tier is a bare `100vw`
-   * honestly — the condition above it is what stops the claim applying to the split.
-   */
-  'heroSplit',
+  /* The statement is set over `heroWide`, so the picture really is the viewport at every width. */
+  'heroWide',
 ])
 
 for (const [surface, value] of Object.entries(HOME_IMAGE_SIZES)) {

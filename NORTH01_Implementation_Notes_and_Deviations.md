@@ -7065,7 +7065,7 @@ typography-led one.
 
 *Affects Phase 10.*
 
-### DEV-44 — The hero is a split composition; no type is set over the campaign photograph
+### DEV-44 — The hero statement is set over the campaign photograph
 
 **Visual guide §09 says** the home page is a *"hero-first composition"* with a *"large campaign
 statement"*, and the reference image draws the statement **over** the photograph.
@@ -7085,25 +7085,37 @@ aligned. Nothing is overlaid, and there is no scrim and no gradient.
    by hoping. The copy sits in a measured column on Obsidian at 17.10:1, at every one of §30.1a's
    eight widths.
 
-**Revised, at the project owner's direction.** The statement now sits **beside** the frame rather
-than beneath it — the composition the reference draws — in one band split 56/44 at 768px and stacked
-below it.
+**Revised twice, at the project owner's direction.** First beside the frame, then **over** it: the
+picture now runs edge to edge and the statement sits on its right half above 768px, stacked beneath
+it below that.
+
+The statement is on the **right** because the supplied panorama has its subject in the left third.
+Left-aligned type would have been set on the model's face, and no crop fixes that — the photograph
+cannot be made to put him anywhere else. `heroWide` is 5:2 rather than 16:9 for the same reason: a
+16:9 crop cuts both ends off a frame chosen for its width.
 
 What changed is the arrangement. What did not change is any of the three reasons above, and that is
 why the revision is a revision rather than a reversal:
 
 - Below 768px the grid collapses and the frame returns above the statement, so **§10's 320px case is
   the stacked one it always was**.
-- The type is beside the picture, not over it, so there is **still no scrim and no gradient** and the
-  headline keeps the palette's own 17.10:1 whatever an editor uploads next season.
+- **There is now a scrim, and it is a real concession.** Guide §11 lists *"excessive gradients"* under
+  Avoid, and DEV-44 spent three arguments not needing one. Bone over a bright sky is illegible
+  without it. It is held to the minimum that works — 88% at the very edge rather than opaque, because
+  a solid edge would undo the edge-to-edge picture it is drawn over, and gone entirely by 70% of the
+  width, well clear of the subject. It renders only where the type is, and only above 768px.
 - The copy is still in a measured column, so **§10.1b's *"text too long for selected crop"* remains
   impossible by construction**.
 
-Two things the split forced. The frame needed an upright crop — `heroSplit`, 4:5, because a 16:9 crop
-in a two-fifths column is a letterbox — and the band needed a desktop minimum height, or a campaign
-with a short headline reads as a strip rather than as a hero. The split breakpoint is **768px** and
-not `lg`, because 768 is the width `MediaImage` already switches geometry on; splitting at 1024
-instead would have spent the band between them showing an upright crop across the whole viewport.
+The band carries a desktop minimum height, or a campaign with a short headline reads as a strip
+rather than as a hero. The breakpoint is **768px** and not `lg`, because 768 is the width
+`MediaImage` already switches geometry on, so the layout and the crop change at the same place
+rather than leaving a band of widths between them.
+
+**What this costs, stated plainly.** The statement's side is now a property of one photograph rather
+than of the design. An editor who uploads a frame composed the other way round has to move the type
+with it, and that is a code change rather than a setting. DEV-44's second argument — that a design
+system cannot inspect an image — is exactly what is being paid here.
 
 The original ruling stands as written for what it decided — that the *written guide beats the
 reference image*. It was overridden here by the owner, which is a different authority from the one

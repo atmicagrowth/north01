@@ -64,14 +64,16 @@ export const MEDIA_CONTEXTS = {
     widths: [768, 1024, 1280, 1440, 1920, 2560],
   },
   /**
-   * The campaign frame when it sits *beside* the statement rather than above it — the split hero.
-   * Upright, because the cell is roughly two fifths of the grid and a 16:9 crop in it would be a
-   * letterbox. Same widths logic as the tiles: the column is around 44vw, never the whole viewport.
+   * The campaign frame when the statement is set *over* it — the full-bleed hero.
+   *
+   * 5:2 rather than 16:9, because the frame this was built for is a 2.5:1 panorama and a 16:9 crop
+   * of it would cut both ends off a photograph chosen for its width. The band's height follows the
+   * same ratio at the widths that matter, so the picture is very nearly uncropped.
    */
-  heroSplit: {
-    aspectRatio: 4 / 5,
+  heroWide: {
+    aspectRatio: 5 / 2,
     crop: 'fill',
-    widths: [640, 768, 900, 1024, 1280, 1600],
+    widths: [768, 1024, 1280, 1440, 1920, 2560],
   },
   /** The same moment, re-framed upright — §10's "intentional mobile crop". */
   heroMobile: {

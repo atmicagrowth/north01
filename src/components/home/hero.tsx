@@ -11,27 +11,32 @@ import type { SectionOf } from '@/lib/home/resolve'
  * **The campaign hero.** Plan §10.1b, visual guide §09: *"Hero-first composition. Large campaign
  * statement."*
  *
- * ### The composition is split, and still no type sits over the photograph — DEV-44, revised
+ * ### The statement is set over the photograph — DEV-44, revised again
  *
- * The statement occupies the left of the grid and the campaign frame the right, both inside one
- * band. This is the composition the visual reference draws, asked for by the project owner, and it
- * arrives *without* conceding the three reasons DEV-44 originally stacked the two:
+ * The picture runs edge to edge and the statement sits over its right half, which is the composition
+ * the project owner asked for. Of DEV-44's three arguments, two still hold and one is now a cost
+ * paid on purpose:
  *
  * 1. **Guide §10 opens its responsive priority list with *"Preserve headline hierarchy."*** Below
- *    `lg` the grid collapses and the frame goes back above the statement, so the 320px case is the
- *    stacked one it always was. Display XL never has to compete with a photograph for width. The
- *    breakpoint is 768px because that is the one `MediaImage` already switches *geometry* on, and a
- *    layout that split at a different width than the frame re-crops at would have spent the band
- *    between them showing an upright crop across the whole viewport.
- * 2. **Guide §11 lists *"Excessive gradients"* under Avoid.** There is still no scrim, because the
- *    type is not over the picture — it is beside it, on `canvas`, at the palette's own 17.10:1.
- *    Whatever an editor uploads next season, the headline's contrast is unchanged.
+ *    768px nothing is overlaid at all — the statement returns beneath the frame on `canvas`, so the
+ *    320px case is the stacked one DEV-44 built. 768px is also the width `MediaImage` switches
+ *    *geometry* on, so the layout and the crop change at the same place rather than leaving a band
+ *    of widths between them.
+ * 2. **Guide §11 lists *"Excessive gradients"* under Avoid — and there is now a scrim.** This is the
+ *    concession. Bone over a bright sky is illegible without one, and the composition was chosen
+ *    knowing that. It is held to the minimum that works: 88% at the very edge rather than opaque,
+ *    because a solid edge would undo the edge-to-edge picture it is drawn over, and gone entirely by
+ *    70% of the width — well clear of the subject. Rendered only where the type is, and only above
+ *    768px.
  * 3. **§10.1b's *"Text too long for selected crop"* stays impossible by construction.** The copy is
- *    in a measured column whose length is bounded by the measure rather than by the crop.
+ *    in a measured column whose length is bounded by the measure rather than by the picture.
  *
- * What the split does change is the frame's *shape*: `heroSplit` is upright, because a 16:9 crop in
- * a two-fifths column is a letterbox. The band also carries a desktop minimum height, so a campaign
- * with a short headline still reads as a hero rather than as a strip.
+ * **The statement is on the right because the subject is on the left.** The frame this was built for
+ * is a 2.5:1 panorama with the model in its left third; left-aligned type would have been set on his
+ * face. `heroWide` is 5:2 rather than 16:9 for the same reason — a 16:9 crop cuts both ends off a
+ * photograph chosen for its width. An editor who uploads a frame composed the other way round should
+ * move the statement with it, and that is a code change rather than a setting, which is honest about
+ * what it is.
  *
  * ### Everything here comes from the campaign document
  *
@@ -63,34 +68,41 @@ export function Hero({ section }: { section: SectionOf<'hero'> }) {
   return (
     <Section spacing="none" data-section="hero">
       {/*
-        One band, two cells, and the page's own max width — so the statement's left gutter lines up
-        with every section below it. Full-bleed to the viewport would put the headline out of step
-        with the rest of the page at any width past `max-w-page`, which reads as a bug rather than
-        as a composition.
+        One full-bleed band. The picture is the band; the statement is set over it, held to the right
+        because that is the half of this photograph the subject is not standing in.
 
-        The frame is written first so that it is *above* the statement once the grid collapses, and
-        `order` moves it to the right on desktop. Source order is the mobile order; that is the one
-        that has to be right without a media query.
+        Source order is the mobile order — frame, then statement — and it is the order that has to be
+        right without a media query. At `md` the statement is lifted out of flow and placed over the
+        picture, which is the only point at which any of this becomes an overlay.
       */}
-      <div className="mx-auto grid w-full max-w-page md:min-h-[clamp(30rem,44vw,44rem)] md:grid-cols-[minmax(0,1fr)_minmax(0,44%)]">
-        <div className="md:order-2">
-          {/*
-            The reserved frame is what stops the band shifting, so it stays exactly as it is below
-            `lg`. Above it the cell's height is the band's and the picture fills it — `aspect-auto`
-            hands geometry to the grid at precisely the breakpoint the layout changes.
-          */}
-          <MediaImage
-            media={section.media}
-            mobileMedia={section.mobileMedia}
-            context="heroSplit"
-            mobileContext="heroMobile"
-            sizes={HOME_IMAGE_SIZES.heroSplit}
-            priority={section.lcp}
-            className="md:h-full md:aspect-auto"
-          />
-        </div>
+      <div className="relative mx-auto w-full max-w-page md:min-h-[clamp(26rem,40vw,38rem)]">
+        <MediaImage
+          media={section.media}
+          mobileMedia={section.mobileMedia}
+          context="heroWide"
+          mobileContext="heroMobile"
+          sizes={HOME_IMAGE_SIZES.heroWide}
+          priority={section.lcp}
+          className="md:absolute md:inset-0 md:h-full md:aspect-auto"
+        />
 
-        <div className="flex items-center md:order-1">
+        {/*
+          **The one gradient in this project, and it is here under protest.**
+
+          Guide §11 lists *"excessive gradients"* under Avoid, and DEV-44 spent three arguments not
+          needing one. A statement set over a photograph needs a scrim or it is illegible over a
+          bright sky, and this composition was chosen deliberately with that cost understood.
+
+          It is kept to the minimum that does the job: opaque only at the very edge, gone by 62% of
+          the width, and present only where the type is. Below `md` the statement is not over the
+          picture at all, so the scrim is not rendered.
+        */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 hidden bg-gradient-to-l from-canvas/88 from-0% via-canvas/62 via-42% to-transparent to-70% md:block"
+        />
+
+        <div className="md:absolute md:inset-y-0 md:right-0 md:flex md:w-[54%] md:items-center">
           <div className="w-full px-[clamp(1.25rem,4vw,4rem)] py-l md:py-xl">
             {/*
               `as` comes from the resolver, which demotes every hero after the first. A component
@@ -105,9 +117,9 @@ export function Hero({ section }: { section: SectionOf<'hero'> }) {
             ) : null}
 
             {/*
-            No buttons at all is a legitimate state — §10.1b's "CTA omitted", and a campaign is a
-            statement before it is a route. The navigation above still offers every destination.
-          */}
+              No buttons at all is a legitimate state — §10.1b's "CTA omitted", and a campaign is a
+              statement before it is a route. The navigation above still offers every destination.
+            */}
             {ctas.length > 0 ? (
               <div className="mt-l flex flex-wrap items-center gap-s">
                 {ctas.map((cta, index) => (
