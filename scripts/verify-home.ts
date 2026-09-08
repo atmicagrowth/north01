@@ -903,7 +903,17 @@ for (const [surface, value] of Object.entries(HOME_IMAGE_SIZES)) {
  * — the tier Phase 13's second sweep found over-claiming by up to 20% at 320px, because a bare
  * `100vw` fallback has no media condition to make anyone re-check it.
  */
-const FULL_BLEED_HOME_SURFACES = new Set(['collectionFeature', 'figureFullBleed', 'hero'])
+const FULL_BLEED_HOME_SURFACES = new Set([
+  'collectionFeature',
+  'figureFullBleed',
+  'hero',
+  /*
+   * `heroSplit` is a column beside the statement on desktop and the whole band below 768px, where the
+   * grid collapses and the frame carries no gutter of its own. So its last tier is a bare `100vw`
+   * honestly — the condition above it is what stops the claim applying to the split.
+   */
+  'heroSplit',
+])
 
 for (const [surface, value] of Object.entries(HOME_IMAGE_SIZES)) {
   const last = value.split(',').at(-1)?.trim()

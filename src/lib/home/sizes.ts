@@ -39,6 +39,8 @@ import { THREE_UP_IN_CONTAINER, TWO_UP_IN_CONTAINER } from '@/lib/media/grid'
 export const HOME_IMAGE_SIZES = {
   /** Full-bleed campaign frame. */
   hero: '100vw',
+  /** The split hero's frame: a column beside the statement on desktop, full width once stacked. */
+  heroSplit: '(min-width: 768px) 44vw, 100vw',
   /** Full-bleed collection opener. */
   collectionFeature: '100vw',
   /** A figure given the whole viewport. */

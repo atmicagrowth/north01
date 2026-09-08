@@ -7065,7 +7065,7 @@ typography-led one.
 
 *Affects Phase 10.*
 
-### DEV-44 — The hero is a stacked composition; no type is set over the campaign photograph
+### DEV-44 — The hero is a split composition; no type is set over the campaign photograph
 
 **Visual guide §09 says** the home page is a *"hero-first composition"* with a *"large campaign
 statement"*, and the reference image draws the statement **over** the photograph.
@@ -7084,6 +7084,30 @@ aligned. Nothing is overlaid, and there is no scrim and no gradient.
 3. **It removes §10.1b's *"Text too long for selected crop"* edge case by construction** rather than
    by hoping. The copy sits in a measured column on Obsidian at 17.10:1, at every one of §30.1a's
    eight widths.
+
+**Revised, at the project owner's direction.** The statement now sits **beside** the frame rather
+than beneath it — the composition the reference draws — in one band split 56/44 at 768px and stacked
+below it.
+
+What changed is the arrangement. What did not change is any of the three reasons above, and that is
+why the revision is a revision rather than a reversal:
+
+- Below 768px the grid collapses and the frame returns above the statement, so **§10's 320px case is
+  the stacked one it always was**.
+- The type is beside the picture, not over it, so there is **still no scrim and no gradient** and the
+  headline keeps the palette's own 17.10:1 whatever an editor uploads next season.
+- The copy is still in a measured column, so **§10.1b's *"text too long for selected crop"* remains
+  impossible by construction**.
+
+Two things the split forced. The frame needed an upright crop — `heroSplit`, 4:5, because a 16:9 crop
+in a two-fifths column is a letterbox — and the band needed a desktop minimum height, or a campaign
+with a short headline reads as a strip rather than as a hero. The split breakpoint is **768px** and
+not `lg`, because 768 is the width `MediaImage` already switches geometry on; splitting at 1024
+instead would have spent the band between them showing an upright crop across the whole viewport.
+
+The original ruling stands as written for what it decided — that the *written guide beats the
+reference image*. It was overridden here by the owner, which is a different authority from the one
+DEV-44 was weighing, and the record is kept rather than rewritten.
 
 The reference image is directional and explicitly non-authoritative — visual guide §10 and the plan's
 own visual-reference rules — and the written guide beats it, which is the same ruling **C-08** applied

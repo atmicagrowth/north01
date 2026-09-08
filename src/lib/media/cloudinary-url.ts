@@ -63,6 +63,16 @@ export const MEDIA_CONTEXTS = {
     crop: 'fill',
     widths: [768, 1024, 1280, 1440, 1920, 2560],
   },
+  /**
+   * The campaign frame when it sits *beside* the statement rather than above it — the split hero.
+   * Upright, because the cell is roughly two fifths of the grid and a 16:9 crop in it would be a
+   * letterbox. Same widths logic as the tiles: the column is around 44vw, never the whole viewport.
+   */
+  heroSplit: {
+    aspectRatio: 4 / 5,
+    crop: 'fill',
+    widths: [640, 768, 900, 1024, 1280, 1600],
+  },
   /** The same moment, re-framed upright — §10's "intentional mobile crop". */
   heroMobile: {
     aspectRatio: 4 / 5,
