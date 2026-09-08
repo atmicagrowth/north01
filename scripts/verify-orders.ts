@@ -881,6 +881,142 @@ try {
       ).productName === 'Alpine Shell',
     )
   }
+  /* ============================================ K — clearing while dispatching, found by sweep 1 */
+  {
+    const order = await makeOrder('K', 'paid')
+
+    await payload.update({
+      collection: 'orders',
+      data: { carrier: 'Royal Mail', fulfillmentStatus: 'processing', trackingNumber: 'TRK-OLD' },
+      id: order.id,
+      overrideAccess: true,
+    })
+
+    /*
+     * One write that both dispatches the order and removes the carrier it would be dispatched with.
+     * The first version read `data.carrier ?? original.carrier`, and `??` reads straight past an
+     * explicit `null` — so the rule was satisfied by the value the same write was deleting.
+     */
+    await refused(
+      'K: **shipping while clearing the carrier is refused** — `null` is what it says',
+      () =>
+        payload.update({
+          collection: 'orders',
+          data: { carrier: null, fulfillmentStatus: 'shipped' },
+          id: order.id,
+          overrideAccess: true,
+        }),
+    )
+
+    check(
+      'K: …and the order did not move',
+      (await orderNow(order.id)).fulfillmentStatus === 'processing',
+    )
+  }
+
+  /* ============================================ J — the transition race, found by sweep 1 */
+  {
+    const order = await makeOrder('J', 'paid')
+
+    await payload.update({
+      collection: 'orders',
+      data: { fulfillmentStatus: 'processing' },
+      id: order.id,
+      overrideAccess: true,
+    })
+
+    /*
+     * **Two staff, one order, and both of them reading before either writes.**
+     *
+     * Every check above this one runs its writes in sequence, and sequential tests of a guard that
+     * exists for a race are exactly what Phase 17's sweeps kept catching. So this reproduces the
+     * interleaving that actually breaks: two transactions opened together, both reading `processing`,
+     * one shipping, and the cancel issued **before** the ship commits.
+     *
+     * Before the fix this printed `ship: ok / cancel: ok / final: cancelled, shippedAt = null` — a
+     * transition the machine calls impossible, plus the carrier, tracking number and dispatch stamp
+     * wiped by the loser's stale document, after §18.1c had already triggered a shipment email.
+     *
+     * The hook now takes `FOR UPDATE` on the row before deciding, so the second transaction waits,
+     * reads `shipped`, and is refused by the rule that always applied.
+     */
+    const t1 = await payload.db.beginTransaction()
+    const t2 = await payload.db.beginTransaction()
+
+    const req1 = { transactionID: t1 } as Parameters<typeof payload.find>[0]['req']
+    const req2 = { transactionID: t2 } as Parameters<typeof payload.find>[0]['req']
+
+    const read1 = await payload.findByID({
+      collection: 'orders',
+      depth: 0,
+      id: order.id,
+      overrideAccess: true,
+      req: req1,
+    })
+
+    const read2 = await payload.findByID({
+      collection: 'orders',
+      depth: 0,
+      id: order.id,
+      overrideAccess: true,
+      req: req2,
+    })
+
+    check(
+      'J: both requests read the same status, which is the precondition for the race',
+      read1.fulfillmentStatus === 'processing' && read2.fulfillmentStatus === 'processing',
+      `${read1.fulfillmentStatus}/${read2.fulfillmentStatus}`,
+    )
+
+    await payload.update({
+      collection: 'orders',
+      data: {
+        carrier: 'Royal Mail',
+        fulfillmentStatus: 'shipped',
+        trackingNumber: `TRKJ${suffix}`,
+      },
+      id: order.id,
+      overrideAccess: true,
+      req: req1,
+    })
+
+    let cancelled = false
+
+    const pendingCancel = payload
+      .update({
+        collection: 'orders',
+        data: { fulfillmentStatus: 'cancelled' },
+        id: order.id,
+        overrideAccess: true,
+        req: req2,
+      })
+      .then(() => {
+        cancelled = true
+      })
+      .catch(() => undefined)
+
+    /* Long enough for the second statement to reach the row lock while the first still holds it. */
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await payload.db.commitTransaction(t1 as string)
+    await pendingCancel
+    await payload.db.commitTransaction(t2 as string).catch(() => undefined)
+
+    const settled = await orderNow(order.id)
+
+    check(
+      'J: **a concurrent cancel cannot un-ship a dispatched order**',
+      !cancelled && settled.fulfillmentStatus === 'shipped',
+      `cancelAccepted=${cancelled} final=${settled.fulfillmentStatus}`,
+    )
+
+    check(
+      'J: …and the dispatch it would have wiped is intact',
+      settled.carrier === 'Royal Mail' &&
+        settled.trackingNumber === `TRKJ${suffix}` &&
+        typeof settled.shippedAt === 'string',
+      `${settled.carrier}/${settled.trackingNumber}/${settled.shippedAt ? 'stamped' : 'null'}`,
+    )
+  }
 } finally {
   await cleanup()
 }

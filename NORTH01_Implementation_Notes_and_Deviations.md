@@ -5883,6 +5883,57 @@ still ends as `noOrder`, recorded and acknowledged, exactly as before.
   accumulates; the same job `Carts.expiresAt` has been waiting for since Phase 14.
 
 
+### 1.23.11 Post-implementation sweeps
+
+#### Sweep 1 — the guard read a value that stopped being true
+
+**Two defects, one of them the phase's own rule failing on the axis the phase introduced.**
+
+Phase 17's sweeps established the shape: a check followed by a write is a read and then a write, and
+two requests can pass the check before either performs the write. Sweep 1 asked whether the fulfilment
+guard — brand new, and the whole point of §18.1b — had the same shape. It did.
+
+Two staff, two requests, two transactions, both reading `processing` before either wrote:
+
+```
+both read: processing / processing
+ship:   ok      (carrier, tracking number and shippedAt written)
+cancel: ok      ← the machine says shipped → cancelled is impossible
+final:  cancelled, shippedAt = null
+```
+
+Worse than the transition itself: the losing write also carried the *rest* of its stale document, so
+the carrier, the tracking number and the dispatch timestamp were wiped — and by §18.1c a shipment
+email had already been triggered for a parcel the record now says was never sent.
+
+**Fixed with a lock rather than a conditional `UPDATE`.** `fulfil.ts` claims the payment axis in one
+statement because it writes raw SQL; this write goes through Payload, because it has to pass
+validation, run the remaining hooks and produce a document the panel can render. So the hook takes
+`SELECT … FOR UPDATE` on the order before deciding: the second transaction waits, reads `shipped`,
+and is refused by the rule that always applied. No new rule — one that is now asked about the state
+the row is actually in.
+
+The interleaving matters and is worth recording, because the first attempt to reproduce this
+**passed**. Two `payload.update` calls fired together serialise on their own, and so does the case
+where the first transaction commits before the second's write is issued. The failure needs the second
+write to be *in flight* while the first still holds the row. `verify-orders` section J now sets that
+up deliberately: two transactions, both reads asserted equal, the cancel issued, four hundred
+milliseconds, then the ship commits.
+
+**Second defect, found by reading rather than running.** The tracking check read
+`data.carrier ?? original.carrier`, and `??` reads straight past an explicit `null` — so a single
+write that both dispatched the order and *cleared* the carrier satisfied §18.1c's condition using the
+value it was deleting. Now `'carrier' in data`, so what the write says wins, including when what it
+says is nothing.
+
+**What held.** The full-document re-save, which was the likeliest way to have broken the panel:
+`unitPriceMinor` comes back from Postgres as a `number`, not a string, so re-posting an unchanged
+order line is not read as an edit — checked because the opposite would have made every order line
+unsaveable and no existing test would have caught it. Payload also coerces before hooks run, so a
+REST body carrying `"5000"` for a frozen column is compared after coercion rather than as a string.
+
+`verify:orders` is **67 checks**, up from 62. Every other harness re-run unchanged.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
