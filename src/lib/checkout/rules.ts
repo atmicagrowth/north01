@@ -82,12 +82,34 @@ export function needsPaymentFinalisation(status: PaymentStatus): boolean {
 }
 
 /**
+ * **Every status a given status is reachable *from*.**
+ *
+ * Exported because every payment transition in `fulfil.ts` is a single conditional SQL statement, and
+ * each one needs its own list in the `WHERE`. Deriving them here rather than writing them out in SQL
+ * is what stops the two from drifting: add a state to the machine and the statements follow, instead
+ * of silently refusing to move orders that are in it.
+ *
+ * The conditional `UPDATE` is not decoration. A `canTransition` check followed by a write is a read
+ * and then a write, and Phase 17's sweeps established what that costs on this table: two events
+ * arriving at once both read the old status and both act on it. The failure case is not hypothetical
+ * — a `payment_intent.payment_failed` for a superseded attempt, racing the `checkout.session.completed`
+ * that paid the order, would read `pending_payment`, find the transition legal, and write
+ * `payment_failed` over a payment that had just succeeded. The machine forbids `paid → payment_failed`
+ * and the read-then-write never asked it about the state the row was actually in.
+ */
+export function statusesThatCanReach(to: PaymentStatus): readonly PaymentStatus[] {
+  return (Object.keys(ALLOWED_TRANSITIONS) as PaymentStatus[]).filter((from) =>
+    canTransition(from, to),
+  )
+}
+
+/**
  * **Every status from which an order may still become paid**, derived from the machine above.
  *
- * Exported because the claim that marks an order paid is a single conditional SQL statement — see
- * `fulfil.ts` — and that statement needs this list in its `WHERE`. Deriving it here rather than
- * writing it out in SQL is what stops the two from drifting: add a state to the machine and the
- * statement follows, instead of silently refusing to finalise orders in it.
+ * Identical to `statusesThatCanReach('paid')` — `needsPaymentFinalisation` adds only the exclusions
+ * the machine already makes, since neither `paid` nor `refunded` has an edge to `paid`. Kept as its
+ * own name because `fulfil.ts` reads better asking for the finalisable set than for a graph query,
+ * and because the harness asserts the two agree.
  */
 export const FINALISABLE_STATUSES: readonly PaymentStatus[] = (
   Object.keys(ALLOWED_TRANSITIONS) as PaymentStatus[]
@@ -224,6 +246,13 @@ export function planStockDecrements(lines: StockLine[]): StockOutcome {
  * fail on events that are none of its business, and Stripe would retry them forever.
  */
 export const HANDLED_EVENT_TYPES = [
+  /*
+   * §18.1b's `PAID → REFUNDED`, added in Phase 18. A refund is a payment fact and arrives the same
+   * way every other one does: signed by Stripe, never typed into the panel. Note that a `charge`
+   * object carries the *charge's* metadata rather than the Checkout Session's, so this is the event
+   * that made `applyStripeEvent` resolve an order by payment intent as well as by reference.
+   */
+  'charge.refunded',
   'checkout.session.async_payment_failed',
   'checkout.session.async_payment_succeeded',
   'checkout.session.completed',
@@ -246,6 +275,8 @@ export function intendedStatusFor(type: string): null | PaymentStatus {
     case 'checkout.session.async_payment_failed':
     case 'payment_intent.payment_failed':
       return 'payment_failed'
+    case 'charge.refunded':
+      return 'refunded'
     case 'checkout.session.expired':
       return 'cancelled'
     default:

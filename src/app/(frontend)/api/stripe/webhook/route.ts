@@ -152,23 +152,25 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const object = event.data.object as {
+      amount_refunded?: unknown
       metadata?: unknown
       payment_intent?: unknown
     }
 
+    /*
+     * **Two ways back to the order, and Phase 18 needed the second.**
+     *
+     * §17.1b attaches the reference through Checkout Session metadata, which every session-shaped
+     * event carries back. `charge.refunded` does not: its object is a Charge, whose `metadata` is the
+     * charge's own. So the reference is *optional* here rather than required, and `applyStripeEvent`
+     * falls back to the payment intent — which Stripe puts on the charge and Phase 17 already stored
+     * on the order.
+     *
+     * An event with neither still ends as `noOrder`, recorded and acknowledged, exactly as before.
+     * What changed is that a signed refund for an order this shop holds is no longer discarded at the
+     * door for lacking a field its event type never had.
+     */
     const orderId = parseOrderReference(object.metadata)
-
-    if (orderId === null) {
-      /* §17.1h's *"invalid metadata"*: signed, but not about anything this application holds. */
-      await payload.update({
-        collection: 'stripe-events',
-        data: { error: 'No usable orderId in the event metadata.', status: 'ignored' },
-        id: eventRowId,
-        overrideAccess: true,
-      })
-
-      return new Response('No order reference.', { status: 200 })
-    }
 
     const paymentIntentId =
       typeof object.payment_intent === 'string'
@@ -180,6 +182,9 @@ export async function POST(request: Request): Promise<Response> {
           : null
 
     const outcome = await applyStripeEvent(payload, {
+      /* Stripe's own figure, in minor units. A partial refund and a full one differ only here. */
+      amountRefundedMinor:
+        typeof object.amount_refunded === 'number' ? object.amount_refunded : null,
       eventType: event.type,
       orderId,
       paymentIntentId,
@@ -189,6 +194,9 @@ export async function POST(request: Request): Promise<Response> {
       collection: 'stripe-events',
       data: {
         ...(outcome.orderId === null ? {} : { order: outcome.orderId }),
+        ...(outcome.outcome === 'noOrder'
+          ? { error: 'No order reference and no known payment intent in the event.' }
+          : {}),
         ...(outcome.outcome === 'outOfStock'
           ? {
               error:

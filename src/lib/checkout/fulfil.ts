@@ -2,11 +2,11 @@ import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import {
-  canTransition,
   FINALISABLE_STATUSES,
   intendedStatusFor,
   needsPaymentFinalisation,
   planStockDecrements,
+  statusesThatCanReach,
   type PaymentStatus,
   type StockLine,
 } from './rules'
@@ -72,17 +72,51 @@ const relatedId = (value: unknown): null | number =>
       : null
 
 /**
+ * The payment statuses as SQL literals.
+ *
+ * A conditional `UPDATE` needs the new value in the statement, and `payment_status` is a Postgres
+ * enum: a bound parameter there has to be told which enum it is, which means writing the generated
+ * type name into application code and hoping a later migration does not rename it. The union is
+ * closed and exhaustively keyed, so a literal is both safer and one fewer thing to keep in step. The
+ * `IN (...)` side stays parameterised, where Postgres infers the type from the column.
+ */
+const STATUS_LITERAL: Record<PaymentStatus, ReturnType<typeof sql>> = {
+  cancelled: sql`'cancelled'`,
+  checkout_started: sql`'checkout_started'`,
+  draft: sql`'draft'`,
+  paid: sql`'paid'`,
+  payment_failed: sql`'payment_failed'`,
+  pending_payment: sql`'pending_payment'`,
+  refunded: sql`'refunded'`,
+}
+
+const statusList = (statuses: readonly PaymentStatus[]) =>
+  sql.join(
+    statuses.map((status) => sql`${status}`),
+    sql`, `,
+  )
+
+/**
  * Apply one verified event to one order.
  *
  * `paymentIntentId` is recorded when the event carries one, because `Orders.stripePaymentIntentId` is
  * unique and is what makes a duplicate finalisation detectable from the data alone, months later,
  * without replaying anything.
+ *
+ * **`orderId` may be `null`, and that is Phase 18's refund path.** §17.1b attaches an order reference
+ * through Checkout Session metadata, and every session-shaped event carries it back. A
+ * `charge.refunded` event does not: its `data.object` is a Charge, whose `metadata` is the charge's
+ * own and is usually empty. The link that *does* survive is the payment intent, which Phase 17 already
+ * stores on the order and which Stripe puts on the charge -- so an event with no usable reference
+ * falls back to it rather than being discarded. Without that, a refund would be signed, correct, about
+ * an order this shop holds, and silently ignored.
  */
 export async function applyStripeEvent(
   payload: Payload,
   input: {
+    amountRefundedMinor?: null | number
     eventType: string
-    orderId: number
+    orderId: null | number
     paymentIntentId: null | string
   },
 ): Promise<FulfilOutcome> {
@@ -92,9 +126,7 @@ export async function applyStripeEvent(
     return { orderId: null, outcome: 'ignored' }
   }
 
-  const order = await payload
-    .findByID({ collection: 'orders', depth: 0, id: input.orderId, overrideAccess: true })
-    .catch(() => null)
+  const order = await resolveOrder(payload, input.orderId, input.paymentIntentId)
 
   if (!order) {
     /*
@@ -120,21 +152,84 @@ export async function applyStripeEvent(
     return finalisePaidOrder(payload, order.id, input.paymentIntentId)
   }
 
-  if (!canTransition(current, intended)) {
+  /*
+   * **Every other transition is claimed, not checked** — the shape Phase 17's sweeps arrived at, now
+   * applied to the paths they did not cover. The one that mattered: a `payment_intent.payment_failed`
+   * for a superseded attempt, arriving at the same instant as the event that paid the order, read
+   * `pending_payment`, agreed the transition was legal, and wrote `payment_failed` over a payment
+   * that had already succeeded. The machine forbids `paid -> payment_failed`; the read simply never
+   * saw `paid`. Here the condition and the write are one statement, and Postgres serialises them.
+   *
+   * A refund also records **how much** and **when**. A status alone cannot tell a partial refund from
+   * a full one, and only the amount can.
+   */
+  const refundExtras =
+    intended === 'refunded'
+      ? sql`, "refunded_at" = ${new Date().toISOString()}, "refunded_minor" = ${
+          typeof input.amountRefundedMinor === 'number' ? input.amountRefundedMinor : null
+        }`
+      : sql``
+
+  const claim = await payload.db.drizzle.execute(
+    sql`UPDATE "orders"
+        SET "payment_status" = ${STATUS_LITERAL[intended]}${refundExtras}
+        WHERE "id" = ${order.id}
+          AND "payment_status" IN (${statusList(statusesThatCanReach(intended))})`,
+  )
+
+  if ((claim.rowCount ?? 0) === 0) {
     return { orderId: order.id, outcome: 'alreadyFinal' }
   }
 
-  await payload.update({
-    collection: 'orders',
-    data: {
-      paymentStatus: intended,
-      ...(intended === 'cancelled' ? { fulfillmentStatus: 'cancelled' as const } : {}),
-    },
-    id: order.id,
-    overrideAccess: true,
-  })
+  if (intended === 'cancelled') {
+    /*
+     * An expired session cancels the fulfilment half too. Separate from the claim above because the
+     * claim is what guarantees exactly one caller reaches here — by the time this runs the race is
+     * over.
+     *
+     * **Stock is deliberately not returned.** Phase 17 moves inventory only at confirmed payment, so
+     * a cancellation at this point has nothing to give back: the units were never taken.
+     */
+    await payload.update({
+      collection: 'orders',
+      data: { fulfillmentStatus: 'cancelled' },
+      id: order.id,
+      overrideAccess: true,
+    })
+  }
 
   return { orderId: order.id, outcome: 'transitioned', status: intended }
+}
+
+/**
+ * The order this event is about — by reference if it carries one, and by payment intent if it does
+ * not. Both columns are unique and both lookups are exact, so neither can return somebody else's
+ * order.
+ */
+async function resolveOrder(
+  payload: Payload,
+  orderId: null | number,
+  paymentIntentId: null | string,
+) {
+  if (orderId !== null) {
+    return payload
+      .findByID({ collection: 'orders', depth: 0, id: orderId, overrideAccess: true })
+      .catch(() => null)
+  }
+
+  if (paymentIntentId === null) {
+    return null
+  }
+
+  const { docs } = await payload.find({
+    collection: 'orders',
+    depth: 0,
+    limit: 1,
+    overrideAccess: true,
+    where: { stripePaymentIntentId: { equals: paymentIntentId } },
+  })
+
+  return docs[0] ?? null
 }
 
 /**

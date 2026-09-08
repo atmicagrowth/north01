@@ -40,7 +40,8 @@
     "verify:promotions": "payload run scripts/verify-promotions.ts",
     "verify:shipping": "payload run scripts/verify-shipping.ts",
     "verify:checkout": "payload run scripts/verify-checkout.ts",
-    "verify:webhook": "payload run scripts/verify-webhook.ts"
+    "verify:webhook": "payload run scripts/verify-webhook.ts",
+    "verify:orders": "payload run scripts/verify-orders.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",

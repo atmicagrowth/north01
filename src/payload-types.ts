@@ -1631,7 +1631,7 @@ export interface Order {
   paymentStatus:
     'draft' | 'checkout_started' | 'pending_payment' | 'paid' | 'payment_failed' | 'refunded' | 'cancelled';
   /**
-   * Independent of payment. An order can be refunded after it shipped.
+   * Independent of payment — an order can be refunded after it shipped. Steps are checked server-side (§18.1b): picking and dispatch need a paid order, shipping needs a carrier and a tracking number, and Delivered and Cancelled are ends.
    */
   fulfillmentStatus: 'unfulfilled' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   /**
@@ -1777,6 +1777,14 @@ export interface Order {
    * When the verified webhook confirmed payment. Distinct from createdAt, which is when the draft was made.
    */
   paidAt?: string | null;
+  /**
+   * Set from a signature-verified refund event.
+   */
+  refundedAt?: string | null;
+  /**
+   * How much came back, in minor units. Partial refunds are ordinary.
+   */
+  refundedMinor?: number | null;
   /**
    * The customer-facing reference. Opaque and non-sequential — decision D-17.
    */
@@ -2809,6 +2817,8 @@ export interface OrdersSelect<T extends boolean = true> {
   stripeCheckoutSessionId?: T;
   stripePaymentIntentId?: T;
   paidAt?: T;
+  refundedAt?: T;
+  refundedMinor?: T;
   orderNumber?: T;
   updatedAt?: T;
   createdAt?: T;

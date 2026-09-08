@@ -6,6 +6,7 @@ import { isAdmin, isStaff, nobody, nobodyField, ownedByCustomer } from '../acces
 import { addressFields } from '../fields/address'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
+import { enforceOrderTransitions } from '../hooks/orderTransitions'
 
 /**
  * The durable record of a purchase — the one table in this schema that must still be readable and
@@ -196,7 +197,7 @@ export const Orders: CollectionConfig = {
                   admin: {
                     width: '50%',
                     description:
-                      'Independent of payment. An order can be refunded after it shipped.',
+                      'Independent of payment — an order can be refunded after it shipped. Steps are checked server-side (§18.1b): picking and dispatch need a paid order, shipping needs a carrier and a tracking number, and Delivered and Cancelled are ends.',
                   },
                 },
               ],
@@ -443,14 +444,22 @@ export const Orders: CollectionConfig = {
               type: 'row',
               fields: [
                 {
+                  /*
+                   * Written by the transition, not typed beside it — see `hooks/orderTransitions.ts`.
+                   * A dispatch date a person can set independently of the status is a date that will
+                   * eventually disagree with it, and §18.1c hangs a shipment email off the transition
+                   * rather than off the timestamp.
+                   */
                   name: 'shippedAt',
                   type: 'date',
-                  admin: { width: '50%', date: { pickerAppearance: 'dayAndTime' } },
+                  access: { update: nobodyField },
+                  admin: { width: '50%', readOnly: true, date: { pickerAppearance: 'dayAndTime' } },
                 },
                 {
                   name: 'deliveredAt',
                   type: 'date',
-                  admin: { width: '50%', date: { pickerAppearance: 'dayAndTime' } },
+                  access: { update: nobodyField },
+                  admin: { width: '50%', readOnly: true, date: { pickerAppearance: 'dayAndTime' } },
                 },
               ],
             },
@@ -498,6 +507,42 @@ export const Orders: CollectionConfig = {
                   'When the verified webhook confirmed payment. Distinct from createdAt, which is when the draft was made.',
               },
             },
+            {
+              /*
+               * §18.1b's `PAID → REFUNDED`, recorded rather than implied. A refund with no amount and
+               * no date is a status, and a status is not a financial record — a partial refund and a
+               * full one both land on the same word, and only the number tells them apart.
+               *
+               * Written from Stripe's `charge.refunded` event and from nowhere else, for the same
+               * reason `paidAt` is: money moved somewhere this application does not control, and the
+               * only trustworthy account of it is the one that arrives signed.
+               */
+              type: 'row',
+              fields: [
+                {
+                  name: 'refundedAt',
+                  type: 'date',
+                  access: { update: nobodyField },
+                  admin: {
+                    width: '50%',
+                    readOnly: true,
+                    date: { pickerAppearance: 'dayAndTime' },
+                    description: 'Set from a signature-verified refund event.',
+                  },
+                },
+                minorUnits({
+                  name: 'refundedMinor',
+                  label: 'Refunded',
+                  access: { update: nobodyField },
+                  admin: {
+                    width: '50%',
+                    readOnly: true,
+                    description:
+                      'How much came back, in minor units. Partial refunds are ordinary.',
+                  },
+                }),
+              ],
+            },
           ],
         },
       ],
@@ -521,6 +566,13 @@ export const Orders: CollectionConfig = {
   ],
 
   hooks: {
+    /**
+     * §18.1b: *"Do not let arbitrary transitions happen from the admin UI."* The rules are in
+     * `lib/orders/rules.ts`; this is what makes every write obey them, including one that never goes
+     * near the panel.
+     */
+    beforeChange: [enforceOrderTransitions],
+
     /**
      * Reached only by a permanent delete from the trash view — the admin panel's ordinary delete is
      * an update that sets `deletedAt`. `includeTrashed` matters here and nowhere else: an order line

@@ -1,6 +1,8 @@
 import type { CollectionConfig } from 'payload'
 
-import { isAdmin, isStaff, nobody, ownedByCustomer } from '../access'
+import { freezeOrderLines } from '../hooks/freezeOrderLines'
+
+import { isAdmin, isStaff, nobody, nobodyField, ownedByCustomer } from '../access'
 import { minorUnits } from '../fields/money'
 
 /**
@@ -86,12 +88,20 @@ export const OrderItems: CollectionConfig = {
         },
       ],
     },
+    /*
+     * The four columns plan §18.1d names, and the two beside them, are closed to the browser by
+     * `nobodyField` and — for §18.1d's four — closed to *everything* by `hooks/freezeOrderLines.ts`.
+     * The docblock above has said "never edited after the order is placed" since Phase 6; Phase 18
+     * is where that stopped being a sentence and became a refusal.
+     */
     {
       name: 'sku',
       type: 'text',
       required: true,
       index: true,
+      access: { update: nobodyField },
       admin: {
+        readOnly: true,
         description:
           'The SKU at the moment of purchase. Durable because SKUs are never reassigned — see ProductVariants.',
       },
@@ -100,13 +110,21 @@ export const OrderItems: CollectionConfig = {
       name: 'productName',
       type: 'text',
       required: true,
-      admin: { description: 'The product name as it read on the day. Never updated.' },
+      access: { update: nobodyField },
+      admin: {
+        readOnly: true,
+        description: 'The product name as it read on the day. Never updated.',
+      },
     },
     {
       name: 'variantLabel',
       type: 'text',
       required: true,
-      admin: { description: 'Colour and size as they read on the day — "Bone / M".' },
+      access: { update: nobodyField },
+      admin: {
+        readOnly: true,
+        description: 'Colour and size as they read on the day — "Bone / M".',
+      },
     },
     {
       type: 'row',
@@ -115,14 +133,16 @@ export const OrderItems: CollectionConfig = {
           name: 'unitPriceMinor',
           label: 'Unit price',
           required: true,
-          admin: { width: '33%', description: 'What one cost, then.' },
+          access: { update: nobodyField },
+          admin: { width: '33%', readOnly: true, description: 'What one cost, then.' },
         }),
         {
           name: 'quantity',
           type: 'number',
           required: true,
           min: 1,
-          admin: { width: '33%', step: 1 },
+          access: { update: nobodyField },
+          admin: { width: '33%', readOnly: true, step: 1 },
           validate: (value: unknown) =>
             typeof value === 'number' && Number.isInteger(value) && value >= 1
               ? true
@@ -132,12 +152,18 @@ export const OrderItems: CollectionConfig = {
           name: 'lineTotalMinor',
           label: 'Line total',
           required: true,
+          access: { update: nobodyField },
           admin: {
             width: '33%',
+            readOnly: true,
             description: 'What this line contributed to the subtotal. Stored, not recomputed.',
           },
         }),
       ],
     },
   ],
+
+  hooks: {
+    beforeChange: [freezeOrderLines],
+  },
 }

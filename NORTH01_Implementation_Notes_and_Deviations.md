@@ -5713,6 +5713,176 @@ own bag showing one fewer than they asked for, on a control they can immediately
 here rather than fixed silently, and it belongs with the cart's transaction story rather than bolted on
 during a checkout sweep.
 
+## 1.23 Phase 18 — order system
+
+Plan §18.1a–§18.1d. The phase where **DEV-03** either becomes true or gets withdrawn: it promised two
+stored axes and one derived display status, and said the confirmation was due here.
+
+**One migration**, generated and committed, and it adds **two columns** — `orders.refunded_at` and
+`orders.refunded_minor`. That is the whole schema cost of this phase, because most of §18 turns out to
+be behaviour over columns that already existed.
+
+### 1.23.1 Two thirds of §18.1a was Phase 17
+
+> *"Create pending order before or at checkout creation. Store stable item snapshots. Store Stripe
+> identifiers. Finalize as paid only from validated Stripe state."*
+
+All four already hold. Preflight creates the order before the Checkout Session, `order-items` has held
+snapshot columns since Phase 6, `stripeCheckoutSessionId` and `stripePaymentIntentId` are written from
+the session and the verified event, and `fulfil.ts` is the only file that writes `paid`.
+
+So this phase did not re-implement §18.1a. It **tested** it, which is a different and more useful
+thing, and then built the two halves that were genuinely missing: the fulfilment machine, and the
+refusals that keep §18.1d's snapshots from being retyped.
+
+### 1.23.2 The edges the plan does not draw
+
+§18.1b gives a happy path and one instruction about everything else — *"Do not let arbitrary
+transitions happen from the admin UI."* Every edge is therefore a decision, and four are worth stating
+because each refuses something a careless click would otherwise do:
+
+- **`delivered` and `cancelled` are terminal.** A cancellation that can be un-cancelled is not one.
+- **`shipped → processing` is refused**, and this is the expensive one. §18.1c hangs a shipment email
+  off marking an order shipped, and moving the column back does not unsend it. The customer's world
+  already contains a dispatch notice; correcting a mistaken dispatch is a conversation, not a state
+  edit.
+- **`shipped → cancelled` is refused.** §18.1b permits `PAID → CANCELLED` *"only where business rules
+  allow"* and invites the shop to say which. This one says: **cancellation is available until
+  dispatch.** After that it is a return, with a different process and a different refund.
+- **`unfulfilled → shipped` is refused.** `processing` is where a human picked the order. Reaching
+  `shipped` without it is an order nobody confirmed could be picked.
+
+Exhaustively: five legal edges across twenty-five ordered pairs, asserted as a count so that a machine
+which quietly grows an edge fails one check rather than none.
+
+### 1.23.3 Where the two axes meet
+
+§18.1b's line starts fulfilment at `PAID`, so advancing into `processing` or `shipped` requires a paid
+order. Two exemptions, both of which are the two-axis model earning its keep:
+
+- **`shipped → delivered` needs no payment condition.** It records a fact about a parcel that has
+  already gone. A refund issued while it was in transit — **DEV-03's own example** — must not make its
+  arrival unrecordable.
+- **Cancelling needs no payment either.** Cancelling an order nobody paid for is the ordinary case.
+
+§18.1c's *"require tracking where appropriate"* is answered at the same point: marking an order
+shipped without a carrier **and** a tracking number is refused, and a tracking number typed as spaces
+is not a tracking number. The timestamps are written **by the transition** rather than typed beside
+it, because a `shippedAt` a person can set independently of the status is a date that will eventually
+disagree with it.
+
+### 1.23.4 A hook, not field access, and not the admin UI
+
+The rules live in `lib/orders/rules.ts` where a harness can enumerate them; `hooks/orderTransitions.ts`
+is what makes every write obey them. It is a `beforeChange` hook rather than field access or an admin
+component for one reason: **a hook runs on every path.** Field access is skipped by `overrideAccess`,
+and an admin component is a suggestion a `PATCH` can ignore.
+
+The subtlety that would have broken it: the admin panel posts the **whole document** on every save, so
+an unchanged `fulfillmentStatus` arrives on every write. Treating that as a transition would make a
+delivered order unsaveable — including adding a tracking number to it, which is an ordinary correction.
+The hook short-circuits on `to === from`; the rules module still reports `unchanged` for a deliberate
+no-op, because a future action asking for one deserves an answer.
+
+### 1.23.5 §18.1d, which was half true and is now enforced
+
+> *"Order item name/price/variant/SKU snapshots remain unchanged after a product is edited later."*
+
+The half that was already true: those four are **columns**, not reads through a relationship, so a
+product edit cannot reach them. Measured rather than assumed — the harness renames the product,
+reprices and re-SKUs the variant, and re-reads the line.
+
+The half that was not: `OrderItems.access.update` is `isStaff`, and a receipt line staff can retype is
+a receipt that can be made to say anything. That is precisely the door Phase 17's second sweep found
+standing open on `paymentStatus` — a rule in a docblock and a field that ignored it — so it is closed
+here in the same phase rather than left for a sweep to find again. `freezeOrderLines` refuses the four
+columns §18.1d names, on **every** path including `overrideAccess`.
+
+`quantity` and `lineTotalMinor` are deliberately not in that set. `OrderItems`' own docblock reserves
+them for a per-line partial refund, and a rule that forbade the case the schema was designed for is a
+rule that gets deleted the first time it is inconvenient. They are closed to the browser by field
+access instead, which is the door §18.1d is actually about.
+
+### 1.23.6 DEV-03, confirmed
+
+Two axes, one derived display status: `displayStatus(payment, fulfilment)` is the machine §18.1b draws,
+reconstructed rather than stored. Storing it would be a third column that can disagree with the two
+that are true.
+
+Precedence: cancellation and refund first, because they are where money is owed or returned and
+burying them under a fulfilment step would report *"shipped"* to somebody just refunded; then
+fulfilment, because an order being picked is newer news than an order being paid for; then payment,
+which answers exactly while fulfilment has not started. All 35 combinations derive a status that has
+customer-facing copy.
+
+Its consumer is **Phase 20's `/account/orders`**, which is where the plan puts order history. Built and
+proved here because DEV-03 said this phase would confirm it, and a derivation with an untested
+precedence is a promise rather than a confirmation.
+
+### 1.23.7 Two more read-then-writes, and a race two phases of tests had missed
+
+Phase 17's sweeps established the shape. Wiring the refund path exposed the same shape twice more in
+`applyStripeEvent`, and one of them could lose a payment:
+
+> A `payment_intent.payment_failed` for a superseded attempt, arriving at the same instant as the
+> `checkout.session.completed` that paid the order, read `pending_payment`, agreed the transition was
+> legal, and wrote `payment_failed` **over a payment that had already succeeded.**
+
+The state machine forbids `paid → payment_failed`. The read simply never asked it about the state the
+row was actually in. `verify-webhook` section F tested exactly this and passed, because it ran the two
+events in sequence — the third time that specific blind spot has produced a defect.
+
+**Every payment transition is now a conditional `UPDATE`**, with the reachable-from list derived from
+the machine by `statusesThatCanReach` rather than written out in SQL. Both orderings of the race now
+end at `paid`, asserted concurrently.
+
+The second was the refund itself, which is written the same way and records **how much** and **when**
+in the same statement. A status alone cannot tell a partial refund from a full one.
+
+### 1.23.8 The refund could not be found by the reference every other event carries
+
+§17.1b attaches the order reference through Checkout Session metadata, and every session-shaped event
+carries it back. `charge.refunded` does not: its `data.object` is a **Charge**, whose `metadata` is the
+charge's own and is usually empty. Adding the event type without noticing that would have produced a
+handler that verified the signature, recorded the event, and ignored every refund.
+
+So the reference is optional now, and `applyStripeEvent` falls back to the **payment intent** — which
+Stripe puts on the charge and Phase 17 already stores on the order, uniquely. An event with neither
+still ends as `noOrder`, recorded and acknowledged, exactly as before.
+
+### 1.23.9 What was verified, and how
+
+| Surface | Evidence |
+|---|---|
+| §18.1b's machine | every one of 25 ordered pairs, and the five legal edges asserted as a count |
+| §18.1c's conditions | tracking, carrier, whitespace-only tracking, and the payment condition with both its exemptions |
+| §18.1c's authorization | anonymous, customer and staff attempts against the **real** access layer — staff may, a customer may not, and staff still cannot skip a step |
+| §18.1d | the product renamed, repriced and re-SKU'd, then the line re-read; then the line itself retyped, on both the staff path and the server one |
+| DEV-03 | all 35 payment × fulfilment combinations, precedence asserted in both directions |
+| §18.1b's `PAID → REFUNDED` | driven end to end from a `charge.refunded` with **no order reference**, resolved by payment intent, amount and date recorded, redelivery refused |
+| The race | two legitimate contradictory events delivered concurrently; the order ends `paid` either way |
+| Phase 17, unchanged | webhook 38/38, checkout 62/62 re-run after the transition rules landed |
+| The rest | access 48, media 61, shell 100, home 183, catalogue 147, search 209, product 80, cart 78, promotions 67, shipping 97 |
+
+`pnpm verify:orders` is **62 checks**.
+
+### 1.23.10 What is now owed
+
+- **A browser and axe pass.** No browser tooling is available in this session, so the admin panel was
+  exercised through the access layer and the routes only smoke-checked over HTTP. Phase 18 adds **no
+  storefront UI**, so nothing customer-facing is unverified — but the order edit screen has not been
+  looked at. Named rather than glossed.
+- **The shipment email** — **DEV-64**, and Phase 19.
+- **A restock on cancellation.** Deliberately absent: Phase 17 moves stock only at confirmed payment,
+  so an unpaid cancellation has nothing to return, and a paid one is a refund — a decision with money
+  attached, not a silent side effect of a select box.
+- **An admin action for cancelling and refunding.** Today a refund arrives from Stripe and the panel
+  reflects it. Initiating one from the panel is a write to Stripe, which belongs with a considered
+  admin surface rather than a status dropdown.
+- **The abandoned-order sweep**, still. An order left at `checkout_started` is harmless and
+  accumulates; the same job `Carts.expiresAt` has been waiting for since Phase 14.
+
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -5768,7 +5938,8 @@ cannot express "paid but not yet processing" alongside "refunded after shipping"
 both a `Status` field and separate "Fulfillment/tracking fields", so the plan's own schema is closer to two
 axes than its state diagram is. Transitions stay restricted; no arbitrary admin edits.
 
-*Resolves G-11. Affects Phase 18. To be confirmed in Phase 18.*
+*Resolves G-11. Affects Phase 18. **Confirmed in Phase 18** — `displayStatus` derives the plan's single
+line from the two stored axes, and all 35 combinations are asserted; see §1.23.6.*
 
 ---
 
@@ -7279,6 +7450,28 @@ reconciling a dispute means opening the order in the admin panel. That is an ope
 rather than a customer's risk, and it buys the guarantee that the shop and the processor can never
 quote two different prices.
 
+---
+
+### DEV-64 — §18.1c's shipment email is a seam in Phase 18 and an email in Phase 19
+
+**Plan §18.1c says:** when marking shipped — *"Require tracking where appropriate. Store carrier.
+Store tracking number. **Trigger shipment email.**"*
+
+**We do:** the first three, and leave the fourth as the transition it hangs off.
+
+**Why:** §19.1a builds the email service, and §19.1b the shipped template. Phase 18 cannot trigger an
+email that does not exist, and the project's own rule is *"do not build a later phase's feature early,
+and do not install its dependencies early."* Resend is a Phase 19 dependency.
+
+What Phase 18 owes Phase 19 is the **point** to hang it on, and that is now a single, guarded,
+server-side transition into `shipped` — one place, reachable only when a carrier and tracking number
+are present, which is exactly what a dispatch notice needs to say. §19.1c's *"a webhook retry must not
+send two confirmation emails"* has the same shape as the transition guard already built here: the
+email follows a state change that can only happen once.
+
+*Affects Phases 18 and 19. To be discharged in Phase 19.*
+
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -7322,4 +7515,5 @@ quote two different prices.
 | Phase 16 — two post-implementation sweeps | 2026-09-07 | Notes **§1.21.8**. One defect, found twice at different resolutions. **Sweep 1** discovered that `Math.max(0, Math.floor(x))` — the guard in every money calculation in this project — is **not a clamp**: `Math.floor(NaN)` is `NaN`, so `taxableBaseMinor` returned `NaN`, a value bound for a tax provider and in Phase 17 a payment processor. The identical input passed through `quoteShipping` cleanly **by luck**, because `NaN >= threshold` is false and the comparison happened to fall the safe way. **Sweep 2** then grepped for the idiom rather than testing for it and found **five more instances** the first sweep had not touched — including a `NaN` discount, twice. A sweep that tests inputs finds instances; a sweep that reads for the pattern finds the class. Fixed with one implementation under two honest names, `toMinorAmount` and `toWholeCount`. Sweep 2 also found the tax provider's most important claim — *"refuses to invent a number even if handed an address"* — **untestable**, because `server-only` is correctly on that module and cannot resolve outside Next; the decision moved to `tax/rules.ts` and four checks now assert it answers `unavailable` rather than `not_required`, which would be a claim about tax law. Twenty-four hostile inputs held and were folded into the committed harness. The drawer and the bag page were measured against each other at both threshold states and agree row for row. `verify:shipping` 68 → **97**, `verify:cart` 72 → **78**, `verify:promotions` 64 → **67**. |
 | Phase 17 — checkout / Stripe | 2026-09-08 | Notes **§1.22**: the phase `AGENTS.md`'s payment rule was written for. `stripe@22.5.0` installed at its pin; one migration, generated and committed — the `stripe-events` table whose **unique event id is §17.1d's first idempotency barrier**, and `orders.cart_id` for §17.1a step 10. `fulfil.ts` is the **only** file that writes `paid`, and three separate mechanisms would each have to be defeated to change that. §17.1a's steps 3–7 are **not re-implemented** — they are `getCart`, which has revalidated products, variants, stock, prices and promotions on every read since Phase 14; preflight adds the refusal a bag does not need. **Both barriers, and why one is not enough**: the unique event id stops the same event twice, and the order's own state stops a *different* event driving the same transition — Stripe sends `checkout.session.completed` **and** `payment_intent.succeeded` for one payment, and only the second barrier catches that. Verified against the real database: inventory is not decremented twice, however many times an event arrives. §17.1f's race is resolved by reading stock **inside** the transaction that writes it, all-or-nothing, and an order that cannot be met is marked **paid and left unfulfilled** — the money moved, and fulfilment is the half §17.1f withholds. §17.1g's six cases collapse to one behaviour: the success page **reads** and reports, writes nothing, and shows one message for not-found, not-yours and never-existed. `verify:webhook` failed on its first run with `ERR_MODULE_NOT_FOUND: server-only` — the third phase to produce the same rule from a third direction: **a guard belongs where a secret or a request could leak, and nowhere else.** Deviations **DEV-62** (complete, and has never taken a payment — no keys; signature verification is nonetheless verified offline against the SDK's own signer, and everything downstream against the real database) and **DEV-63** (one Stripe line item priced at the server's own total, so the shop and the processor cannot quote two different prices). `verify:checkout` **61**, `verify:webhook` **24**, 24 browser checks, 0 axe violations. |
 | Phase 17 — two post-implementation sweeps | 2026-09-08 | Notes **§1.22.9**. One defect and then its whole class. **Sweep 1** delivered two events for one payment *concurrently* — which is what Stripe actually sends — and **both reported `finalised`**: §17.1d's second barrier is a status *read*, and two transactions read `pending_payment` before either wrote `paid`. The first run hid it, because both computed the same absolute stock figure from the same stale read and the second write overwrote the first with an identical number; making the decrement atomic *made the damage visible* rather than fixing it, taking stock from 5 to 1 for a two-unit order. Closed with a **third barrier**: the order is **claimed** by one conditional `UPDATE … WHERE payment_status IN (<finalisable>)` rather than checked, so there is no window between the decision and the write because they are the same statement, and the finalisable list is derived from the state machine so the two cannot drift. The near-miss indicted the harness as much as the code — **24 passing checks** covered both documented barriers and every one ran its events *in sequence*. **Sweep 2** then hunted the *shape* rather than another instance and found two more read-then-writes: the **promotion `timesUsed` counter**, which is what a code's `usageLimit` is measured against — two customers paying with one code at the same instant are two different orders, so no barrier applies and both are owed an increment — and the webhook's `attempts` column. Both are expression updates now. Section K had *already tested* the promotion counter and passed, because it increments in sequence: the identical blind spot, in a check written by sweep 1. The replacement, section L, **failed at `1` instead of `2` before the fix**. Sweep 2 also checked §1.22.1's claim that nothing but `fulfil.ts` can mark an order paid and found **a fourth door**: `paymentStatus` was an ordinary editable select and `Orders.access.update` is `isStaff`, so a staff member could type the value `AGENTS.md` reserves for a signature-verified webhook. Closed with `nobodyField`, which `overrideAccess` skips — server path open, browser path gone — and proved three ways in `verify:access`. Route docblock corrected: it was headed *"why it always answers 200"* and omitted the **503** it returns when Stripe is unconfigured. One read-then-write in `cart.ts` was found and **deliberately left**, with the reason recorded: the write is absolute and already clamped, so the race can lose an increment but can never exceed availability or the per-line limit. New module `lib/checkout/events.ts` — the delivery counter, unguarded so a harness can drive it, which is the `server-only` rule for the fourth time. `verify:webhook` **38**, `verify:checkout` **62**, `verify:access` **48**; every other harness re-run unchanged and green. |
+| Phase 18 — order system | 2026-09-08 | Notes **§1.23**: the phase **DEV-03** said would confirm it, and it is confirmed — `displayStatus` derives plan §18.1b's single line from the two stored axes, all 35 payment x fulfilment combinations asserted, precedence checked in both directions, and the reason one column cannot do it stated: nothing single-valued holds *"refunded, but it shipped last week"*. **Two thirds of §18.1a was already Phase 17** — the pending order, the snapshots, the Stripe identifiers and *"finalize as paid only from validated Stripe state"* all held, so this phase tested them rather than rebuilding them. What was genuinely missing: **§18.1b's edges**, which the plan does not draw. Five legal transitions across 25 ordered pairs, asserted as a count so a machine that quietly grows an edge fails a check; `delivered` and `cancelled` terminal; **`shipped` cannot go back to `processing`**, because §18.1c hangs a dispatch email off that transition and moving the column back does not unsend it; **`shipped` cannot be cancelled**, which is this shop's answer to §18.1b's *"only where business rules allow"* — cancellation is available until dispatch, after which it is a return. Fulfilment starts at `PAID` with two exemptions that are the two-axis model earning its keep: `shipped -> delivered` records a parcel that has already gone (DEV-03's own refunded-in-transit case), and cancelling an unpaid order is ordinary. §18.1c's tracking condition refuses a dispatch with no carrier, no tracking number, or a tracking number of spaces, and the timestamps are written **by** the transition rather than typed beside it. Enforced in a **`beforeChange` hook**, not field access and not an admin component, because a hook runs on every path — with the subtlety that the panel posts the whole document on every save, so an unchanged status must not read as a transition or a delivered order becomes unsaveable. **§18.1d was half true**: the four columns were already snapshots, proved by renaming, repricing and re-SKU-ing the product and re-reading the line — but `OrderItems.access.update` is `isStaff`, so they could be **retyped**, the identical door Phase 17's sweep found on `paymentStatus`. Closed by `freezeOrderLines` on every path including `overrideAccess`; `quantity` and `lineTotalMinor` deliberately excluded, because the schema reserves them for a partial refund. **§18.1b's `PAID -> REFUNDED` now arrives from Stripe** — and `charge.refunded` carries the *charge's* metadata, not the session's, so adding the event type alone would have produced a handler that verified, recorded and ignored every refund; the order is resolved by **payment intent** instead, and the refund records how much and when (two new columns, one generated migration). Wiring it exposed a defect two phases of tests had missed: a `payment_intent.payment_failed` for a superseded attempt, racing the event that paid the order, **could write `payment_failed` over a completed payment** — the machine forbids it and the read-then-write never asked. Every payment transition is a conditional `UPDATE` now, its reachable-from list derived from the machine by `statusesThatCanReach`; both orderings end at `paid`, asserted concurrently. Deviation **DEV-64** (§18.1c's shipment email is a seam here and an email in Phase 19). New script `pnpm verify:orders` — **62 checks**, including staff, customer and anonymous attempts against the real access layer. Every other harness re-run green; typecheck, lint --max-warnings 0 and build pass. **Owed and named**: no browser or axe pass, because no browser tooling is available in this session — Phase 18 adds no storefront UI, but the order edit screen has not been looked at. |
 > **Append this table, and the sections above it, at the end of every phase.**
