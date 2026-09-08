@@ -276,8 +276,12 @@ must never be pushed to: the prompt has no answer in a non-interactive build.
 It is pinned in **`vercel.json`** rather than left to the project's dashboard field, because a build
 command that only exists as a setting is one a re-created project, a second environment or a fork
 silently loses — and what it loses is the migration step, which fails as a runtime error against a
-schema that was never applied rather than as a build error. The file is two lines and it travels with
-the repository.
+schema that was never applied rather than as a build error. The file travels with the repository.
+
+It must also name `"framework": "nextjs"`. Setting `buildCommand` alone **replaces** the framework
+preset rather than adding to it, and the build then completes and fails at the last step with
+*"No Output Directory named `public` found"* — Vercel looking for a static site because nothing told
+it otherwise. Measured, not guessed: that is exactly how the first deployment of this file failed.
 
 Three properties, in the order they matter:
 
