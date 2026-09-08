@@ -1,3 +1,4 @@
+import { toMinorAmount } from '@/lib/money'
 import type { CurrencyCode } from '@/payload/fields/money'
 
 /**
@@ -68,9 +69,9 @@ export type TaxResult = {
 
 /** The taxable base: what is being charged for, before tax. §16.1c's first three inputs, combined. */
 export function taxableBaseMinor(request: TaxRequest): number {
-  const subtotal = Math.max(0, Math.floor(request.subtotalMinor))
-  const discount = Math.max(0, Math.floor(request.discountMinor))
-  const shipping = Math.max(0, Math.floor(request.shippingMinor))
+  const subtotal = toMinorAmount(request.subtotalMinor)
+  const discount = toMinorAmount(request.discountMinor)
+  const shipping = toMinorAmount(request.shippingMinor)
 
   return Math.max(0, subtotal - discount) + shipping
 }

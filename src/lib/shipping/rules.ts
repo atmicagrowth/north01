@@ -1,3 +1,4 @@
+import { toMinorAmount } from '@/lib/money'
 import type { CurrencyCode } from '@/payload/fields/money'
 
 /**
@@ -218,13 +219,11 @@ export type ShippingQuoteInput = {
  * `waivable` marks which methods a waiver can touch, and only one is marked.
  */
 export function quoteShipping(input: ShippingQuoteInput): ShippingQuote {
-  const spend = Math.max(
-    0,
-    Math.floor(input.subtotalMinor) - Math.max(0, Math.floor(input.discountMinor)),
-  )
+  const spend = Math.max(0, toMinorAmount(input.subtotalMinor) - toMinorAmount(input.discountMinor))
 
   const meetsThreshold =
     input.freeShippingThresholdMinor !== null &&
+    Number.isFinite(input.freeShippingThresholdMinor) &&
     input.freeShippingThresholdMinor >= 0 &&
     spend >= Math.floor(input.freeShippingThresholdMinor)
 

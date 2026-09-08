@@ -445,6 +445,211 @@ check(
   String(cartTotals(line, null, 995, 800).totalMinor),
 )
 
+/* =================================================================================================
+ * G — Hostile and impossible inputs
+ *
+ * A boundary's failure modes are arithmetic, not pixels: an amount that goes negative, a currency
+ * that changes under a quote, a default that points at something ineligible. These were written as a
+ * post-implementation sweep and moved here, because a check that found a defect belongs where it
+ * will be run again.
+ * ============================================================================================== */
+
+/* ---------------------------------------------------------------- hostile numbers */
+
+check(
+  'a negative subtotal cannot make a rate negative',
+  quote({ subtotalMinor: -99_999 }).rates.every((candidate) => candidate.amountMinor >= 0),
+)
+
+check(
+  'a negative discount is treated as none rather than as extra spend',
+  quote({ discountMinor: -99_999, subtotalMinor: 10_000 }).rates.find(
+    (candidate) => candidate.id === 'standard',
+  )?.amountMinor === 995,
+)
+
+check(
+  'a discount larger than the bag cannot loop the threshold back around',
+  quote({ discountMinor: 999_999, subtotalMinor: 20_000 }).rates.find(
+    (candidate) => candidate.id === 'standard',
+  )?.amountMinor === 995,
+)
+
+check(
+  'a fractional subtotal is floored, so a bag one cent short does not qualify',
+  quote({ freeShippingThresholdMinor: 15_000, subtotalMinor: 14_999.9 }).rates.find(
+    (candidate) => candidate.id === 'standard',
+  )?.amountMinor === 995,
+)
+
+check(
+  'a negative threshold is not treated as "everything qualifies"',
+  quote({ freeShippingThresholdMinor: -1, subtotalMinor: 1 }).rates.find(
+    (candidate) => candidate.id === 'standard',
+  )?.amountMinor === 995,
+  String(
+    quote({ freeShippingThresholdMinor: -1, subtotalMinor: 1 }).rates.find(
+      (candidate) => candidate.id === 'standard',
+    )?.amountMinor,
+  ),
+)
+
+check(
+  'a zero threshold means everything ships free, which is a shop’s decision to make',
+  quote({ freeShippingThresholdMinor: 0, subtotalMinor: 1 }).rates.find(
+    (candidate) => candidate.id === 'standard',
+  )?.amountMinor === 0,
+)
+
+check(
+  'NaN in the subtotal cannot produce NaN in a rate',
+  quote({ subtotalMinor: NaN }).rates.every((candidate) => Number.isFinite(candidate.amountMinor)),
+)
+
+/* ---------------------------------------------------------------- the default rate */
+
+check(
+  'the default is never an ineligible rate',
+  ['US', 'GB', 'JP', 'FR'].every((country) => {
+    const answer = quote({ destination: { country, postalCode: null, region: null } })
+    if (answer.defaultRateId === null) return true
+    return (
+      answer.rates.find((candidate) => candidate.id === answer.defaultRateId)?.eligible === true
+    )
+  }),
+)
+
+check(
+  'the default is always the cheapest eligible rate, at every threshold state',
+  [0, 10_000, 20_000].every((subtotalMinor) => {
+    const answer = quote({ subtotalMinor })
+    const eligible = answer.rates.filter((candidate) => candidate.eligible)
+    const cheapest = Math.min(...eligible.map((candidate) => candidate.amountMinor))
+    return (
+      answer.rates.find((candidate) => candidate.id === answer.defaultRateId)?.amountMinor ===
+      cheapest
+    )
+  }),
+)
+
+check(
+  'a country where only one method survives defaults to that method',
+  quote({ destination: { country: 'GB', postalCode: null, region: null }, subtotalMinor: 20_000 })
+    .defaultRateId === 'standard',
+)
+
+/* ---------------------------------------------------------------- validation cannot be tricked */
+
+check(
+  'validation refuses an id from a DIFFERENT quote — the rate must come from this one',
+  validateSelectedRate(
+    'overnight',
+    quote({ destination: { country: 'FR', postalCode: null, region: null } }),
+  ).ok === false,
+)
+
+check(
+  'validation refuses an empty string, an object-ish string and a number-ish string alike',
+  ['', '0', '[object Object]', 'STANDARD', 'standard '].every(
+    (id) => validateSelectedRate(id, quote()).ok === false,
+  ),
+  ['', '0', '[object Object]', 'STANDARD', 'standard ']
+    .filter((id) => validateSelectedRate(id, quote()).ok)
+    .join(','),
+)
+
+{
+  const validated = validateSelectedRate('standard', quote({ subtotalMinor: 20_000 }))
+  check(
+    'G: a waived rate validates at zero, and says it was waived rather than being free',
+    validated.ok && validated.rate.amountMinor === 0 && validated.rate.waived,
+  )
+}
+
+/* ---------------------------------------------------------------- currency */
+
+check(
+  'the quote never mixes currencies within one answer',
+  (['USD', 'GBP', 'EUR'] as const).every((currency) =>
+    quote({ currency }).rates.every((candidate) => candidate.currency === currency),
+  ),
+)
+
+check(
+  'every method in the card is offered in every quote, eligible or not — a hidden method cannot be chosen or explained',
+  quote({ destination: { country: 'JP', postalCode: null, region: null } }).rates.length ===
+    SHIPPING_METHODS.length,
+)
+
+/* ---------------------------------------------------------------- destinations */
+
+check(
+  'every supported country is a two-letter upper-case code',
+  SUPPORTED_COUNTRIES.every((country) => /^[A-Z]{2}$/.test(country)),
+  SUPPORTED_COUNTRIES.filter((country) => !/^[A-Z]{2}$/.test(country)).join(','),
+)
+
+check(
+  'the supported list has no duplicates',
+  new Set(SUPPORTED_COUNTRIES).size === SUPPORTED_COUNTRIES.length,
+)
+
+check(
+  'a country code with a null byte or whitespace injection is not supported',
+  ['US ', 'U S', 'US;DROP', ' '].every(
+    (country) => !isSupportedDestination({ country, postalCode: null, region: null }),
+  ),
+)
+
+check(
+  'a lower-case supported country is supported',
+  isSupportedDestination({ country: 'gb', postalCode: null, region: null }),
+)
+
+/* ---------------------------------------------------------------- tax */
+
+check(
+  'the taxable base never goes negative, whatever the inputs',
+  [
+    { discountMinor: 99_999, shippingMinor: 0, subtotalMinor: 100 },
+    { discountMinor: -5, shippingMinor: -5, subtotalMinor: -5 },
+    { discountMinor: NaN, shippingMinor: 0, subtotalMinor: 100 },
+  ].every(
+    (partial) =>
+      Number.isFinite(
+        taxableBaseMinor({ address: null, currency: 'USD', ...partial } as TaxRequest),
+      ) && taxableBaseMinor({ address: null, currency: 'USD', ...partial } as TaxRequest) >= 0,
+  ),
+)
+
+check(
+  'an address with a three-letter country cannot be calculated against',
+  !isCalculableAddress({ city: null, country: 'USA', postalCode: null, region: null }),
+)
+
+/* ---------------------------------------------------------------- totals */
+
+check(
+  'a shipping amount cannot be negative in the totals',
+  cartTotals([{ quantity: 1, unitPriceMinor: 1_000 }], null, -500).shippingMinor === 0,
+)
+
+check(
+  'a tax amount cannot be negative in the totals',
+  cartTotals([{ quantity: 1, unitPriceMinor: 1_000 }], null, 0, -500).taxMinor === 0,
+)
+
+check(
+  'the total is never negative even when the discount exceeds everything',
+  cartTotals([{ quantity: 1, unitPriceMinor: 1_000 }], 99_999, 0, 0).totalMinor === 0,
+)
+
+check(
+  'shipping is added AFTER the discount, so a coupon never discounts delivery',
+  cartTotals([{ quantity: 1, unitPriceMinor: 1_000 }], 1_000, 995, 0).totalMinor === 995,
+  String(cartTotals([{ quantity: 1, unitPriceMinor: 1_000 }], 1_000, 995, 0).totalMinor),
+)
+
 /* -------------------------------------------------------------------------------------------------
  * Report
  * ---------------------------------------------------------------------------------------------- */

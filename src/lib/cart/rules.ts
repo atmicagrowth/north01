@@ -1,3 +1,5 @@
+import { toMinorAmount } from '@/lib/money'
+
 /**
  * **Plan §14's arithmetic, as pure functions.**
  *
@@ -276,9 +278,9 @@ export function cartTotals(
   let itemCount = 0
 
   for (const line of lines) {
-    const quantity = Math.max(0, Math.floor(line.quantity))
+    const quantity = toMinorAmount(line.quantity)
 
-    subtotalMinor += Math.max(0, Math.floor(line.unitPriceMinor)) * quantity
+    subtotalMinor += toMinorAmount(line.unitPriceMinor) * quantity
     itemCount += quantity
   }
 
@@ -289,9 +291,9 @@ export function cartTotals(
    * tidied the warning would delete `isFinal` with it.
    */
   const discountMinor: null | number =
-    discount === null ? null : Math.min(Math.max(0, Math.floor(discount)), subtotalMinor)
-  const shippingMinor: null | number = shipping === null ? null : Math.max(0, Math.floor(shipping))
-  const taxMinor: null | number = tax === null ? null : Math.max(0, Math.floor(tax))
+    discount === null ? null : Math.min(toMinorAmount(discount), subtotalMinor)
+  const shippingMinor: null | number = shipping === null ? null : toMinorAmount(shipping)
+  const taxMinor: null | number = tax === null ? null : toMinorAmount(tax)
 
   return {
     discountMinor,

@@ -90,3 +90,20 @@ export function formatPriceRange(
 
   return from
 }
+
+/**
+ * **A money amount from a number that might not be one.**
+ *
+ * `Math.max(0, Math.floor(x))` reads like a clamp and is not one: `Math.floor(NaN)` is `NaN` and
+ * `Math.max(0, NaN)` is `NaN`, so the guard passes the poison straight through. Phase 16's first
+ * sweep found `taxableBaseMinor` returning `NaN` for a `NaN` input — and found the shipping quote
+ * surviving the identical input **by luck**, because `NaN >= threshold` is false and the comparison
+ * happened to fall the safe way. Luck is not a property worth relying on twice.
+ *
+ * Every amount that arrives from a cart, a provider or a stored row goes through this: not finite is
+ * zero, negative is zero, fractional is floored. One definition, so the three modules that handle
+ * money cannot disagree about what an unusable number means.
+ */
+export function toMinorAmount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
+}

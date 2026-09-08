@@ -5391,6 +5391,44 @@ distinction.
 - **A rate card an operator can change.** It is code today (§16.1a's *"static provider"*), which is
   right for a demo and wrong for a shop that changes its delivery prices.
 
+### 1.21.8 Post-implementation sweeps
+
+#### Sweep 1 — the boundaries at their edges
+
+One defect, and it is the kind a boundary phase exists to catch before anything downstream inherits it.
+
+**`Math.max(0, Math.floor(x))` is not a clamp.** `Math.floor(NaN)` is `NaN` and `Math.max(0, NaN)` is
+`NaN`, so the guard that appears in every money calculation in this project passes the poison straight
+through. `taxableBaseMinor` returned **`NaN`** for a `NaN` subtotal — a value that would have gone to a
+tax provider, and in Phase 17 to a payment processor.
+
+The same input reached `quoteShipping` and came out clean, which was worse rather than better: it
+survived because `NaN >= threshold` is false, so the comparison happened to fall the safe way and the
+`NaN` never reached an output. **Luck is not a property worth relying on twice**, and it would have
+stopped being lucky the first time somebody wrote a comparison the other way round.
+
+Fixed at the class rather than the instance. `lib/money.ts` gained `toMinorAmount` — *not finite is
+zero, negative is zero, fractional is floored* — and the three modules that handle money now share one
+definition of what an unusable number means. `cartTotals`, `quoteShipping` and `taxableBaseMinor` all
+go through it.
+
+**Twenty-four other hostile inputs held**, and rather than leaving them in a scratch file they were
+folded into `verify-shipping.ts`, which is now **93 checks**. A check that found a defect belongs where
+it will be run again. Among them:
+
+- A negative subtotal, a negative discount, a discount larger than the bag, and a fractional subtotal
+  one cent short of the threshold all resolve to a sensible rate rather than a surprising one.
+- A **negative** threshold is not read as "everything qualifies" — the check that would have made a
+  misconfigured setting give delivery away.
+- The default rate is **never an ineligible one**, at every destination and every threshold state, and
+  is always the cheapest eligible rate rather than merely the first.
+- `validateSelectedRate` refuses `''`, `'0'`, `'[object Object]'`, `'STANDARD'` and `'standard '` — an
+  id is compared exactly, so case and padding cannot smuggle a method through.
+- Every method appears in every quote, eligible or not: a hidden method can be neither chosen nor
+  explained, and §16.1d's first edge case is about explaining one.
+- **Shipping is added after the discount**, so a coupon can never discount delivery — a `$10.00` bag
+  with a `$10.00` code and `$9.95` delivery totals `$9.95`, not `$0.00`.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
