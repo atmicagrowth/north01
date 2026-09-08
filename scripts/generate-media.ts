@@ -41,6 +41,26 @@
  * which matters more than it sounds: these images are smooth by construction, so `Up` predicts almost
  * every row exactly and the whole set compresses to a few megabytes rather than a few hundred.
  *
+ * ### One Cloudinary account, two databases — read this before `--clean`
+ *
+ * The public id of an asset is derived from its filename, and these filenames are deterministic. So
+ * `swatch-indigo.png` is `north01/swatch-indigo` **whichever database created it** — development and
+ * production point at the same objects on the same CDN.
+ *
+ * Sharing them is harmless and even useful. Deleting them is not. `--clean` removes Payload documents,
+ * and removing an upload document tells the storage adapter to delete the object behind it, so
+ * cleaning one database silently strips the images off the other. Measured the hard way: a `--clean`
+ * against development, interrupted halfway, left the live site's campaign and journal images
+ * answering 404 while its product images still resolved.
+ *
+ * Two consequences worth holding on to:
+ *
+ * - **A `--clean` run is only safe if it finishes.** It deletes and then re-uploads under the same
+ *   ids, so a completed run restores what it removed. An interrupted one does not.
+ * - **`--clean` against a database that is not the only consumer of those assets is a live change to
+ *   the other one.** Separate the environments at the Cloudinary end — a distinct cloud or folder per
+ *   environment — before treating this as routine.
+ *
  * ### The D-10 guard applies
  *
  * It creates and deletes documents, so it writes only to the database `DATABASE_PUSH_TARGET` names.
@@ -546,6 +566,11 @@ async function upload(
 
 try {
   if (CLEAN) {
+    payload.logger.warn(
+      'Deleting generated assets. Their Cloudinary objects go with them, and every environment ' +
+        'sharing this cloud loses those images until this run finishes re-uploading them.',
+    )
+
     /**
      * **Detach before deleting, or the catalogue becomes unsaveable.**
      *
