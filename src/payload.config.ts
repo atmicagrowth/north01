@@ -40,6 +40,7 @@ import { Orders } from './payload/collections/Orders'
 import { ProductVariants } from './payload/collections/ProductVariants'
 import { Products } from './payload/collections/Products'
 import { Promotions } from './payload/collections/Promotions'
+import { StripeEvents } from './payload/collections/StripeEvents'
 import { Reviews } from './payload/collections/Reviews'
 import { SizeGuides } from './payload/collections/SizeGuides'
 import { Users } from './payload/collections/Users'
@@ -207,6 +208,7 @@ export default buildConfig({
     Orders,
     OrderItems,
     Promotions,
+    StripeEvents,
 
     // Customers
     withSecureCookies(Customers),

@@ -82,6 +82,7 @@ export interface Config {
     orders: Order;
     'order-items': OrderItem;
     promotions: Promotion;
+    'stripe-events': StripeEvent;
     customers: Customer;
     addresses: Address;
     'wishlist-items': WishlistItem;
@@ -126,6 +127,7 @@ export interface Config {
     orders: OrdersSelect<false> | OrdersSelect<true>;
     'order-items': OrderItemsSelect<false> | OrderItemsSelect<true>;
     promotions: PromotionsSelect<false> | PromotionsSelect<true>;
+    'stripe-events': StripeEventsSelect<false> | StripeEventsSelect<true>;
     customers: CustomersSelect<false> | CustomersSelect<true>;
     addresses: AddressesSelect<false> | AddressesSelect<true>;
     'wishlist-items': WishlistItemsSelect<false> | WishlistItemsSelect<true>;
@@ -1645,6 +1647,10 @@ export interface Order {
    */
   customer?: (number | null) | Customer;
   /**
+   * The bag this order came from, while that bag still exists.
+   */
+  cart?: (number | null) | Cart;
+  /**
    * Where the confirmation was sent, as given at checkout. A snapshot — not read from the customer record.
    */
   email: string;
@@ -1915,6 +1921,42 @@ export interface CartItem {
   createdAt: string;
 }
 /**
+ * Every webhook Stripe has delivered. The unique event ID is what makes a retry safe to receive.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "stripe-events".
+ */
+export interface StripeEvent {
+  id: number;
+  /**
+   * The `evt_...` id. Unique — this is the retry guard.
+   */
+  eventId: string;
+  /**
+   * e.g. checkout.session.completed.
+   */
+  type: string;
+  /**
+   * When this application received it, not when Stripe created it.
+   */
+  receivedAt: string;
+  status: 'received' | 'processed' | 'ignored' | 'failed';
+  /**
+   * Empty when the event is not about an order we hold.
+   */
+  order?: (number | null) | Order;
+  /**
+   * Why processing failed, when it did. Stripe will retry; this says what to fix.
+   */
+  error?: string | null;
+  /**
+   * How many times Stripe has delivered this event id.
+   */
+  attempts: number;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Saved products. Guests keep their list on their own device until they sign in.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -2153,6 +2195,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'promotions';
         value: number | Promotion;
+      } | null)
+    | ({
+        relationTo: 'stripe-events';
+        value: number | StripeEvent;
       } | null)
     | ({
         relationTo: 'customers';
@@ -2715,6 +2761,7 @@ export interface OrdersSelect<T extends boolean = true> {
   fulfillmentStatus?: T;
   items?: T;
   customer?: T;
+  cart?: T;
   email?: T;
   currency?: T;
   subtotalMinor?: T;
@@ -2806,6 +2853,21 @@ export interface PromotionsSelect<T extends boolean = true> {
   timesUsed?: T;
   active?: T;
   combinable?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "stripe-events_select".
+ */
+export interface StripeEventsSelect<T extends boolean = true> {
+  eventId?: T;
+  type?: T;
+  receivedAt?: T;
+  status?: T;
+  order?: T;
+  error?: T;
+  attempts?: T;
   updatedAt?: T;
   createdAt?: T;
 }

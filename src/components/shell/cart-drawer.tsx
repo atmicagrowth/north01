@@ -77,11 +77,24 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
                 totals={cart.totals}
               />
 
-              <Button asChild size="lg" onClick={close}>
-                <Link href="/cart" variant="unstyled">
-                  View bag
-                </Link>
-              </Button>
+              {/*
+                **DEV-57 paid.** Phase 14 pinned "View bag" because `/checkout` did not exist. Both
+                are here now, with Checkout as the primary action — a drawer that can only send you
+                to another page to find the button is a drawer with one job it does not do.
+              */}
+              <div className="flex flex-col gap-s">
+                <Button asChild size="lg" onClick={close}>
+                  <Link href="/checkout" variant="unstyled">
+                    Checkout
+                  </Link>
+                </Button>
+
+                <Button asChild onClick={close} variant="secondary">
+                  <Link href="/cart" variant="unstyled">
+                    View bag
+                  </Link>
+                </Button>
+              </div>
             </div>
           ) : null
         }

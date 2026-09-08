@@ -5478,6 +5478,141 @@ for row, which is the invariant §1.21.2 was written to protect: `{"Subtotal":"$
 (estimated)":"$9.95"}` from both, and `Free` from both above the threshold. `verify-shipping` is
 **97 checks**; the full sweep is **961 across eight harnesses**.
 
+## 1.22 Phase 17 — checkout / Stripe
+
+Plan §17.1a–§17.1h. The phase the rule at the top of `AGENTS.md` was written for: *"Only a
+signature-verified Stripe webhook marks an order paid. Reaching the success page is not payment."*
+
+**One dependency added** — `stripe@22.5.0`, at the pin `docs/STACK_VERSIONS.md` set for this phase.
+**One migration**, generated and committed: the `stripe-events` table and `orders.cart_id`.
+
+### 1.22.1 One rule, made structural rather than remembered
+
+`fulfil.ts` is the only file in the project that writes `paymentStatus: 'paid'`. Nothing else can:
+the state machine in `rules.ts` refuses `draft → paid` outright, preflight writes `checkout_started`
+and the session write moves it to `pending_payment`, and the success page is a **read** with no write
+path at all.
+
+That is the difference between a rule and a convention. A convention is a sentence somebody has to
+remember; this one is three separate mechanisms that each have to be defeated.
+
+### 1.22.2 §17.1a's eleven steps, and the five that were already written
+
+Steps 3 to 7 — *"verify products still exist, verify variants active, revalidate inventory,
+recalculate prices, recalculate promotion"* — are **not re-implemented**. They are `getCart`, which has
+done exactly those five things on **every read** since Phase 14, because §14.1e and §15.1c both
+required it.
+
+A preflight that re-implemented them would be a second opinion about the same facts, and the two would
+disagree the first time either was changed. So preflight *asks*, and adds the thing a bag does not
+need and an order does: **the refusal.** A bag shows an unbuyable line with an explanation; checkout
+declines to charge for it.
+
+Nothing in the chain accepts a number from the browser. The customer supplies an email, an address and
+a **method id**; `orderTotalMinor` takes four server-derived numbers and has no parameter a total
+could arrive through. §17.1b's *"never accept a client-provided total"* is satisfied by there being
+nothing to accept.
+
+### 1.22.3 Two barriers, and why one is not enough
+
+§17.1d is explicit that idempotency has two layers, and the reason is subtle enough to be worth
+restating:
+
+1. **The unique event id**, enforced by the database. It stops **the same event** being processed
+   twice. It is an insert that violates a constraint, not a read-then-write — two concurrent retries
+   would both find nothing and both proceed, and the window between the read and the write is exactly
+   where a duplicate finalisation lives.
+2. **The order's own state.** It stops **a different event** driving the same transition. Stripe sends
+   `checkout.session.completed` *and* `payment_intent.succeeded` for one payment: two events, two ids,
+   and the first barrier lets both through. Only `needsPaymentFinalisation` catches that.
+
+Measured against the real database: a second event describing the same payment returns `alreadyFinal`
+and **inventory is not decremented twice**, however many times it arrives.
+
+`payment_intent.succeeded` is also deliberately **not** in the handled set — the session event is the
+one acted on. That is belt as well as braces, and the harness asserts it so a future addition has to
+be deliberate.
+
+### 1.22.4 §17.1f's race, and the order that is paid but cannot be shipped
+
+Stock is read **inside the transaction that writes it**, which is the whole of the race: two customers
+buying the last unit are two transactions, and the second reads what the first committed.
+
+The decision is **all or nothing**. If any line is short, none is decremented — a partially shipped
+order is a decision nobody made, whereas an order that cannot be met is a human problem with a human
+answer.
+
+And when the stock is not there, the order is marked **paid** and left **unfulfilled**. The money has
+already moved; refusing to record that would leave the customer holding a Stripe receipt for an order
+this shop says was never paid for. §17.1f says *"do not mark an impossible order as **fulfilled**"* —
+fulfilment is precisely the half withheld, and the shortfall is logged for the *"refund/exception
+path"* the same section asks for.
+
+Verified end to end: stock 1, order for 2 → paid, unfulfilled, stock untouched at 1. And a two-line
+order where one line is short leaves **both** lines' stock alone.
+
+### 1.22.5 §17.1g: six cases, one behaviour
+
+*"Closes the Stripe page. Returns without paying. Refreshes success. Opens success directly. Opens
+cancel directly. Pays but never reaches the success page."*
+
+All six collapse into: **the page reads the order and reports what it says.** The success page writes
+nothing. Arriving there means nothing about whether money moved, and the page's three outcomes are
+*paid*, *not yet confirmed* — the customer beat the webhook, which is common and not an error — and
+*one message for not-found, not-yours and never-existed*, because distinguishing them would turn the
+URL into a way to enumerate other people's orders.
+
+The identifier is *safe* by the check beside it rather than by being unguessable: a signed-in customer
+may read their own order, and a guest may read one **only in the session that placed it**, proven by
+the cart token still in their cookie. The cart is marked `converted` at payment rather than deleted,
+which is what makes a refresh work and a different machine fail.
+
+### 1.22.6 The `server-only` lesson, for the third time
+
+`verify:webhook` failed on its first run with `ERR_MODULE_NOT_FOUND: server-only` — the same message
+Phase 15 got, from the same cause in a different place.
+
+`applyStripeEvent` reached for `getPayloadClient()` internally, so it needed the guard, so no harness
+could drive it — and this is the function that decides whether inventory moves. It now takes a
+`Payload` instance as an argument, exactly as `lib/promotions/read.ts` does, and the guard sits on
+`stripe.ts`, which is where the key actually lives.
+
+Three phases have now produced the same rule from three directions: **a guard belongs where a secret
+or a request could leak, and nowhere else.** Phase 15 had it on a module the harness needed; Phase 16
+had it on the right module with the decision in the wrong place; this had the decision reaching for a
+client it could have been handed.
+
+### 1.22.7 What was verified, and how
+
+Stripe keys are not configured in this environment, which shaped the verification rather than limiting
+it as much as expected.
+
+| Surface | Evidence |
+|---|---|
+| §17.1c's state machine | 61 checks — paid is terminal, a draft cannot reach paid, a declined card can still succeed later |
+| §17.1d's second barrier | asserted as a property: no status both *is* paid and *needs* finalising |
+| **Signature verification** | **offline and real** — the SDK's own `generateTestHeaderString`, then a tampered payload and a wrong secret, both refused |
+| §17.1f's race | 24 checks against the **real database**: stock moves once, never twice, all-or-nothing, and an unmeetable order is paid-but-unfulfilled |
+| §17.1h's failure list | declined card, retry after decline, late failure against a paid order, expired session, unknown type, unknown order, invalid metadata |
+| The first barrier | the unique constraint exercised where it lives — a second insert of one event id is refused |
+| The browser | 24 checks — the degraded state, both redirect URLs opened directly and with guessed ids, and the webhook never answering 200 to an unsigned or forged request |
+| Accessibility | 0 axe violations across six checkout surface/width combinations |
+| The rest of the storefront | shell 100, home 183, catalogue 147, search 209, product 80, cart 78, promotions 67, shipping 97 |
+
+### 1.22.8 What is now owed
+
+- **A live Stripe test-mode pass.** Everything downstream of the signature is verified against the
+  real database, and the signature itself is verified offline — but no real Checkout Session has been
+  created, because there are no keys (**DEV-62**). That is the one gap and it is named.
+- **The confirmation email** (§17.1d's *"triggers email only after the correct state transition"*) —
+  **Phase 19**. The transition it hangs off exists and is the right one.
+- **Refunds.** `refunded` is in the state machine and reachable; nothing drives it, because
+  `charge.refunded` handling belongs with the order-management surface in **Phase 18**.
+- **A cleanup for abandoned pending orders.** An order left at `checkout_started` is harmless and
+  accumulates; the same sweep `Carts.expiresAt` has been waiting for since Phase 14.
+- **Stripe Tax.** §16.1c's provider is still the deferral, so preflight refuses when tax cannot be
+  calculated — which, with no keys, is every attempt (**DEV-61**).
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -6976,6 +7111,74 @@ dangerous than one that never worked, because nobody would be watching it.
 
 Phase 17 replaces one exported constant. Nothing that reads a `TaxResult` changes.
 
+---
+
+### DEV-62 — Checkout is complete and has never taken a payment
+
+**The phase prompt says:** *"Implement production-style Stripe Checkout integration in test mode."*
+
+**We do:** implement all of it — preflight, session creation, the signature-verified webhook, both
+idempotency barriers, the transactional inventory decrement, every redirect case — and run it against
+an environment with **no Stripe keys**, where the checkout page says so and declines rather than
+failing.
+
+**Why:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and the publishable key are absent from this
+repository's environment, and `AGENTS.md` forbids committing them: *"Never commit secrets."* An
+operator supplies them; a build cannot invent them.
+
+**What that does and does not leave unverified.** Less than it sounds:
+
+- **Signature verification is verified**, offline and for real. `verify-checkout.ts` section F uses the
+  SDK's own `generateTestHeaderString` to sign a payload against a fabricated secret, verifies it,
+  then tampers with the payload and watches it fail, then tries the right payload under the wrong
+  secret and watches that fail too. Verification is an HMAC over exact bytes; a payload that verifies
+  there verifies in production.
+- **Everything downstream of the signature is verified** against the real database, by driving
+  `applyStripeEvent` exactly as the route drives it: 24 checks covering both barriers, the
+  transaction, the inventory race, the paid-but-unfulfilled path and six of §17.1h's failure states.
+- **What is not verified** is one HTTP call: `stripe.checkout.sessions.create`. Its inputs are
+  asserted, its failure path returns a refusal rather than a crash, and the redirect it produces is
+  Stripe's own — but no real session has been created, and no live payment has moved.
+
+**The degraded state is a decision, not a fallback.** `docs/ARCHITECTURE.md` §2 requires the store to
+work when an integration is missing, and `isStripeConfigured()` is what the checkout page asks. It
+renders the bag, the totals and a sentence — *"Payment is not connected yet"* — rather than a form
+whose only possible outcome is a refusal at the last step. The same shape as **DEV-55** and **DEV-57**
+before it: say what is true, do not draw a control that cannot work.
+
+The webhook route answers **503** rather than 200 when unconfigured, which is the one place the
+degradation must not be quiet: a silent 200 would make Stripe discard real payment events during a
+misconfiguration.
+
+---
+
+### DEV-63 — The Checkout Session is one line item, not one per product
+
+**Plan §17.1b** says to use trusted server-derived values and says nothing about line-item shape;
+Stripe's own conventions favour a line per product, and it renders more attractively on their page.
+
+**We do:** send **one** line item, named for the item count and priced at the order's own
+`totalMinor`.
+
+**Why:** a line per product makes Stripe a **second place the total is computed**. Stripe sums its
+line items to charge; we compute the order total from subtotal, discount, shipping and tax. Those two
+answers agree until they do not — a percentage discount that rounds, a delivery charge allocated
+across lines, a tax that applies to some lines and not others — and on the day they disagree the
+customer is charged **Stripe's** number while the order records **ours**.
+
+One line item priced at the server's total makes that disagreement impossible to express. There is one
+number, computed once, in the place that owns it.
+
+The itemisation a customer needs is not lost: it is on the bag, on the checkout page beside the form,
+and on the confirmation — all three rendered from `order-items`, which is the record. Stripe's page is
+where a card number is typed, and it shows the amount being charged, which is the number that matters
+there.
+
+The cost is real and worth naming: Stripe's dashboard shows one line rather than an itemised order, so
+reconciling a dispute means opening the order in the admin panel. That is an operator's inconvenience
+rather than a customer's risk, and it buys the guarantee that the shop and the processor can never
+quote two different prices.
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -7017,4 +7220,5 @@ Phase 17 replaces one exported constant. Nothing that reads a `TaxResult` change
 | Phase 15 — two post-implementation sweeps | 2026-09-07 | Notes **§1.20.9**. **No defects** — the first phase where both sweeps came back empty, recorded with the reasons rather than as a result. **Sweep 1**, hostile input: SQL-shaped and script-shaped codes, a 500-character one, a null byte and whitespace were each refused with a readable reason and nothing echoed unescaped; a code that **exists but is switched off** got the same sentence an unknown code gets; the form posts **`["code"]`** and nothing else; and applying a code, emptying the bag and refilling it with a different product produced a **recomputed** discount (`−$44.00` → `−$33.00`) rather than a stale one, because only the choice of code is stored. **Sweep 2** measured the one claim made on reasoning alone: collection eligibility had been corrected during the build — reading `collections.products` instead of the `join` on `product.collections` — without ever being run. Verified end to end: 50% off *Archive* takes `−$37.50` off a member, is refused on a non-member, and in a `$555.00` mixed bag discounts only the eligible `$75.00` line. Nothing about a promotion reaches the page: no eligibility lists, no minimum, no usage limits, no counter, not even the id. One probe was wrong before the code was, counting React's own `$ACTION_*` fields as data the form posts. |
 | Phase 16 — shipping and tax boundaries | 2026-09-07 | Notes **§1.21**: the two provider interfaces, built before the phase that consumes them. The phase turns on one distinction — **a price is knowable without an address; eligibility is not** — so `destinationKnown` carries it, the bag quotes `$9.95` under the threshold and `Free` above it labelled *"Delivery (estimated)"*, and §17.1a re-quotes with the real address. §16.1d's coupon case is answered explicitly: the threshold reads the **discounted** subtotal, so applying a coupon can take free delivery away — measured, a `$555.00` bag with a 90% code drops to `$55.50` of spend and delivery returns to `$9.95`. The care was that **two surfaces read that number**: the progress sentence was reading the raw subtotal and would have promised free delivery directly above a delivery charge, which Phase 15 had made reachable and nothing had yet noticed. **DEV-60 closed** — a free-shipping code now zeroes Standard and *only* Standard, because a code that silently upgraded a customer to Overnight is a promotion nobody wrote. **DEV-61**: the tax provider is the §16.1c interface with a deferral behind it, not Stripe Tax — the SDK belongs to Phase 17 and there is no destination to calculate against; it returns `pending_address`, never `0`, and refuses to guess even if handed an address. The harness also found a **design flaw in Phase 14's totals**: `isFinal` required a discount, so a bag with no code applied could never show a final Total — `null` had been doing duty as both *"do not draw this row"* and *"unknown"*, and only the second belongs in that test. `verify:shipping` **68 checks**, 12 browser checks, 0 axe violations. |
 | Phase 16 — two post-implementation sweeps | 2026-09-07 | Notes **§1.21.8**. One defect, found twice at different resolutions. **Sweep 1** discovered that `Math.max(0, Math.floor(x))` — the guard in every money calculation in this project — is **not a clamp**: `Math.floor(NaN)` is `NaN`, so `taxableBaseMinor` returned `NaN`, a value bound for a tax provider and in Phase 17 a payment processor. The identical input passed through `quoteShipping` cleanly **by luck**, because `NaN >= threshold` is false and the comparison happened to fall the safe way. **Sweep 2** then grepped for the idiom rather than testing for it and found **five more instances** the first sweep had not touched — including a `NaN` discount, twice. A sweep that tests inputs finds instances; a sweep that reads for the pattern finds the class. Fixed with one implementation under two honest names, `toMinorAmount` and `toWholeCount`. Sweep 2 also found the tax provider's most important claim — *"refuses to invent a number even if handed an address"* — **untestable**, because `server-only` is correctly on that module and cannot resolve outside Next; the decision moved to `tax/rules.ts` and four checks now assert it answers `unavailable` rather than `not_required`, which would be a claim about tax law. Twenty-four hostile inputs held and were folded into the committed harness. The drawer and the bag page were measured against each other at both threshold states and agree row for row. `verify:shipping` 68 → **97**, `verify:cart` 72 → **78**, `verify:promotions` 64 → **67**. |
+| Phase 17 — checkout / Stripe | 2026-09-08 | Notes **§1.22**: the phase `AGENTS.md`'s payment rule was written for. `stripe@22.5.0` installed at its pin; one migration, generated and committed — the `stripe-events` table whose **unique event id is §17.1d's first idempotency barrier**, and `orders.cart_id` for §17.1a step 10. `fulfil.ts` is the **only** file that writes `paid`, and three separate mechanisms would each have to be defeated to change that. §17.1a's steps 3–7 are **not re-implemented** — they are `getCart`, which has revalidated products, variants, stock, prices and promotions on every read since Phase 14; preflight adds the refusal a bag does not need. **Both barriers, and why one is not enough**: the unique event id stops the same event twice, and the order's own state stops a *different* event driving the same transition — Stripe sends `checkout.session.completed` **and** `payment_intent.succeeded` for one payment, and only the second barrier catches that. Verified against the real database: inventory is not decremented twice, however many times an event arrives. §17.1f's race is resolved by reading stock **inside** the transaction that writes it, all-or-nothing, and an order that cannot be met is marked **paid and left unfulfilled** — the money moved, and fulfilment is the half §17.1f withholds. §17.1g's six cases collapse to one behaviour: the success page **reads** and reports, writes nothing, and shows one message for not-found, not-yours and never-existed. `verify:webhook` failed on its first run with `ERR_MODULE_NOT_FOUND: server-only` — the third phase to produce the same rule from a third direction: **a guard belongs where a secret or a request could leak, and nowhere else.** Deviations **DEV-62** (complete, and has never taken a payment — no keys; signature verification is nonetheless verified offline against the SDK's own signer, and everything downstream against the real database) and **DEV-63** (one Stripe line item priced at the server's own total, so the shop and the processor cannot quote two different prices). `verify:checkout` **61**, `verify:webhook` **24**, 24 browser checks, 0 axe violations. |
 > **Append this table, and the sections above it, at the end of every phase.**

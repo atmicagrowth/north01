@@ -38,7 +38,9 @@
     "verify:product": "payload run scripts/verify-product.ts",
     "verify:cart": "payload run scripts/verify-cart.ts",
     "verify:promotions": "payload run scripts/verify-promotions.ts",
-    "verify:shipping": "payload run scripts/verify-shipping.ts"
+    "verify:shipping": "payload run scripts/verify-shipping.ts",
+    "verify:checkout": "payload run scripts/verify-checkout.ts",
+    "verify:webhook": "payload run scripts/verify-webhook.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",
@@ -57,6 +59,7 @@
     "radix-ui": "1.6.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "stripe": "22.5.0",
     "tailwind-merge": "3.6.0",
     "zod": "4.4.3"
   },

@@ -207,6 +207,29 @@ export const Orders: CollectionConfig = {
               },
             },
             {
+              /**
+               * **The bag this order was raised from** — plan §17.1a step 10's *"create or update
+               * pending order context"*, which needs a key to find the pending order by.
+               *
+               * Navigation, not data. It is nullable and `ON DELETE SET NULL`, so a converted or
+               * expired cart being cleaned up leaves the order intact — an order is a snapshot
+               * (`docs/ARCHITECTURE.md` §2) and nothing about it may depend on a row that is designed
+               * to be temporary. Its only job is to let a second checkout attempt find the first
+               * attempt's order instead of creating a second one, so that a customer who changes
+               * their mind twice does not leave three abandoned orders behind.
+               *
+               * Added in **Phase 17**. Nothing before it wrote here.
+               */
+              name: 'cart',
+              type: 'relationship',
+              relationTo: 'carts',
+              index: true,
+              admin: {
+                readOnly: true,
+                description: 'The bag this order came from, while that bag still exists.',
+              },
+            },
+            {
               name: 'email',
               type: 'email',
               required: true,

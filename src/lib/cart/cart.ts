@@ -129,6 +129,14 @@ export type CartLineView = {
   productSlug: string
   quantity: number
   size: null | string
+  /**
+   * The variant's SKU, for the order snapshot.
+   *
+   * `OrderItems.sku` is required and durable — `ProductVariants.ts` never reassigns a SKU — so an
+   * order records what was actually bought even after the variant is withdrawn. Carrying it on the
+   * line means checkout does not re-read every variant it has already read.
+   */
+  sku: null | string
   /** `null` when the variant has no usable price. */
   unitPriceLabel: null | string
   unitPriceMinor: null | number
@@ -462,6 +470,7 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
       effectiveQuantity: held.quantity,
       quantity: item.quantity,
       size: variant?.size?.trim() || null,
+      sku: variant?.sku?.trim() || null,
       unitPriceLabel:
         unitPriceMinor === null
           ? null

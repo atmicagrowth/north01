@@ -94,14 +94,16 @@ export default async function CartPage() {
                   />
 
                   {/*
-                    The honest placeholder for the checkout control, and the same shape Phase 13 used
-                    for Add to Bag: a sentence, not a disabled button. A greyed-out "Checkout" reads
-                    as a broken shop; this reads as an unfinished one, which is what it is.
+                    **DEV-57 paid.** Phase 14 put a sentence here because `/checkout` did not exist;
+                    it does now. The button is a link rather than a form because checkout is a page,
+                    not a mutation — the mutation is on that page, after the customer has told us
+                    where the parcel is going.
                   */}
-                  <p className="border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
-                    Checkout opens shortly. Everything here — prices, sizes and stock — is live, and
-                    your bag will still be here.
-                  </p>
+                  <Button asChild size="lg">
+                    <Link href="/checkout" variant="unstyled">
+                      Checkout
+                    </Link>
+                  </Button>
 
                   <Link href="/shop" variant="meta">
                     Continue shopping
