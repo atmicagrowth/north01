@@ -1,7 +1,9 @@
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import {
   canTransition,
+  FINALISABLE_STATUSES,
   intendedStatusFor,
   needsPaymentFinalisation,
   planStockDecrements,
@@ -171,7 +173,57 @@ async function finalisePaidOrder(
   const req = { transactionID } as Parameters<typeof payload.find>[0]['req']
 
   try {
-    /* Re-read the order inside the transaction: the guard above ran outside it. */
+    /*
+     * The narrowed handle for the two statements that must be expression updates rather than
+     * read-then-write. Only `execute` is used, and only with parameterised SQL.
+     */
+    const session = (
+      payload.db as unknown as {
+        sessions?: Record<
+          string,
+          { db: { execute: (query: unknown) => Promise<{ rowCount?: number }> } }
+        >
+      }
+    ).sessions?.[transactionID]
+
+    if (!session) {
+      throw new Error('The transaction session was not available to finalise the order.')
+    }
+
+    /*
+     * **The third barrier, and the only one that holds under concurrency.**
+     *
+     * The two in §17.1d are a unique event id and a status check. Phase 17's first sweep ran two
+     * deliveries of one payment at the same instant and both passed the status check — because a
+     * check is a *read*, and two transactions read the same row before either wrote it. The stock
+     * then moved twice.
+     *
+     * So the order is **claimed**, not checked: one conditional UPDATE that both sets `paid` and
+     * refuses to if it is already paid. Postgres serialises the two statements on the row, the loser
+     * sees zero rows affected, and it stops. There is no window between the decision and the write
+     * because they are the same statement.
+     *
+     * `FINALISABLE_STATUSES` comes from the state machine so the SQL and the machine cannot drift.
+     */
+    const claim = await session.db.execute(
+      sql`UPDATE "orders"
+          SET "payment_status" = 'paid',
+              "paid_at" = ${new Date().toISOString()},
+              "stripe_payment_intent_id" = COALESCE(${paymentIntentId}, "stripe_payment_intent_id")
+          WHERE "id" = ${orderId}
+            AND "payment_status" IN (${sql.join(
+              FINALISABLE_STATUSES.map((status) => sql`${status}`),
+              sql`, `,
+            )})`,
+    )
+
+    if ((claim.rowCount ?? 0) === 0) {
+      /* Somebody else finalised it, or it was never finalisable. Both are `alreadyFinal`. */
+      await payload.db.commitTransaction(transactionID)
+
+      return { orderId, outcome: 'alreadyFinal' }
+    }
+
     const order = await payload.findByID({
       collection: 'orders',
       depth: 0,
@@ -179,12 +231,6 @@ async function finalisePaidOrder(
       overrideAccess: true,
       req,
     })
-
-    if (!needsPaymentFinalisation(order.paymentStatus as PaymentStatus)) {
-      await payload.db.commitTransaction(transactionID)
-
-      return { orderId, outcome: 'alreadyFinal' }
-    }
 
     const { docs: items } = await payload.find({
       collection: 'order-items',
@@ -227,22 +273,6 @@ async function finalisePaidOrder(
 
     const plan = planStockDecrements(lines)
 
-    /*
-     * Paid either way. The money has moved and the record must say so; what the shortfall withholds
-     * is FULFILMENT, which is the half a human still has to decide about.
-     */
-    await payload.update({
-      collection: 'orders',
-      data: {
-        paidAt: new Date().toISOString(),
-        paymentStatus: 'paid',
-        ...(paymentIntentId === null ? {} : { stripePaymentIntentId: paymentIntentId }),
-      },
-      id: orderId,
-      overrideAccess: true,
-      req,
-    })
-
     if (!plan.ok) {
       payload.logger.error({
         msg:
@@ -257,16 +287,55 @@ async function finalisePaidOrder(
       return { orderId, outcome: 'outOfStock', short: plan.short }
     }
 
+    /*
+     * **The decrement is one atomic statement, not a read followed by a write.**
+     *
+     * §17.1f says *"atomically decrement"* and the first version of this did not: it wrote
+     * `stockRead - quantity`, an absolute value computed from a read taken earlier in the
+     * transaction. Two finalisations running at once both read 5, and both wrote their own answer —
+     * the classic lost update. Phase 17's first sweep caught it by running two events concurrently
+     * and watching **both** report success.
+     *
+     * `inventory_quantity = inventory_quantity - $n` is evaluated by Postgres against the row it is
+     * locking, so the second statement waits for the first to commit and then subtracts from the
+     * value the first left. The `AND inventory_quantity >= $n` guard makes it refuse rather than go
+     * negative, and the row count says which happened — which is what turns *"atomically decrement
+     * or otherwise reserve"* into something the database enforces rather than something this
+     * function hopes for.
+     *
+     * Raw SQL through the transaction's own handle, because Payload's Local API has no expression
+     * update. `docs/DATABASE.md` allows it; what it forbids is hand-authored *migrations*.
+     */
     for (const decrement of plan.decrements) {
-      await payload.update({
-        collection: 'product-variants',
-        data: {
-          inventoryQuantity: (stockOf.get(decrement.variantId) ?? 0) - decrement.quantity,
-        },
-        id: decrement.variantId,
-        overrideAccess: true,
-        req,
-      })
+      const updated = await session.db.execute(
+        sql`UPDATE "product_variants"
+            SET "inventory_quantity" = "inventory_quantity" - ${decrement.quantity}
+            WHERE "id" = ${decrement.variantId}
+              AND "inventory_quantity" >= ${decrement.quantity}`,
+      )
+
+      /*
+       * Zero rows means somebody else took the stock between the plan and the write. The payment has
+       * happened, so this is §17.1f's exception path again: paid, unfulfilled, logged — never a
+       * negative row and never a silent success.
+       */
+      if ((updated.rowCount ?? 0) === 0) {
+        payload.logger.error({
+          msg:
+            'Stock disappeared between planning and decrementing. The order is paid and left ' +
+            'unfulfilled for a human decision — plan §17.1f.',
+          orderId,
+          variantId: decrement.variantId,
+        })
+
+        await payload.db.commitTransaction(transactionID)
+
+        return {
+          orderId,
+          outcome: 'outOfStock',
+          short: [{ available: 0, quantity: decrement.quantity, variantId: decrement.variantId }],
+        }
+      }
     }
 
     /*

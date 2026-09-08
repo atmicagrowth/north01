@@ -81,6 +81,18 @@ export function needsPaymentFinalisation(status: PaymentStatus): boolean {
   return status !== 'paid' && status !== 'refunded' && canTransition(status, 'paid')
 }
 
+/**
+ * **Every status from which an order may still become paid**, derived from the machine above.
+ *
+ * Exported because the claim that marks an order paid is a single conditional SQL statement — see
+ * `fulfil.ts` — and that statement needs this list in its `WHERE`. Deriving it here rather than
+ * writing it out in SQL is what stops the two from drifting: add a state to the machine and the
+ * statement follows, instead of silently refusing to finalise orders in it.
+ */
+export const FINALISABLE_STATUSES: readonly PaymentStatus[] = (
+  Object.keys(ALLOWED_TRANSITIONS) as PaymentStatus[]
+).filter(needsPaymentFinalisation)
+
 /* -------------------------------------------------------------------------------------------------
  * Preflight — plan §17.1a
  * ---------------------------------------------------------------------------------------------- */

@@ -445,6 +445,241 @@ try {
       unknown.outcome,
     )
   }
+
+  /* ============================================================ H — concurrency, found by sweep 1 */
+  {
+    const { product, variant } = await makeStock(5, 'h')
+    const order = await makeOrder(
+      [{ productId: product.id, quantity: 2, variantId: variant.id }],
+      'H',
+    )
+
+    /*
+     * **Two deliveries of one payment, in flight at the same instant.**
+     *
+     * This is the case Phase 17's first sweep found and the two barriers in §17.1d do not cover: a
+     * status *check* is a read, and two transactions read the same row before either writes it. Both
+     * passed, and the stock moved twice. The fix is a third barrier — the order is CLAIMED by a
+     * conditional UPDATE rather than checked — and this is the check that holds it.
+     */
+    const [first, second] = await Promise.all([
+      applyStripeEvent(payload, {
+        eventType: 'checkout.session.completed',
+        orderId: order.id,
+        paymentIntentId: `pi_wh_h_${suffix}`,
+      }),
+      applyStripeEvent(payload, {
+        eventType: 'checkout.session.async_payment_succeeded',
+        orderId: order.id,
+        paymentIntentId: `pi_wh_h_${suffix}`,
+      }),
+    ])
+
+    const outcomes = [first.outcome, second.outcome].sort().join(',')
+
+    check(
+      'H: **two simultaneous events do not both finalise** — exactly one claims the order',
+      outcomes === 'alreadyFinal,finalised',
+      outcomes,
+    )
+
+    check(
+      'H: …and stock moves exactly once, not twice',
+      (await stockOf(variant.id)) === 3,
+      String(await stockOf(variant.id)),
+    )
+  }
+
+  /* ============================================================ I — states that cannot be paid */
+  {
+    const { product, variant } = await makeStock(5, 'i')
+    const order = await makeOrder(
+      [{ productId: product.id, quantity: 1, variantId: variant.id }],
+      'I',
+    )
+
+    await payload.update({
+      collection: 'orders',
+      data: { paymentStatus: 'draft' },
+      id: order.id,
+      overrideAccess: true,
+    })
+
+    const outcome = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: order.id,
+      paymentIntentId: null,
+    })
+
+    check(
+      'I: **a draft order cannot be paid** — it never went through preflight',
+      outcome.outcome === 'alreadyFinal',
+      outcome.outcome,
+    )
+
+    check('I: …its status is untouched', (await statusOf(order.id)).payment === 'draft')
+    check('I: …and no stock moved', (await stockOf(variant.id)) === 5)
+  }
+
+  {
+    const { product, variant } = await makeStock(5, 'j')
+    const order = await makeOrder(
+      [{ productId: product.id, quantity: 1, variantId: variant.id }],
+      'J',
+    )
+
+    await payload.update({
+      collection: 'orders',
+      data: { paymentStatus: 'refunded' },
+      id: order.id,
+      overrideAccess: true,
+    })
+
+    const outcome = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: order.id,
+      paymentIntentId: null,
+    })
+
+    check(
+      'I: a refunded order cannot be re-paid',
+      outcome.outcome === 'alreadyFinal',
+      outcome.outcome,
+    )
+    check('I: …and no stock moved', (await stockOf(variant.id)) === 5)
+  }
+
+  /* ============================================================ J — degenerate orders */
+  {
+    const order = await makeOrder([], 'K')
+
+    const outcome = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: order.id,
+      paymentIntentId: null,
+    })
+
+    check(
+      'J: an order with no lines finalises rather than throwing',
+      outcome.outcome === 'finalised',
+      outcome.outcome,
+    )
+  }
+
+  {
+    const { product, variant } = await makeStock(5, 'l')
+    const order = await makeOrder(
+      [{ productId: product.id, quantity: 1, variantId: variant.id }],
+      'L',
+    )
+
+    await payload.delete({
+      collection: 'product-variants',
+      id: variant.id,
+      overrideAccess: true,
+      trash: false,
+    })
+
+    const outcome = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: order.id,
+      paymentIntentId: null,
+    })
+
+    check(
+      'J: a paid order whose variant was deleted does not crash the webhook',
+      ['finalised', 'outOfStock'].includes(outcome.outcome),
+      outcome.outcome,
+    )
+
+    check('J: …and is still marked paid', (await statusOf(order.id)).payment === 'paid')
+  }
+
+  {
+    const { product, variant } = await makeStock(1, 'm')
+    const order = await makeOrder(
+      [{ productId: product.id, quantity: 1, variantId: variant.id }],
+      'M',
+    )
+
+    await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: order.id,
+      paymentIntentId: null,
+    })
+
+    check(
+      'J: buying exactly the last unit takes stock to zero, never below',
+      (await stockOf(variant.id)) === 0,
+      String(await stockOf(variant.id)),
+    )
+  }
+
+  /* ============================================================ K — §15's owed promotion counter */
+  {
+    const promotion = await payload.create({
+      collection: 'promotions',
+      data: {
+        active: true,
+        code: `WH${suffix}`,
+        percentage: 10,
+        timesUsed: 0,
+        type: 'percentage',
+      } as never,
+      overrideAccess: true,
+    })
+
+    const { product, variant } = await makeStock(5, 'n')
+    const order = await makeOrder(
+      [{ productId: product.id, quantity: 1, variantId: variant.id }],
+      'N',
+    )
+
+    await payload.update({
+      collection: 'orders',
+      data: { promotion: promotion.id },
+      id: order.id,
+      overrideAccess: true,
+    })
+
+    await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: order.id,
+      paymentIntentId: null,
+    })
+
+    const after = await payload.findByID({
+      collection: 'promotions',
+      depth: 0,
+      id: promotion.id,
+      overrideAccess: true,
+    })
+
+    check(
+      'K: §15 owed — `timesUsed` is incremented inside the payment transaction',
+      after.timesUsed === 1,
+      String(after.timesUsed),
+    )
+
+    await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: order.id,
+      paymentIntentId: null,
+    })
+
+    const again = await payload.findByID({
+      collection: 'promotions',
+      depth: 0,
+      id: promotion.id,
+      overrideAccess: true,
+    })
+
+    check('K: …and not again on a duplicate event', again.timesUsed === 1, String(again.timesUsed))
+
+    await payload
+      .delete({ collection: 'promotions', id: promotion.id, overrideAccess: true })
+      .catch(() => undefined)
+  }
 } finally {
   await cleanup()
 }

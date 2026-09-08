@@ -5613,6 +5613,57 @@ it as much as expected.
 - **Stripe Tax.** §16.1c's provider is still the deferral, so preflight refuses when tax cannot be
   calculated — which, with no keys, is every attempt (**DEV-61**).
 
+### 1.22.9 Post-implementation sweeps
+
+#### Sweep 1 — two payments arriving at the same instant
+
+**One defect, and it is the one this phase exists to prevent.**
+
+§17.1d names two idempotency barriers and this phase implemented both: a unique event id, and a status
+check before finalisation. Sweep 1 delivered **two events for one payment concurrently** — a
+`checkout.session.completed` and a `checkout.session.async_payment_succeeded`, which is exactly what
+Stripe sends — and **both reported `finalised`**.
+
+The status check is a *read*. Two transactions read `pending_payment` before either wrote `paid`, so
+both passed a guard that is correct in every sequential test and useless under concurrency. The first
+run hid the consequence: stock happened to land on the right number because both transactions computed
+the same absolute value from the same stale read, and the second write silently overwrote the first
+with an identical figure. A **lost update** that looked like success.
+
+Making the decrement atomic made the damage visible rather than fixing it — `inventory_quantity =
+inventory_quantity - $n` correctly subtracted **twice**, taking stock from 5 to 1 for a two-unit order.
+That was the useful failure: it moved the bug from where it was hiding to where it was.
+
+**The fix is a third barrier: the order is *claimed*, not checked.** One conditional statement both
+sets `paid` and refuses to if it already is:
+
+```sql
+UPDATE orders SET payment_status = 'paid', paid_at = ..., stripe_payment_intent_id = COALESCE(...)
+WHERE id = $1 AND payment_status IN (<finalisable>)
+```
+
+Postgres serialises the two statements on the row; the loser sees zero rows affected and stops. There
+is **no window between the decision and the write, because they are the same statement.** The
+finalisable list is derived from the state machine rather than written out in SQL, so the two cannot
+drift.
+
+Both the claim and the decrement are now expression updates. Neither reads a value and writes back a
+number computed from it, which is the shape every one of these bugs had.
+
+Measured after: `alreadyFinal,finalised`, and stock moved exactly once.
+
+#### What the near-miss says about the harness
+
+`verify-webhook` had **24 passing checks** covering both documented barriers, including duplicate
+events, and every one of them ran the events **in sequence**. A sequential test of an idempotency
+guard tests the guard; it does not test the race the guard exists for, and the two look identical
+until something runs them at once.
+
+Fifteen other adversarial cases held and are now permanent checks — a draft order refusing to be paid,
+a refunded one refusing to be re-paid, an order with no lines, an order whose variant was deleted after
+payment, exactly the last unit, and §15's owed `timesUsed` counter incrementing once inside the
+payment transaction and not again on a retry. `verify:webhook` is **37 checks**, up from 24.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
