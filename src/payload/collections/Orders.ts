@@ -482,6 +482,7 @@ export const Orders: CollectionConfig = {
               type: 'text',
               unique: true,
               index: true,
+              access: { update: nobodyField },
               admin: {
                 readOnly: true,
                 description: 'Set when the Checkout Session is created (Phase 17).',
@@ -492,6 +493,7 @@ export const Orders: CollectionConfig = {
               type: 'text',
               unique: true,
               index: true,
+              access: { update: nobodyField },
               admin: {
                 readOnly: true,
                 description: 'Set from the verified webhook event (Phase 17).',
@@ -500,6 +502,7 @@ export const Orders: CollectionConfig = {
             {
               name: 'paidAt',
               type: 'date',
+              access: { update: nobodyField },
               admin: {
                 readOnly: true,
                 date: { pickerAppearance: 'dayAndTime' },

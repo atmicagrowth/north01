@@ -5809,11 +5809,13 @@ Two axes, one derived display status: `displayStatus(payment, fulfilment)` is th
 reconstructed rather than stored. Storing it would be a third column that can disagree with the two
 that are true.
 
-Precedence: cancellation and refund first, because they are where money is owed or returned and
-burying them under a fulfilment step would report *"shipped"* to somebody just refunded; then
-fulfilment, because an order being picked is newer news than an order being paid for; then payment,
-which answers exactly while fulfilment has not started. All 35 combinations derive a status that has
-customer-facing copy.
+Precedence: **refund first**, then cancellation, then fulfilment, then payment. Refund leads because
+it is the only one of the four that is about money moving back, and burying it under a fulfilment step
+would report *"shipped"* to somebody just refunded. Fulfilment outranks payment because an order being
+picked is newer news than an order being paid for, and payment answers exactly while fulfilment has not
+started. All 35 combinations derive a status that has customer-facing copy.
+
+The refund-before-cancellation half of that order is sweep 2's, not the first draft's — see §1.23.11.
 
 Its consumer is **Phase 20's `/account/orders`**, which is where the plan puts order history. Built and
 proved here because DEV-03 said this phase would confirm it, and a derivation with an untested
@@ -5881,6 +5883,12 @@ still ends as `noOrder`, recorded and acknowledged, exactly as before.
   admin surface rather than a status dropdown.
 - **The abandoned-order sweep**, still. An order left at `checkout_started` is harmless and
   accumulates; the same job `Carts.expiresAt` has been waiting for since Phase 14.
+- **One order per bag.** Sweep 2 found `preflight.ts` doing a find-then-create on `orders.cart`, so two
+  checkout attempts started at the same instant produce **two** pending orders for one bag. Named and
+  deliberately not fixed here: the second order can only become a charge if the customer completes a
+  second Stripe Checkout, each order is individually correct, and the fix is a partial unique index
+  plus a retry in the checkout path — a change to Phase 17's flow whose new failure modes deserve more
+  than the last hour of a sweep. See §1.23.11.
 
 
 ### 1.23.11 Post-implementation sweeps
@@ -5933,6 +5941,66 @@ unsaveable and no existing test would have caught it. Payload also coerces befor
 REST body carrying `"5000"` for a frozen column is compared after coercion rather than as a string.
 
 `verify:orders` is **67 checks**, up from 62. Every other harness re-run unchanged.
+
+#### Sweep 2 — the fields whose read-only was a decoration
+
+Sweep 1 found a race and fixed it. Sweep 2 went after the **class** — which by now has a name in this
+document: *a rule stated in a docblock, with nothing enforcing it.* Phase 17's second sweep found it on
+`paymentStatus`; Phase 18 found it on the order lines while building. So the question was how many more
+there are, and it was answered by grepping for `readOnly: true` with no field access beside it rather
+than by testing anything.
+
+**Fourteen hits, four of them real.**
+
+- **`orders.stripePaymentIntentId`** and **`stripeCheckoutSessionId`**. The payment-intent field's own
+  docblock names the danger in as many words — *"a hand-typed payment intent is an order attached to
+  somebody else's money"* — and nothing stopped anyone typing it. Both are unique, so a staff member
+  could have attached an order to a payment that belonged to a different order.
+- **`orders.paidAt`**, which would be a lie about when money moved.
+- **`promotions.timesUsed`**, which is what `usageLimit` is measured against. Resetting it is how a
+  usage limit lies; the honest way to extend a code is to raise the limit. Phase 17 increments this
+  with an expression update inside the payment transaction, past Payload entirely, so the guard costs
+  that path nothing.
+
+All four closed with `nobodyField`, which `overrideAccess` skips — every server write to them already
+uses it, and two of them are raw SQL that never touches Payload at all.
+
+**And one that was investigated and correctly left alone.** `products.derived` — the cached price range
+and stock total — has the same shape, and guarding it would have **broken the cache it protects**:
+`syncProductDerived` refreshes it with `payload.update({ req })` and no `overrideAccess`, so field
+access applies to the hook's own write. The finding is that the shape is not the whole story; what
+matters is whether the maintaining code goes through the same door. Recorded so the next sweep does not
+re-find it and get it wrong.
+
+#### A precedence that was reasoned about and still landed on the wrong answer
+
+`displayStatus` put cancellation ahead of refund, so an order **cancelled and then refunded** read as
+*"Cancelled. Nothing was dispatched."* — true, and silent about the money. The check written next to it
+had quietly excluded `refunded` from its sweep of payment statuses, which is the tell: the corner was
+noticed while writing the test and then not decided. Refund leads now, because it is the fact the
+customer would otherwise write in to ask about, and nothing is lost — an order that was never
+dispatched has no tracking to explain.
+
+#### Found, recorded, not fixed
+
+`preflight.ts` finds an existing pending order by cart and creates one if there is none — a
+find-then-create, the same shape as everything above. Two checkout attempts started at the same
+instant produce **two** pending orders for one bag.
+
+Not fixed here, and the reasoning is worth stating rather than hiding: each order is individually
+correct, the second can only become a charge if the customer completes a second Stripe Checkout with a
+second card entry, and the real fix is a partial unique index over `orders.cart_id` for live orders plus
+a retry path in preflight — which changes how checkout fails, at the end of a sweep, with nothing left
+to exercise the new failure modes. It is in §1.23.10 as a named debt, not as a shrug.
+
+#### What was measured rather than asserted
+
+The claims §1.23.5 was making about field access were prose until now. `verify-orders` section L
+measures each: staff cannot retype a line's `quantity` or `lineTotalMinor`, cannot type the dispatch
+stamps or the refund columns, cannot hand-type a payment intent — and a promotion with a guarded
+counter is **still editable**, which is what a guard on one field must not cost.
+
+`verify:orders` is **74 checks**, up from 67. Every other harness re-run unchanged.
 
 # 2. Deviations
 
@@ -7567,4 +7635,5 @@ email follows a state change that can only happen once.
 | Phase 17 — checkout / Stripe | 2026-09-08 | Notes **§1.22**: the phase `AGENTS.md`'s payment rule was written for. `stripe@22.5.0` installed at its pin; one migration, generated and committed — the `stripe-events` table whose **unique event id is §17.1d's first idempotency barrier**, and `orders.cart_id` for §17.1a step 10. `fulfil.ts` is the **only** file that writes `paid`, and three separate mechanisms would each have to be defeated to change that. §17.1a's steps 3–7 are **not re-implemented** — they are `getCart`, which has revalidated products, variants, stock, prices and promotions on every read since Phase 14; preflight adds the refusal a bag does not need. **Both barriers, and why one is not enough**: the unique event id stops the same event twice, and the order's own state stops a *different* event driving the same transition — Stripe sends `checkout.session.completed` **and** `payment_intent.succeeded` for one payment, and only the second barrier catches that. Verified against the real database: inventory is not decremented twice, however many times an event arrives. §17.1f's race is resolved by reading stock **inside** the transaction that writes it, all-or-nothing, and an order that cannot be met is marked **paid and left unfulfilled** — the money moved, and fulfilment is the half §17.1f withholds. §17.1g's six cases collapse to one behaviour: the success page **reads** and reports, writes nothing, and shows one message for not-found, not-yours and never-existed. `verify:webhook` failed on its first run with `ERR_MODULE_NOT_FOUND: server-only` — the third phase to produce the same rule from a third direction: **a guard belongs where a secret or a request could leak, and nowhere else.** Deviations **DEV-62** (complete, and has never taken a payment — no keys; signature verification is nonetheless verified offline against the SDK's own signer, and everything downstream against the real database) and **DEV-63** (one Stripe line item priced at the server's own total, so the shop and the processor cannot quote two different prices). `verify:checkout` **61**, `verify:webhook` **24**, 24 browser checks, 0 axe violations. |
 | Phase 17 — two post-implementation sweeps | 2026-09-08 | Notes **§1.22.9**. One defect and then its whole class. **Sweep 1** delivered two events for one payment *concurrently* — which is what Stripe actually sends — and **both reported `finalised`**: §17.1d's second barrier is a status *read*, and two transactions read `pending_payment` before either wrote `paid`. The first run hid it, because both computed the same absolute stock figure from the same stale read and the second write overwrote the first with an identical number; making the decrement atomic *made the damage visible* rather than fixing it, taking stock from 5 to 1 for a two-unit order. Closed with a **third barrier**: the order is **claimed** by one conditional `UPDATE … WHERE payment_status IN (<finalisable>)` rather than checked, so there is no window between the decision and the write because they are the same statement, and the finalisable list is derived from the state machine so the two cannot drift. The near-miss indicted the harness as much as the code — **24 passing checks** covered both documented barriers and every one ran its events *in sequence*. **Sweep 2** then hunted the *shape* rather than another instance and found two more read-then-writes: the **promotion `timesUsed` counter**, which is what a code's `usageLimit` is measured against — two customers paying with one code at the same instant are two different orders, so no barrier applies and both are owed an increment — and the webhook's `attempts` column. Both are expression updates now. Section K had *already tested* the promotion counter and passed, because it increments in sequence: the identical blind spot, in a check written by sweep 1. The replacement, section L, **failed at `1` instead of `2` before the fix**. Sweep 2 also checked §1.22.1's claim that nothing but `fulfil.ts` can mark an order paid and found **a fourth door**: `paymentStatus` was an ordinary editable select and `Orders.access.update` is `isStaff`, so a staff member could type the value `AGENTS.md` reserves for a signature-verified webhook. Closed with `nobodyField`, which `overrideAccess` skips — server path open, browser path gone — and proved three ways in `verify:access`. Route docblock corrected: it was headed *"why it always answers 200"* and omitted the **503** it returns when Stripe is unconfigured. One read-then-write in `cart.ts` was found and **deliberately left**, with the reason recorded: the write is absolute and already clamped, so the race can lose an increment but can never exceed availability or the per-line limit. New module `lib/checkout/events.ts` — the delivery counter, unguarded so a harness can drive it, which is the `server-only` rule for the fourth time. `verify:webhook` **38**, `verify:checkout` **62**, `verify:access` **48**; every other harness re-run unchanged and green. |
 | Phase 18 — order system | 2026-09-08 | Notes **§1.23**: the phase **DEV-03** said would confirm it, and it is confirmed — `displayStatus` derives plan §18.1b's single line from the two stored axes, all 35 payment x fulfilment combinations asserted, precedence checked in both directions, and the reason one column cannot do it stated: nothing single-valued holds *"refunded, but it shipped last week"*. **Two thirds of §18.1a was already Phase 17** — the pending order, the snapshots, the Stripe identifiers and *"finalize as paid only from validated Stripe state"* all held, so this phase tested them rather than rebuilding them. What was genuinely missing: **§18.1b's edges**, which the plan does not draw. Five legal transitions across 25 ordered pairs, asserted as a count so a machine that quietly grows an edge fails a check; `delivered` and `cancelled` terminal; **`shipped` cannot go back to `processing`**, because §18.1c hangs a dispatch email off that transition and moving the column back does not unsend it; **`shipped` cannot be cancelled**, which is this shop's answer to §18.1b's *"only where business rules allow"* — cancellation is available until dispatch, after which it is a return. Fulfilment starts at `PAID` with two exemptions that are the two-axis model earning its keep: `shipped -> delivered` records a parcel that has already gone (DEV-03's own refunded-in-transit case), and cancelling an unpaid order is ordinary. §18.1c's tracking condition refuses a dispatch with no carrier, no tracking number, or a tracking number of spaces, and the timestamps are written **by** the transition rather than typed beside it. Enforced in a **`beforeChange` hook**, not field access and not an admin component, because a hook runs on every path — with the subtlety that the panel posts the whole document on every save, so an unchanged status must not read as a transition or a delivered order becomes unsaveable. **§18.1d was half true**: the four columns were already snapshots, proved by renaming, repricing and re-SKU-ing the product and re-reading the line — but `OrderItems.access.update` is `isStaff`, so they could be **retyped**, the identical door Phase 17's sweep found on `paymentStatus`. Closed by `freezeOrderLines` on every path including `overrideAccess`; `quantity` and `lineTotalMinor` deliberately excluded, because the schema reserves them for a partial refund. **§18.1b's `PAID -> REFUNDED` now arrives from Stripe** — and `charge.refunded` carries the *charge's* metadata, not the session's, so adding the event type alone would have produced a handler that verified, recorded and ignored every refund; the order is resolved by **payment intent** instead, and the refund records how much and when (two new columns, one generated migration). Wiring it exposed a defect two phases of tests had missed: a `payment_intent.payment_failed` for a superseded attempt, racing the event that paid the order, **could write `payment_failed` over a completed payment** — the machine forbids it and the read-then-write never asked. Every payment transition is a conditional `UPDATE` now, its reachable-from list derived from the machine by `statusesThatCanReach`; both orderings end at `paid`, asserted concurrently. Deviation **DEV-64** (§18.1c's shipment email is a seam here and an email in Phase 19). New script `pnpm verify:orders` — **62 checks**, including staff, customer and anonymous attempts against the real access layer. Every other harness re-run green; typecheck, lint --max-warnings 0 and build pass. **Owed and named**: no browser or axe pass, because no browser tooling is available in this session — Phase 18 adds no storefront UI, but the order edit screen has not been looked at. |
+| Phase 18 — two post-implementation sweeps | 2026-09-08 | Notes **§1.23.11**. **Sweep 1** asked whether the brand-new fulfilment guard had the shape Phase 17's sweeps kept finding, and it did. Two staff, two requests, two transactions, both reading `processing` before either wrote: the ship succeeded, and the cancel **also** succeeded — a transition the machine calls impossible — leaving `final: cancelled, shippedAt = null`, with the carrier, the tracking number and the dispatch stamp wiped by the loser's stale document, after §18.1c had already triggered a shipment email for a parcel the record now says was never sent. Fixed with **`SELECT ... FOR UPDATE`** rather than a conditional `UPDATE`: this write goes through Payload because it must pass validation, run the remaining hooks and produce a document the panel can render, and a lock is the version of the same guarantee that works when something else does the writing. The interleaving is worth recording — **the first attempt to reproduce it passed**, because two `payload.update` calls fired together serialise on their own; the failure needs the second write in flight while the first still holds the row, which section J now sets up deliberately. Sweep 1 also found, by reading, that the tracking condition used `data.carrier ?? original.carrier` and `??` reads straight past an explicit `null`, so **one write could dispatch an order and clear the carrier it was dispatched with**. What held: the full-document re-save, checked because `unitPriceMinor` coming back as a string would have made every order line unsaveable and no existing test would have caught it. **Sweep 2** went after the class rather than the instance — *a rule stated in a docblock with nothing enforcing it* — by grepping for `readOnly: true` with no field access beside it. Fourteen hits, **four real**: `orders.stripePaymentIntentId` and `stripeCheckoutSessionId`, where the payment-intent field's own docblock names the danger (*"a hand-typed payment intent is an order attached to somebody else's money"*) and nothing stopped anyone typing it; `orders.paidAt`, which would be a lie about when money moved; and `promotions.timesUsed`, which is what `usageLimit` is measured against. All four closed with `nobodyField`, which `overrideAccess` skips. **And one investigated and correctly left alone** — `products.derived` has the same shape, and guarding it would have broken the cache it protects, because `syncProductDerived` writes with `req` and no `overrideAccess`: the shape is not the whole story, what matters is whether the maintaining code goes through the same door. Sweep 2 also reversed a precedence that had been reasoned about and still landed wrong — an order **cancelled and then refunded** read as *"Cancelled. Nothing was dispatched."*, true and silent about the money; the check beside it had quietly excluded `refunded`, which was the tell that the corner was noticed and never decided. And it found `preflight.ts` doing a find-then-create on `orders.cart`, so two simultaneous checkouts make **two pending orders for one bag** — **recorded, not fixed**, with the reasoning stated: each order is individually correct, a second charge needs a second card entry, and the fix is a partial unique index plus a retry in the checkout path, which changes how checkout fails and deserves more than the last hour of a sweep. The claims field access had only been *making* are now measured. `verify:orders` **74 checks**, up from 62; every other harness re-run unchanged; typecheck, lint --max-warnings 0 and build pass. |
 > **Append this table, and the sections above it, at the end of every phase.**

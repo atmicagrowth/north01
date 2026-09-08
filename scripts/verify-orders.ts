@@ -266,6 +266,22 @@ const PAYMENTS: PaymentStatus[] = [
     ),
   )
 
+  /*
+   * The one corner where both words are true. Sweep 2 found it untested and landing on `cancelled`,
+   * which is the answer that does not mention the money.
+   */
+  check(
+    'C: **an order cancelled and then refunded reads as refunded** — the money is the news',
+    displayStatus('refunded', 'cancelled') === 'refunded',
+    displayStatus('refunded', 'cancelled'),
+  )
+
+  check(
+    'C: …but a cancellation with no refund still reads as cancelled',
+    displayStatus('cancelled', 'cancelled') === 'cancelled' &&
+      displayStatus('checkout_started', 'cancelled') === 'cancelled',
+  )
+
   check(
     'C: fulfilment outranks payment once it has started',
     displayStatus('paid', 'processing') === 'processing' &&
@@ -1016,6 +1032,169 @@ try {
         typeof settled.shippedAt === 'string',
       `${settled.carrier}/${settled.trackingNumber}/${settled.shippedAt ? 'stamped' : 'null'}`,
     )
+  }
+  /* ============================================ L — the claims field access was making, measured */
+  {
+    /*
+     * §1.23.5 says `quantity` and `lineTotalMinor` are *"closed to the browser by field access"*, and
+     * §18.1c's timestamps and the refund columns say the same. Until sweep 2 those were sentences.
+     * Field access does not throw — Payload drops the field and applies the rest — so each of these
+     * asserts the **value**, which is the only thing that distinguishes a working denial from a write
+     * that failed for some unrelated reason.
+     */
+    const staff = await payload.create({
+      collection: 'users',
+      data: {
+        email: `verify-orders-l-${suffix}@example.test`,
+        password: PASSWORD,
+        role: 'editor',
+      },
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'users', id: staff.id })
+
+    const staffUser = { ...staff, collection: 'users' } as TypedUser
+    const order = await makeOrder('L', 'paid')
+
+    const line = await payload.create({
+      collection: 'order-items',
+      data: {
+        lineTotalMinor: 5_000,
+        order: order.id,
+        productName: 'Alpine Shell',
+        quantity: 1,
+        sku: `ORD-${suffix}-l`,
+        unitPriceMinor: 5_000,
+        variantLabel: 'Bone / M',
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'order-items', id: line.id })
+
+    await payload.update({
+      collection: 'order-items',
+      data: { lineTotalMinor: 1, quantity: 99 },
+      id: line.id,
+      overrideAccess: false,
+      user: staffUser,
+    })
+
+    const afterLine = await payload.findByID({
+      collection: 'order-items',
+      depth: 0,
+      id: line.id,
+      overrideAccess: true,
+    })
+
+    check(
+      'L: **staff cannot retype the quantity or the line total from a request** — field access holds',
+      afterLine.quantity === 1 && afterLine.lineTotalMinor === 5_000,
+      `${afterLine.quantity}/${afterLine.lineTotalMinor}`,
+    )
+
+    await payload.update({
+      collection: 'orders',
+      data: {
+        deliveredAt: '2020-01-01T00:00:00.000Z',
+        refundedAt: '2020-01-01T00:00:00.000Z',
+        refundedMinor: 4_242,
+        shippedAt: '2020-01-01T00:00:00.000Z',
+      },
+      id: order.id,
+      overrideAccess: false,
+      user: staffUser,
+    })
+
+    const afterOrder = await orderNow(order.id)
+
+    check(
+      'L: **the dispatch stamps and the refund columns cannot be typed either**',
+      afterOrder.shippedAt === null &&
+        afterOrder.deliveredAt === null &&
+        afterOrder.refundedAt === null &&
+        afterOrder.refundedMinor === null,
+      `${afterOrder.shippedAt}/${afterOrder.deliveredAt}/${afterOrder.refundedAt}/${afterOrder.refundedMinor}`,
+    )
+
+    /*
+     * The four fields sweep 2 found whose `readOnly` was a UI hint with no rule behind it. The
+     * payment-intent one is the field whose own docblock names the danger — *"a hand-typed payment
+     * intent is an order attached to somebody else's money"* — and until this sweep nothing stopped
+     * anyone typing it.
+     */
+    await payload.update({
+      collection: 'orders',
+      data: {
+        paidAt: '2020-01-01T00:00:00.000Z',
+        stripeCheckoutSessionId: `cs_forged_${suffix}`,
+        stripePaymentIntentId: `pi_forged_${suffix}`,
+      },
+      id: order.id,
+      overrideAccess: false,
+      user: staffUser,
+    })
+
+    const afterStripe = await orderNow(order.id)
+
+    check(
+      'L: **a payment intent cannot be hand-typed onto an order** — somebody else’s money',
+      afterStripe.stripePaymentIntentId === null &&
+        afterStripe.stripeCheckoutSessionId === null &&
+        afterStripe.paidAt === null,
+      `${afterStripe.stripePaymentIntentId}/${afterStripe.stripeCheckoutSessionId}/${afterStripe.paidAt}`,
+    )
+
+    const promotion = await payload.create({
+      collection: 'promotions',
+      data: {
+        active: true,
+        code: `ORDL${suffix}`,
+        percentage: 10,
+        timesUsed: 3,
+        type: 'percentage',
+      } as never,
+      overrideAccess: true,
+    })
+
+    await payload.update({
+      collection: 'promotions',
+      data: { timesUsed: 0 },
+      id: promotion.id,
+      overrideAccess: false,
+      user: staffUser,
+    })
+
+    const afterPromotion = await payload.findByID({
+      collection: 'promotions',
+      depth: 0,
+      id: promotion.id,
+      overrideAccess: true,
+    })
+
+    check(
+      'L: **the promotion use count cannot be reset from the panel** — that is how a usage limit lies',
+      afterPromotion.timesUsed === 3,
+      String(afterPromotion.timesUsed),
+    )
+
+    check(
+      'L: …and the promotion is still editable, which is what a guard on one field must not cost',
+      (
+        await payload.update({
+          collection: 'promotions',
+          data: { active: false },
+          id: promotion.id,
+          overrideAccess: false,
+          user: staffUser,
+        })
+      ).active === false,
+    )
+
+    await payload
+      .delete({ collection: 'promotions', id: promotion.id, overrideAccess: true })
+      .catch(() => undefined)
   }
 } finally {
   await cleanup()

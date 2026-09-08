@@ -1,6 +1,6 @@
 import type { CollectionConfig, NumberFieldSingleValidation } from 'payload'
 
-import { isAdmin, isStaff } from '../access'
+import { isAdmin, isStaff, nobodyField } from '../access'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { normaliseCode } from '../fields/slug'
 
@@ -260,11 +260,20 @@ export const Promotions: CollectionConfig = {
           },
         },
         {
+          /*
+           * Not editable from a browser. `usageLimit` is measured against this, so a staff member who
+           * could retype it could quietly extend a code past what the shop agreed to — and the honest
+           * way to extend a code is to raise the limit, not to falsify the count. Phase 17 increments
+           * it with an expression update inside the payment transaction, past Payload entirely, so
+           * the guard costs that path nothing. Found by Phase 18's second sweep, reading for fields
+           * whose `readOnly` was a UI hint with no rule behind it.
+           */
           name: 'timesUsed',
           type: 'number',
           required: true,
           defaultValue: 0,
           min: 0,
+          access: { update: nobodyField },
           admin: {
             width: '33%',
             readOnly: true,

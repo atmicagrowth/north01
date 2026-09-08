@@ -246,12 +246,22 @@ export function displayStatus(
   payment: PaymentStatus,
   fulfilment: FulfillmentStatus,
 ): DisplayStatus {
-  if (fulfilment === 'cancelled' || payment === 'cancelled') {
-    return 'cancelled'
-  }
-
+  /*
+   * **Refund outranks cancellation**, and the case that settles it is an order that is both: cancelled
+   * before dispatch, then refunded. Both words are true and only one of them tells the customer their
+   * money is coming back, which is the thing they would otherwise write in to ask. The cancellation is
+   * not lost — nothing was dispatched, so there is no tracking to explain, and the refund copy says
+   * what happened to the money.
+   *
+   * Phase 18's second sweep found this corner untested and landing on the less useful of two true
+   * answers.
+   */
   if (payment === 'refunded') {
     return 'refunded'
+  }
+
+  if (fulfilment === 'cancelled' || payment === 'cancelled') {
+    return 'cancelled'
   }
 
   if (fulfilment === 'delivered' || fulfilment === 'shipped' || fulfilment === 'processing') {
