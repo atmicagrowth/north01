@@ -66,3 +66,7 @@ tsconfig.tsbuildinfo
 
 # `pnpm generate:media -- --preview` renders here so the art can be judged before it is uploaded.
 media-preview/
+
+# Source photography handed to `pnpm import:media`. The assets themselves live on Cloudinary
+# once imported; these are the originals, and they are the owner's files rather than the repo's.
+brand-media/

@@ -28,6 +28,7 @@
     "generate:importmap": "payload generate:importmap",
     "seed": "payload run scripts/seed.ts",
     "generate:media": "payload run scripts/generate-media.ts",
+    "import:media": "payload run scripts/import-brand-media.ts",
     "verify:access": "payload run scripts/verify-access.ts",
     "verify:media": "payload run scripts/verify-media.ts",
     "verify:shell": "payload run scripts/verify-shell.ts",
