@@ -63,3 +63,6 @@ Thumbs.db
 .vercel/
 .turbo/
 tsconfig.tsbuildinfo
+
+# `pnpm generate:media -- --preview` renders here so the art can be judged before it is uploaded.
+media-preview/
