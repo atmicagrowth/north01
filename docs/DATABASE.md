@@ -273,6 +273,12 @@ must never be pushed to: the prompt has no answer in a non-interactive build.
 
 **The Vercel Build Command is `pnpm build:deploy`**, which is `payload migrate && next build`.
 
+It is pinned in **`vercel.json`** rather than left to the project's dashboard field, because a build
+command that only exists as a setting is one a re-created project, a second environment or a fork
+silently loses — and what it loses is the migration step, which fails as a runtime error against a
+schema that was never applied rather than as a build error. The file is two lines and it travels with
+the repository.
+
 Three properties, in the order they matter:
 
 1. **Migrations run before the application that needs them.** Plan §5.1d asks for exactly this.
