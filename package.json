@@ -46,6 +46,7 @@
     "verify:checkout": "payload run scripts/verify-checkout.ts",
     "verify:webhook": "payload run scripts/verify-webhook.ts",
     "verify:email": "payload run scripts/verify-email.ts",
+    "verify:account": "payload run scripts/verify-account.ts",
     "verify:orders": "payload run scripts/verify-orders.ts"
   },
   "dependencies": {

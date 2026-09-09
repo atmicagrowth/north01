@@ -5,6 +5,7 @@ import { SiteFooter } from '@/components/layout/site-footer'
 import { SiteHeader } from '@/components/layout/site-header'
 import { NewsletterSignup } from '@/components/newsletter/newsletter-signup'
 import { CartDrawer } from '@/components/shell/cart-drawer'
+import { WishlistSync } from '@/components/wishlist/wishlist-sync'
 import { ShellOverlayProvider } from '@/components/shell/overlay-context'
 import { SearchOverlay } from '@/components/shell/search-overlay'
 import { getCustomer } from '@/lib/auth/session'
@@ -75,6 +76,13 @@ export default async function FrontendLayout({ children }: { children: ReactNode
 
           <SearchOverlay />
           <CartDrawer cart={cart} items={navigation.primary} />
+
+          {/*
+            §20.1a's *"on login, merge into customer wishlist"*. Renders nothing and does nothing
+            until a session exists and the device has a saved list — see `wishlist-sync.tsx` and
+            **DEV-68** for why this cannot happen inside `login()` the way the cart's merge does.
+          */}
+          <WishlistSync signedIn={customer !== null} />
         </ShellOverlayProvider>
       </body>
     </html>

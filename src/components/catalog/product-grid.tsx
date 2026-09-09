@@ -35,8 +35,16 @@ import { cn } from '@/lib/cn'
 export function ProductGrid({
   cards,
   eager = false,
+  savedIds,
+  signedIn = false,
 }: {
   cards: ProductCardModel[]
+  /**
+   * The product ids already on the signed-in customer's list, read **once for the page** rather than
+   * once per card. A grid of twenty-four cards must not become twenty-four queries.
+   */
+  savedIds?: readonly number[]
+  signedIn?: boolean
   /**
    * Whether the first card may be the LCP element. True only on page 1 of an unfiltered shop, where
    * the grid is the first thing below the header — plan §10.1d's rule that *"proper priority"*
@@ -51,7 +59,13 @@ export function ProductGrid({
     >
       {cards.map((card, index) => (
         <li key={card.id}>
-          <ProductCard card={card} priority={eager && index === 0} />
+          <ProductCard
+            card={card}
+            priority={eager && index === 0}
+            savedForCustomer={savedIds?.includes(card.id) ?? false}
+            showWishlist
+            signedIn={signedIn}
+          />
         </li>
       ))}
     </ul>

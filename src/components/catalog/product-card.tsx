@@ -4,6 +4,7 @@ import { Link } from '@/components/ui/link'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import { productCardBadge, type ProductCard as ProductCardModel } from '@/lib/catalog/resolve'
+import { WishlistButton } from '@/components/wishlist/wishlist-button'
 import { cn } from '@/lib/cn'
 
 /**
@@ -56,11 +57,26 @@ import { cn } from '@/lib/cn'
 export function ProductCard({
   card,
   priority = false,
+  savedForCustomer = false,
+  showWishlist = false,
+  signedIn = false,
   sizes = CATALOG_IMAGE_SIZES.productCardGrid,
 }: {
   card: ProductCardModel
   /** The first card of the first page may be the LCP element. Everything else is lazy. */
   priority?: boolean
+  /** Whether this product is already on the signed-in customer's list, resolved on the server. */
+  savedForCustomer?: boolean
+  /**
+   * **Opt-in, because a heart is not welcome everywhere this card appears.**
+   *
+   * `ProductCard` renders in five places, and two of them are inside the bag: the cart page's
+   * recommendations and the cart drawer, where each card sits in an `<li onClick={close}>` that would
+   * shut the drawer under the customer's finger. Making the control a prop means those two call sites
+   * simply do not ask for it, rather than needing to suppress it.
+   */
+  showWishlist?: boolean
+  signedIn?: boolean
   /**
    * The layout this card is in.
    *
@@ -75,93 +91,117 @@ export function ProductCard({
   const badge = productCardBadge(card)
   const isUnbuyable = card.state === 'soldOut' || card.state === 'unavailable'
 
+  /*
+   * **A link with a button beside it, not a button inside a link.**
+   *
+   * Phase 20 had to restructure this. The card used to be one `<Link>` wrapping everything, and the
+   * obvious place for a heart — the top-right of the image, mirroring the badge — would have put a
+   * `<button>` inside an `<a>`. That is invalid HTML, and browsers recover from it inconsistently:
+   * the control becomes unreachable or un-activatable by keyboard, and assistive technology is given
+   * a nested interactive it has no way to describe.
+   *
+   * So the wrapper is a plain element, the link covers the image and the text, and the wishlist
+   * control is its **sibling** positioned over the image. `group` moves to the wrapper with it,
+   * because the image's hover treatment keys off it. Plan §11.1c named this exact hazard as a
+   * requirement — *"click wishlist → prevent card navigation"* — and this is the version of that
+   * which needs no `stopPropagation`, because the click never reaches the link in the first place.
+   */
   return (
-    <Link
-      href={card.href}
-      variant="unstyled"
-      className="group block focus-visible:outline-offset-4"
-      data-slot="product-card"
-      data-state={card.state}
-    >
-      <div className="relative">
-        <MediaImage
-          media={card.image}
-          context="productCard"
-          sizes={sizes}
-          priority={priority}
-          alt=""
-          imageClassName={cn(
-            'object-cover transition-opacity duration-(--duration-base) ease-editorial group-hover:opacity-85',
-            /*
-             * The sold-out photograph recedes rather than being covered by a scrim. A scrim is an
-             * opaque panel over a garment somebody is trying to look at; halving the contrast says
-             * the same thing and leaves the product visible, which is guide §11's "avoid heavy
-             * overlays on imagery".
-             */
-            isUnbuyable && 'opacity-55',
-          )}
-        />
-
-        {badge ? (
-          <Badge
-            variant={badge.tone}
-            className={cn(
-              'absolute left-2 top-2 bg-canvas/85 backdrop-blur-[2px]',
-              /* `muted` loses its rule, so it needs the ground to stay legible over a photograph. */
-              badge.tone === 'muted' && 'border-border',
+    <div className="group relative" data-slot="product-card" data-state={card.state}>
+      <Link href={card.href} variant="unstyled" className="block focus-visible:outline-offset-4">
+        <div className="relative">
+          <MediaImage
+            media={card.image}
+            context="productCard"
+            sizes={sizes}
+            priority={priority}
+            alt=""
+            imageClassName={cn(
+              'object-cover transition-opacity duration-(--duration-base) ease-editorial group-hover:opacity-85',
+              /*
+               * The sold-out photograph recedes rather than being covered by a scrim. A scrim is an
+               * opaque panel over a garment somebody is trying to look at; halving the contrast says
+               * the same thing and leaves the product visible, which is guide §11's "avoid heavy
+               * overlays on imagery".
+               */
+              isUnbuyable && 'opacity-55',
             )}
-          >
-            {badge.label}
-          </Badge>
-        ) : null}
-      </div>
+          />
 
-      <div className="mt-s flex flex-col gap-1">
-        <p className="font-sans text-body-sm text-foreground">{card.name}</p>
+          {badge ? (
+            <Badge
+              variant={badge.tone}
+              className={cn(
+                'absolute left-2 top-2 bg-canvas/85 backdrop-blur-[2px]',
+                /* `muted` loses its rule, so it needs the ground to stay legible over a photograph. */
+                badge.tone === 'muted' && 'border-border',
+              )}
+            >
+              {badge.label}
+            </Badge>
+          ) : null}
+        </div>
 
-        <p className="flex items-baseline gap-2 font-sans text-meta text-foreground-muted">
-          {card.priceLabel ? (
-            /*
-             * The price actually payable is the brighter of the two when there is a saving, which is
-             * hierarchy rather than decoration: the number a customer will be charged should not be
-             * the quieter one on the card.
-             */
-            <span className={card.compareAtLabel ? 'text-foreground' : undefined}>
-              {card.priceLabel}
-            </span>
-          ) : (
-            /*
-             * The `unavailable` state has no price, and `formatPriceRange` returned `null` rather
-             * than `$0.00` precisely so this branch has to exist. A product with no purchasable
-             * variant has no price, and inventing one is the false claim `lib/money.ts` refuses to
-             * make.
-             */
-            <span>Currently unavailable</span>
-          )}
+        <div className="mt-s flex flex-col gap-1">
+          <p className="font-sans text-body-sm text-foreground">{card.name}</p>
 
-          {card.compareAtLabel ? (
-            /*
-             * **Stone (7.91:1), not the disabled tone (4.15:1).** This read `text-foreground-disabled`
-             * and axe-core called it, correctly: a former price is *information a customer reads*,
-             * not a dimmed control. `Badge`'s own docblock states the rule that was broken here —
-             * "'Sold out' is information a customer reads, so it keeps Stone's 7.91:1 rather than
-             * dropping to the 4.15:1 tone reserved for disabled" — and the same applies to a struck
-             * price. The strike-through is what marks it as former; the colour must not also have to.
-             */
-            <s className="text-foreground-muted">
-              {/*
+          <p className="flex items-baseline gap-2 font-sans text-meta text-foreground-muted">
+            {card.priceLabel ? (
+              /*
+               * The price actually payable is the brighter of the two when there is a saving, which is
+               * hierarchy rather than decoration: the number a customer will be charged should not be
+               * the quieter one on the card.
+               */
+              <span className={card.compareAtLabel ? 'text-foreground' : undefined}>
+                {card.priceLabel}
+              </span>
+            ) : (
+              /*
+               * The `unavailable` state has no price, and `formatPriceRange` returned `null` rather
+               * than `$0.00` precisely so this branch has to exist. A product with no purchasable
+               * variant has no price, and inventing one is the false claim `lib/money.ts` refuses to
+               * make.
+               */
+              <span>Currently unavailable</span>
+            )}
+
+            {card.compareAtLabel ? (
+              /*
+               * **Stone (7.91:1), not the disabled tone (4.15:1).** This read `text-foreground-disabled`
+               * and axe-core called it, correctly: a former price is *information a customer reads*,
+               * not a dimmed control. `Badge`'s own docblock states the rule that was broken here —
+               * "'Sold out' is information a customer reads, so it keeps Stone's 7.91:1 rather than
+               * dropping to the 4.15:1 tone reserved for disabled" — and the same applies to a struck
+               * price. The strike-through is what marks it as former; the colour must not also have to.
+               */
+              <s className="text-foreground-muted">
+                {/*
                 The struck price is announced with its meaning rather than as a bare number: `<s>`
                 conveys nothing to a screen reader, so "Merino Crew, $180.00, was $240.00" is what
                 the visually-hidden word buys. Without it the two prices are read as one confusing
                 sequence.
               */}
-              <span className="sr-only">was </span>
-              {card.compareAtLabel}
-            </s>
-          ) : null}
-        </p>
-      </div>
-    </Link>
+                <span className="sr-only">was </span>
+                {card.compareAtLabel}
+              </s>
+            ) : null}
+          </p>
+        </div>
+      </Link>
+
+      {/*
+        The sibling. Positioned over the image, mirroring the badge across the frame, on the same
+        translucent ground the badge uses so it stays legible over a photograph of any brightness.
+      */}
+      {showWishlist ? (
+        <WishlistButton
+          className="absolute right-1 top-1 bg-canvas/85 backdrop-blur-[2px]"
+          productId={card.id}
+          savedForCustomer={savedForCustomer}
+          signedIn={signedIn}
+        />
+      ) : null}
+    </div>
   )
 }
 

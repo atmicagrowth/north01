@@ -1,6 +1,9 @@
 import { notFound } from 'next/navigation'
 
 import { ProductPage } from '@/components/product/product-page'
+import { getCustomer } from '@/lib/auth/session'
+import { getPayloadClient } from '@/lib/payload'
+import { readWishlistProductIds } from '@/lib/wishlist/read'
 import { loadProductParams } from '@/lib/product/params'
 import { getProduct } from '@/lib/product/product'
 
@@ -46,5 +49,21 @@ export default async function ProductDetailPage({
     notFound()
   }
 
-  return <ProductPage view={view} />
+  /*
+   * **§20.1a's saved state, resolved on the server.**
+   *
+   * The heart has to be correct in the markup rather than after a fetch, or a customer who has saved
+   * this product sees an empty heart for a beat and reasonably concludes it did not save. One query,
+   * and only when somebody is signed in — a guest's list lives on their device and the control reads
+   * it there.
+   */
+  const customer = await getCustomer()
+
+  const savedForCustomer =
+    customer !== null &&
+    (await readWishlistProductIds(await getPayloadClient(), customer.id)).includes(view.product.id)
+
+  return (
+    <ProductPage savedForCustomer={savedForCustomer} signedIn={customer !== null} view={view} />
+  )
 }

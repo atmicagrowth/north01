@@ -6166,6 +6166,168 @@ to `AppEnv` and this stops compiling until somebody decides whether mail may lea
   `status` enum has no `pending` state; adding one is a schema change, and the features document
   marks the whole item optional.
 
+## 1.25 Phase 20 — wishlist, account, recently viewed
+
+Plan §20.1a–§20.1d. **No dependency added and no migration**, which is the first thing worth
+recording: `WishlistItems` was built in Phase 6 to §6.1m and already carried everything this phase
+needed, including the constraint that makes §20.1b enforceable.
+
+### 1.25.1 The merge rule was already a database constraint
+
+§20.1b's first rule is *"existing customer wishlist wins duplicates"*, and Phase 6 had already made
+that true rather than aspirational: `wishlist-items` carries a compound unique index on
+`(customer, product)` with **both columns required**, because Postgres treats NULLs as distinct and an
+index over a nullable column would not have bitten.
+
+So the merge does not decide who wins a duplicate — the database refuses the second insert, whichever
+code path happened to run first. `planWishlistMerge` filters duplicates out anyway, and the reason is
+worth separating from the guarantee: it exists so the caller can **report** what happened instead of
+counting exceptions. The constraint is the guarantee; the function is the explanation.
+
+Same shape as Phase 19's `dedupeKey` and Phase 17's event id, for the third time.
+
+### 1.25.2 The guest wishlist cannot merge the way the cart does — DEV-68
+
+The cart's merge runs inside `login()`, on the server, and the browser is not involved: a guest cart
+is a **database row named by a cookie**, so the server can find it.
+
+A guest wishlist is `localStorage`. `WishlistItems` decided that in Phase 6 — *"there is no guest
+wishlist table"* — and this phase paid the bill: no server action can read it, so the merge has to be
+offered by the only party that can see the list. `WishlistSync` is a client component mounted in the
+shell that does nothing at all until a session exists and the device has entries, and then hands them
+over once.
+
+That makes the merge input **untrusted in a way the cart's is not**, and the containment is explicit
+rather than assumed: the action can only ever write rows owned by the session's own customer, because
+there is no parameter for whose; every id is checked against the published catalogue before anything
+is written; and the list is capped on the way in. The worst a forged call can do is add a product to
+*the caller's own* wishlist, which is what the button beside it does anyway.
+
+The device copy is cleared **only on success**, so a failed merge is retried on the next navigation
+rather than losing a list the customer chose to keep.
+
+### 1.25.3 A button inside a link is not a small problem
+
+`ProductCard` was one `<Link>` wrapping the image, the name and the price, and the obvious home for a
+heart — the top-right of the image, mirroring the badge — would have put a `<button>` inside an `<a>`.
+
+That is invalid HTML, and browsers recover from it inconsistently: the control becomes unreachable or
+un-activatable by keyboard, and assistive technology is handed a nested interactive it has no way to
+describe. So the card was restructured — a plain wrapper, the link covering image and text, and the
+control as its **sibling** positioned over the image. `group` moved to the wrapper with it, because
+the image's hover treatment keys off it.
+
+Plan §11.1c named this exact hazard as a requirement — *"click wishlist → prevent card navigation"* —
+and the structural fix is the version of that which needs no `stopPropagation`, because the click
+never reaches the link at all.
+
+**The heart is opt-in.** `ProductCard` renders in five places and two of them are inside the bag: the
+cart page's recommendations and the drawer, where each card sits in an `<li onClick={close}>` that
+would shut the drawer under the customer's finger. A prop means those call sites do not ask for it,
+rather than having to suppress it.
+
+### 1.25.4 Two mechanisms behind one control, and the customer is told which
+
+Signed in, the heart is a server action against `wishlist-items`. Signed out, it is a write to
+`localStorage`. A guest who saves something is told *"saved on this device"* — a control that looked
+identical in both states would be a promise the shop cannot keep when they open their phone.
+
+The signed-out branch is deliberately **not** a `<form>`, which departs from `AddToBag`'s pattern.
+`AddToBag` is a real form with hidden inputs so it works before hydration; there is no server for the
+guest branch to post to, and a form that degraded to posting a wishlist add for a signed-out visitor
+would be §0.1.17's fake control — a button that submits and achieves nothing.
+
+State lives in `aria-pressed` rather than in the accessible name, so a screen reader announces
+*"Save for later, pressed"* instead of a name that changes width under the cursor that pressed it.
+
+### 1.25.5 Recently-viewed renders nothing on the server, on purpose
+
+§20.1c is four constraints and the interesting one is *"validate products before rendering"*. The
+browser holds ids and is trusted with none of them: every id goes through the same
+`publishedProductWhere` the shop grid uses, under `overrideAccess: false, user: null`, so a withdrawn
+product or an id somebody typed into devtools resolves to nothing and is simply absent.
+
+*"Do not store sensitive personal information"* is satisfied by construction rather than by care —
+the parser can only represent a positive safe integer, so there is no shape in which a name, an
+address or an email could be stored even if something tried.
+
+The rail's server snapshot is the **empty list**, so the markup React hydrates and the markup the
+server sent agree by construction. `AnnouncementBar` recorded the rule from the other direction when
+it declined a dismiss button: *"a `localStorage` read that makes a server-rendered bar flicker on
+every page load."*
+
+`createLocalList` is that whole pattern factored out of `search-panel.tsx`, because this phase needed
+it twice more and a third copy of forty lines is how two of them drift.
+
+### 1.25.6 The lint rule caught the shortcut
+
+The rail's first version cleared its own state inside the effect — `setCards([])` when the id list was
+empty — and `react-hooks/set-state-in-effect` refused it. Correctly: clearing state that the render
+could have computed is a cascading render for nothing. The empty case is now **derived** at render,
+and the resolved cards are filtered against what the store currently says, which also means removing
+the last viewed product empties the rail immediately rather than after a round trip.
+
+### 1.25.7 The account screens, and the two things deliberately absent
+
+Five navigable routes plus `/account/orders/[order]`, spelled `[order]` because the plan spells it
+`[order]`. The guard stays **per page** through `requireCustomer()` — the layout's own docblock
+explains why, and Phase 20 added the navigation there and only the navigation.
+
+**The order detail route takes the order *number*, not the database id.** An id is a running count of
+every order the shop has taken, so a URL carrying one tells a customer how many came before theirs and
+makes enumeration a matter of counting. The number is not secret and does not need to be, because the
+query is scoped by the session's customer.
+
+**A cross-account request is not found, never forbidden.** `readCustomerOrder` returns `null` both for
+an order that does not exist and for one belonging to somebody else, and the page cannot tell them
+apart because it is not given enough to. A 403 would be a disclosure oracle: it would confirm which
+order numbers are real. Phase 7 established the property; this is the first phase with a surface that
+could have broken it.
+
+Two absences are decisions. `/account/settings` does not change a password — Phase 7 built a
+single-use, one-hour, email-delivered reset that re-checks the policy, and a second path to the same
+outcome is a second place for it to be wrong. It does not change an email address either, for a
+sharper reason: `orders.email` is a snapshot, so changing the account address does not and must not
+change where past confirmations went. That interaction deserves designing rather than adding to a
+settings page because the field happened to be nearby.
+
+`/account/addresses` **can add and remove**, which is more than the plan strictly asks for and less
+than a full CRUD. It had to: checkout snapshots an address onto the order and never writes to
+`addresses`, so a read-only screen would have rendered an empty state forever — §0.1.17's fake
+surface, a page that looks like a feature and cannot do anything.
+
+### 1.25.8 What was verified, and how
+
+**Nothing was run.** The Neon password for `neondb_owner` stopped working during Phase 19's first
+sweep and has not been replaced, so `pnpm build` and all fifteen harnesses are blocked. See `TODO.md`.
+
+| Surface | State |
+|---|---|
+| `pnpm typecheck` | passes |
+| `pnpm lint --max-warnings 0` | passes |
+| `pnpm build` | **blocked** — prerendering opens Payload |
+| `pnpm verify:account` | **written, never run** — 40 checks across five sections |
+
+The harness covers what the phase prompt names: cross-account access prevention (a second customer
+cannot read, list or remove the first's rows, and gets `null` rather than a refusal) and merge
+behaviour (existing wins, invalid dropped, order preserved, and merging twice adds nothing). It also
+covers the hostile-input cases the device-local stores actually face, because a store the customer can
+edit by hand is an untrusted input.
+
+That gap is the honest state of this phase and is recorded rather than glossed.
+
+### 1.25.9 What is now owed
+
+- **Run the harness.** Everything above is unexecuted. This is first in the queue the moment a
+  connection string exists.
+- **Move to cart from the wishlist** — §20.1a names it. Deliberately not built: `variantPreference` is
+  a colour memory and explicitly *not* a size commitment, so a move-to-cart still has to ask for a
+  size, which means it is a navigation to the product page rather than a one-click action. Doing it
+  properly is a small design question, not a missing function.
+- **A merge notice.** `mergeGuestWishlistAction` returns a count and nothing renders it. The customer
+  currently discovers the merge by their list being right.
+- **Order pagination.** `/account/orders` reads fifty and stops.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -7870,6 +8032,42 @@ the audience that should be allowed to press it is exactly the staff who can alr
 *Affects Phase 19 and the deployment phase. To be discharged by a scheduled call to the drain route.*
 
 
+---
+
+### DEV-68 — The guest wishlist merges from the client, not from `login()`
+
+**Plan §20.1a says:** *"Guests: optional local wishlist. On login, merge into customer wishlist."*
+
+**We do:** exactly that, and the merge is initiated by a client component after the session exists,
+rather than by the sign-in action the way the cart's merge is.
+
+**Why:** the two are not the same problem. A guest **cart** is a database row named by a cookie, so
+`mergeGuestCart` runs inside `login()` on the server and the browser is never involved. A guest
+**wishlist** is `localStorage`, because `WishlistItems` decided in Phase 6 that *"there is no guest
+wishlist table"* — and no server action can read a browser's storage. The merge therefore has to be
+offered by the only party that can see the list.
+
+`WishlistSync` is mounted in the storefront shell, renders nothing, and does nothing until a session
+exists and the device has entries.
+
+**What this costs, and how it is contained.** The merge input is untrusted in a way the cart's is not,
+so:
+
+- The action has **no parameter for whose list it is**. It writes rows owned by the session's own
+  customer or it writes nothing.
+- Every id is checked against the published catalogue before anything is written, so a hostile list of
+  ten thousand integers writes nothing and costs one query.
+- The list is capped on the way in, so the work is bounded whatever arrives.
+
+The worst a forged call can achieve is adding a product to *the caller's own* wishlist — which is what
+the button next to it does anyway.
+
+The device copy is cleared **only on success**, so a failed merge is retried on the next navigation
+rather than losing a list the customer chose to keep.
+
+*Affects Phase 20. Follows from Phase 6's no-guest-table decision rather than departing from it.*
+
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -7916,4 +8114,5 @@ the audience that should be allowed to press it is exactly the staff who can alr
 | Phase 18 — order system | 2026-09-08 | Notes **§1.23**: the phase **DEV-03** said would confirm it, and it is confirmed — `displayStatus` derives plan §18.1b's single line from the two stored axes, all 35 payment x fulfilment combinations asserted, precedence checked in both directions, and the reason one column cannot do it stated: nothing single-valued holds *"refunded, but it shipped last week"*. **Two thirds of §18.1a was already Phase 17** — the pending order, the snapshots, the Stripe identifiers and *"finalize as paid only from validated Stripe state"* all held, so this phase tested them rather than rebuilding them. What was genuinely missing: **§18.1b's edges**, which the plan does not draw. Five legal transitions across 25 ordered pairs, asserted as a count so a machine that quietly grows an edge fails a check; `delivered` and `cancelled` terminal; **`shipped` cannot go back to `processing`**, because §18.1c hangs a dispatch email off that transition and moving the column back does not unsend it; **`shipped` cannot be cancelled**, which is this shop's answer to §18.1b's *"only where business rules allow"* — cancellation is available until dispatch, after which it is a return. Fulfilment starts at `PAID` with two exemptions that are the two-axis model earning its keep: `shipped -> delivered` records a parcel that has already gone (DEV-03's own refunded-in-transit case), and cancelling an unpaid order is ordinary. §18.1c's tracking condition refuses a dispatch with no carrier, no tracking number, or a tracking number of spaces, and the timestamps are written **by** the transition rather than typed beside it. Enforced in a **`beforeChange` hook**, not field access and not an admin component, because a hook runs on every path — with the subtlety that the panel posts the whole document on every save, so an unchanged status must not read as a transition or a delivered order becomes unsaveable. **§18.1d was half true**: the four columns were already snapshots, proved by renaming, repricing and re-SKU-ing the product and re-reading the line — but `OrderItems.access.update` is `isStaff`, so they could be **retyped**, the identical door Phase 17's sweep found on `paymentStatus`. Closed by `freezeOrderLines` on every path including `overrideAccess`; `quantity` and `lineTotalMinor` deliberately excluded, because the schema reserves them for a partial refund. **§18.1b's `PAID -> REFUNDED` now arrives from Stripe** — and `charge.refunded` carries the *charge's* metadata, not the session's, so adding the event type alone would have produced a handler that verified, recorded and ignored every refund; the order is resolved by **payment intent** instead, and the refund records how much and when (two new columns, one generated migration). Wiring it exposed a defect two phases of tests had missed: a `payment_intent.payment_failed` for a superseded attempt, racing the event that paid the order, **could write `payment_failed` over a completed payment** — the machine forbids it and the read-then-write never asked. Every payment transition is a conditional `UPDATE` now, its reachable-from list derived from the machine by `statusesThatCanReach`; both orderings end at `paid`, asserted concurrently. Deviation **DEV-64** (§18.1c's shipment email is a seam here and an email in Phase 19). New script `pnpm verify:orders` — **62 checks**, including staff, customer and anonymous attempts against the real access layer. Every other harness re-run green; typecheck, lint --max-warnings 0 and build pass. **Owed and named**: no browser or axe pass, because no browser tooling is available in this session — Phase 18 adds no storefront UI, but the order edit screen has not been looked at. |
 | Phase 18 — two post-implementation sweeps | 2026-09-08 | Notes **§1.23.11**. **Sweep 1** asked whether the brand-new fulfilment guard had the shape Phase 17's sweeps kept finding, and it did. Two staff, two requests, two transactions, both reading `processing` before either wrote: the ship succeeded, and the cancel **also** succeeded — a transition the machine calls impossible — leaving `final: cancelled, shippedAt = null`, with the carrier, the tracking number and the dispatch stamp wiped by the loser's stale document, after §18.1c had already triggered a shipment email for a parcel the record now says was never sent. Fixed with **`SELECT ... FOR UPDATE`** rather than a conditional `UPDATE`: this write goes through Payload because it must pass validation, run the remaining hooks and produce a document the panel can render, and a lock is the version of the same guarantee that works when something else does the writing. The interleaving is worth recording — **the first attempt to reproduce it passed**, because two `payload.update` calls fired together serialise on their own; the failure needs the second write in flight while the first still holds the row, which section J now sets up deliberately. Sweep 1 also found, by reading, that the tracking condition used `data.carrier ?? original.carrier` and `??` reads straight past an explicit `null`, so **one write could dispatch an order and clear the carrier it was dispatched with**. What held: the full-document re-save, checked because `unitPriceMinor` coming back as a string would have made every order line unsaveable and no existing test would have caught it. **Sweep 2** went after the class rather than the instance — *a rule stated in a docblock with nothing enforcing it* — by grepping for `readOnly: true` with no field access beside it. Fourteen hits, **four real**: `orders.stripePaymentIntentId` and `stripeCheckoutSessionId`, where the payment-intent field's own docblock names the danger (*"a hand-typed payment intent is an order attached to somebody else's money"*) and nothing stopped anyone typing it; `orders.paidAt`, which would be a lie about when money moved; and `promotions.timesUsed`, which is what `usageLimit` is measured against. All four closed with `nobodyField`, which `overrideAccess` skips. **And one investigated and correctly left alone** — `products.derived` has the same shape, and guarding it would have broken the cache it protects, because `syncProductDerived` writes with `req` and no `overrideAccess`: the shape is not the whole story, what matters is whether the maintaining code goes through the same door. Sweep 2 also reversed a precedence that had been reasoned about and still landed wrong — an order **cancelled and then refunded** read as *"Cancelled. Nothing was dispatched."*, true and silent about the money; the check beside it had quietly excluded `refunded`, which was the tell that the corner was noticed and never decided. And it found `preflight.ts` doing a find-then-create on `orders.cart`, so two simultaneous checkouts make **two pending orders for one bag** — **recorded, not fixed**, with the reasoning stated: each order is individually correct, a second charge needs a second card entry, and the fix is a partial unique index plus a retry in the checkout path, which changes how checkout fails and deserves more than the last hour of a sweep. The claims field access had only been *making* are now measured. `verify:orders` **74 checks**, up from 62; every other harness re-run unchanged; typecheck, lint --max-warnings 0 and build pass. |
 | Phase 19 — email / Resend | 2026-09-09 | Notes **§1.24**. Three dependencies at their pins — `resend@6.22.0`, `@react-email/components@1.0.12`, `react-email@6.9.2` (dev) — and one migration: `email_messages` with a **unique** `dedupe_key`. §19.1a's *"do not call Resend directly from random components"* is structural: `resend` appears in exactly one import, and everything above it deals in a `Transport` function, which is why the one integration nobody has credentials for has 85 passing checks and needs no API key. **§19.1c is a constraint, not a check** — the insert *is* the duplicate test, the Phase 17 mechanism reused. The key names **the thing that happened, never the message that reported it**: an event id would double-send, because Stripe sends two events for one payment, and would miss the shipped notice entirely, which has no event at all. Two duplicate shapes had to be handled — Payload validates uniqueness *before* inserting, so a sequential retry arrives as a `ValidationError`, while a genuine race passes that read-then-write twice and the database refuses the second with 23505; matching only the first would have logged a fault every time the barrier worked. **The queue exists because Payload 3 has no post-commit collection hook** — `afterChange` and `afterOperation` both run before `commitTransaction`, measured in `node_modules`, so a dispatch email sent there would announce a dispatch that could still roll back; intent is written inside the transaction and delivery happens outside. §19.1d is absolute: nothing in the service throws, because the webhook turns a throw into a 500 and Stripe's retry is then refused by the unique event id **without reprocessing** — one thrown mail error would lose a customer's confirmation permanently. The dev safeguard gates the **destination, not the credential**, because Resend has no test-mode key: outside production only `EMAIL_DEV_ALLOWLIST` is deliverable and an empty list delivers to nobody. **The `server-only` lesson arrived a fourth time, inverted** — the guard was correctly on the module holding the key and still had to come off, because `payload.config.ts` now imports the service and the CLI loads it outside Next; `catalog/algolia.ts` had already recorded the answer, and the rule gains a second half: never on a module the CLI has to load. Deviations **DEV-65** (the plan's eight templates, not the features doc's ten, with the *order cancelled* case argued rather than dropped), **DEV-66** (verification and contact confirmation written, tested and unwired — neither has a caller), **DEV-67** (no scheduled drain). **DEV-64 discharged.** New scripts `pnpm verify:email`, `pnpm email:drain`, `pnpm email:preview`; `logEmailAdapter` removed and replaced. Every other harness re-run unchanged; typecheck, lint `--max-warnings 0` and build all pass. |
+| Phase 20 — wishlist, account, recently viewed | 2026-09-09 | Notes **§1.25**. **No dependency and no migration**: `WishlistItems` was built to §6.1m in Phase 6 and already carried the compound unique index on `(customer, product)` with both columns required — so §20.1b's *"existing customer wishlist wins duplicates"* was already enforced by Postgres rather than by whichever code path ran first, the same mechanism as Phase 19's `dedupeKey` and Phase 17's event id. **The guest merge could not copy the cart's** (**DEV-68**): a guest cart is a database row named by a cookie, a guest wishlist is `localStorage`, and no server action can read a browser's storage — so the merge is client-initiated, has no parameter for whose list it is, validates every id against the published catalogue, is capped on the way in, and clears the device copy only on success. **`ProductCard` had to be restructured**: it was one `<Link>` around everything, and a heart in the obvious place would have put a `<button>` inside an `<a>` — invalid HTML that browsers recover from inconsistently, leaving the control unreachable by keyboard. It is now a wrapper, a link, and the control as its **sibling**, which is §11.1c's *"click wishlist → prevent card navigation"* solved structurally rather than with `stopPropagation`. The heart is **opt-in per call site**, because two of the five places the card renders are inside the bag drawer where each card sits in an `<li onClick={close}>`. One control, two mechanisms, and the customer is told which — a guest sees *"saved on this device"*, and the signed-out branch is deliberately not a form because there is no server for it to post to. Recently-viewed renders **nothing on the server**: its server snapshot is the empty list so hydration cannot flicker, and *"do not store sensitive personal information"* holds by construction because the parser can only represent a positive integer. `createLocalList` factors the `useSyncExternalStore` pattern out of `search-panel.tsx`, now that it is needed three times. The lint rule earned its keep: the rail's first version cleared its own state inside an effect and `react-hooks/set-state-in-effect` refused it, so the empty case is derived at render. Account: five navigable routes plus `[order]`, guard still per-page, and **the order route takes the order number rather than the database id** — an id is a running count of every order the shop has taken. A cross-account request is **not found, never forbidden**, because a 403 would confirm which order numbers are real. `/account/addresses` can add and remove because checkout snapshots onto the order and never writes to `addresses`, so a read-only screen would have been a page that looks like a feature and cannot do anything. **DEV-45 discharged.** New harness `pnpm verify:account` — 40 checks covering the two things the phase prompt names by title, cross-account access prevention and merge behaviour. **It has never been run**: the Neon password died during Phase 19's sweep, so `pnpm build` and all fifteen harnesses are blocked and only typecheck and lint could be gated. Recorded in `TODO.md` and in §1.25.8 rather than glossed. |
 > **Append this table, and the sections above it, at the end of every phase.**

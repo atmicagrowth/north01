@@ -17,12 +17,10 @@ export const metadata: Metadata = {
  * *"protected account routes"* — the guard, the redirect, the return journey — and §7.1b's *"read
  * their own profile"*.
  *
- * So this page shows the profile it is allowed to read and offers the one action Phase 7 built. It
- * does **not** link to `/account/orders`, `/account/wishlist` or `/account/addresses`, and it does
- * not list them as "coming soon": a navigation to a route that does not exist is the same lie as a
- * button that does nothing (plan §0.1.17), and a "coming soon" is that lie with an apology attached.
- * Phase 20 adds the screens and the navigation between them together, which is the only order in
- * which either is honest.
+ * **Phase 20 discharged that.** The five screens exist, so `AccountNav` in the layout links to them
+ * and the paragraph that used to explain their absence is gone. Phase 7's note said the screens and
+ * the navigation had to arrive together, because a link to a route that does not exist is the same
+ * lie as a button that does nothing (plan §0.1.17) — and they did.
  *
  * `requireCustomer()` is the real guard — see the layout for why it is here and not there. It is
  * given this route's own path so that signing in returns the customer where they were going.
@@ -50,10 +48,10 @@ export default async function AccountPage() {
         </div>
       </dl>
 
-      <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
-        Order history, saved addresses and your wishlist arrive with the account screens in a later
-        phase. Nothing else is stored on this account yet.
-      </p>
+      {/*
+        Phase 20 built the screens this paragraph used to apologise for, so the paragraph is gone
+        rather than reworded. The navigation above is the honest version of what it was trying to say.
+      */}
 
       <div className="border-t border-border pt-6">
         <SignOutButton />

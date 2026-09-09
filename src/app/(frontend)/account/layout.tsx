@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { AccountNav } from '@/components/account/account-nav'
 import { PageContainer } from '@/components/layout/page-container'
 import { Section } from '@/components/layout/section'
 
@@ -23,13 +24,18 @@ import { Section } from '@/components/layout/section'
  * `width="narrow"` — the 1024px step the container reserves for *"account, checkout, support"*,
  * matching visual guide §09's calmer utility surfaces.
  *
+ * **Phase 20 added the navigation here and only the navigation.** A layout is the right home for
+ * five links that are identical on every account screen, and still the wrong home for the guard —
+ * the two are unrelated, and the reason the guard cannot live here is unchanged.
+ *
  * The `<main>` landmark and the standalone wordmark left this file in Phase 9: the storefront root
  * layout mounts the global shell, which owns both. See `(frontend)/layout.tsx`.
  */
 export default function AccountLayout({ children }: { children: ReactNode }) {
   return (
     <PageContainer width="narrow">
-      <Section spacing="tight" className="flex flex-col gap-xl">
+      <Section spacing="tight" className="flex flex-col gap-l">
+        <AccountNav />
         {children}
       </Section>
     </PageContainer>

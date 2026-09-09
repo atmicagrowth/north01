@@ -1,4 +1,6 @@
 import { AddToBag } from '@/components/cart/add-to-bag'
+import { RecentlyViewed, RecordProductView } from '@/components/recently-viewed/recently-viewed'
+import { WishlistControl } from '@/components/wishlist/wishlist-button'
 import { ProductCard } from '@/components/catalog/product-card'
 import { PageContainer } from '@/components/layout/page-container'
 import { Section, SectionHeading } from '@/components/layout/section'
@@ -53,7 +55,16 @@ import type { Media } from '@/payload-types'
  * under a black swatch is quoting a price the customer cannot have. Once a size is chosen the price
  * is that variant's exactly.
  */
-export function ProductPage({ view }: { view: ProductView }) {
+export function ProductPage({
+  savedForCustomer = false,
+  signedIn = false,
+  view,
+}: {
+  /** Whether this product is on the signed-in customer's list. Resolved on the server, per request. */
+  savedForCustomer?: boolean
+  signedIn?: boolean
+  view: ProductView
+}) {
   const { matrix, product, recommendations, settings, sizeGuide, variants } = view
 
   const gallery = (product.gallery ?? [])
@@ -194,6 +205,17 @@ export function ProductPage({ view }: { view: ProductView }) {
                 variantId={matrix.selected?.id ?? null}
               />
 
+              {/*
+                **DEV-45, discharged.** Phase 11 deferred the heart until there was a wishlist behind
+                it; Phase 20 built one. It sits below the bag rather than beside it because saving is
+                the quieter of the two intentions, and guide §06 allows one strong fill per page.
+              */}
+              <WishlistControl
+                productId={product.id}
+                savedForCustomer={savedForCustomer}
+                signedIn={signedIn}
+              />
+
               <ProductDetails
                 product={product}
                 returnsPolicy={settings.returnsPolicy}
@@ -204,6 +226,14 @@ export function ProductPage({ view }: { view: ProductView }) {
           </div>
         </PageContainer>
       </Section>
+
+      {/*
+        §20.1c. Renders nothing; it records that this product was seen, on the device only. The rail
+        that reads it is below, and both are deliberately absent from the server's markup.
+      */}
+      <RecordProductView productId={product.id} />
+
+      <RecentlyViewed exclude={product.id} />
 
       {recommendations.length > 0 ? (
         <Section divider="top" spacing="tight">
