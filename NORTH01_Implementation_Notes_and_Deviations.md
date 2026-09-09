@@ -6574,6 +6574,133 @@ purchasable.
   deliberate look rather than discovering it on a live page.
 - **The lookbook route** — Phase 23.
 
+## 1.28 Phase 23 — editorial, collections, journal
+
+Plan §23.1a–§23.1c. **No dependency and no migration** — the fourth phase running. Six new routes:
+`/collections/[slug]`, `/edits/[slug]`, `/lookbook`, `/lookbook/[slug]`, `/journal`,
+`/journal/[slug]`.
+
+### 1.28.1 Two blocks had been authorable for seventeen phases and rendered nothing
+
+`gallery` and `pullQuote` are in the shared editorial vocabulary and have been on `collections.body`
+and `edits.body` since Phase 6. Neither had a resolver case. Neither had a component. **Anywhere.**
+
+An editor could compose a gallery, publish the page, and find the section simply absent — plan
+§0.1.17's rule inverted: not a control that lies about what it does, but a CMS field that silently
+discards work.
+
+Nothing had noticed because no route rendered `collections.body` until this phase. That is the honest
+explanation and also the reason it was worth writing down: the defect was invisible for as long as
+the surface that would have shown it did not exist.
+
+### 1.28.2 Why there are two block resolvers now
+
+`lib/home/resolve.ts` already resolves five of these seven blocks and **cannot be reused**. Its
+`resolveSection` is module-private and typed to `NonNullable<Homepage['sections']>[number]`, a union
+that does not include `GalleryBlock` or `PullQuoteBlock` — and widening it would mean the homepage
+dispatcher's exhaustive `never` default rejecting two blocks the homepage can never receive.
+
+So `lib/editorial/resolve.ts` is a second resolver over the same vocabulary. The duplication is small
+because the expensive part, `resolveProductTile`, was already exported, and the alternative was a
+type-level knot in a file whose exhaustiveness guard is doing real work.
+
+Its default case is deliberately **not** a `never` guard, for the mirror-image reason: the vocabulary
+is shared, and a block added for the homepage should cost a collection page that section rather than
+a compile error.
+
+### 1.28.3 A collection page is not a filterable grid, and building one would have broken it
+
+**DEV-09** already ruled it out — *"a collection page drawn as a plain filterable grid, contradicting
+the guide's campaign-led composition"* — and structure §9 says collections *"should feel like
+campaigns, not category dumps."* So `CatalogPage` is not reused, despite fitting one chapter of
+§23.1a's flow exactly.
+
+There is a second reason, and it would have been a live defect rather than a style disagreement.
+`requiresSearchIndex()` sends **any** query carrying a collection to Algolia, because membership lives
+on `collections.products` and the reverse side on the product is a Payload `join` — virtual, no
+column, unfilterable in Postgres. A collection page built on `getCatalog` would therefore have
+rendered **nothing at all** whenever Algolia was unconfigured or down, while every other listing in
+the shop survived it. Plan §A.5 asks for the opposite.
+
+Reading the ordered id list and asking Postgres for those products keeps the page working with no
+search service — and keeps the curator's order, which a relevance-ranked index would not.
+
+The grid is also unfiltered on purpose. A collection is a finite curated set whose contents *and*
+order a merchandiser decided; offering to re-sort it would be offering to undo the curation.
+
+### 1.28.4 Featured products without a new field
+
+§23.1a's flow names *"featured products"* as a step and `Collections` has no `featuredProducts`
+field. Adding one is a schema change — a generated, committed migration, impossible with the database
+down, and a deviation to record.
+
+It would also duplicate a decision the editor has already made. `Collections.products` is explicitly
+ordered and its own field description says *"an order is a property of the list"* and *"dragging a
+row is the curation."* **The front of a curated list is what featured means.** The first four are
+taken from the same resolved cards as the grid below, so the two can never disagree about whether
+something is published.
+
+### 1.28.5 Products are never read through the relationship at depth
+
+Reading a collection at `depth: 2` to get populated products looks like it saves a query and would
+have shown **scheduled drops and withdrawn garments**. `Products.access.read` is `publishedOnly`,
+which checks `status` and explicitly not `publishedAt`, and knows nothing about
+`derived.priceFromMinor` — the rule that withdraws a product with no active variant. Only
+`publishedProductWhere(now)` applies all three, and it only applies on a `find` against `products`.
+
+So membership is an ordered id list at `depth: 0` and the products are a second query, re-sorted back
+into the curator's order because `id IN (…)` returns the database's order, not the list's. Phase 20's
+recently-viewed reader had already established the shape.
+
+### 1.28.6 The navigation has been broken since Phase 9, and is not any more
+
+The header and the mobile menu have linked to `/lookbook` since the shell was built, and
+`documentHref` has mapped a lookbook to `/lookbook/<slug>` since the same phase. **Neither route
+existed.** Every one of those links 404'd, accepted at the time and recorded, because the page
+belonged here.
+
+Phase 22 restated it when it built the hotspot interaction and stopped short of the page. Building
+only `/lookbook/[slug]` would have left the nav broken; building only `/lookbook` would have left
+`documentHref` pointing at nothing. Both, together, is what closes it — and `Lookbooks.coverImage`,
+described in the CMS as *"the index-page cover"*, finally has the index page it was authored for.
+
+### 1.28.7 §23.1c's dead end is designed against rather than avoided
+
+*"Avoid creating an editorial dead end."* Every article carries three exits — the products it is
+about, the collections it belongs to, other articles — each resolved through the same published rules
+as everything else, so a withdrawn product is **not offered** rather than offered as a link to a 404.
+
+An article with none of those relationships still gets one exit. A dead end is a dead end whether it
+was authored or inherited, and the instruction is not conditional on an editor having filled in a
+field.
+
+### 1.28.8 What was verified, and how
+
+**Nothing was run.** The Neon password has been invalid since Phase 19's first sweep. See `TODO.md`.
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck` | passes |
+| `pnpm lint --max-warnings 0` | passes |
+| `pnpm build` | **blocked** |
+| `pnpm verify:editorial` | **written, never run** — 24 checks |
+
+The harness asserts the four failure cases the phase prompt names by title, because they are
+resolution decisions rather than layout: unpublished content resolves to `null`, missing hero media
+drops one section, an empty product relationship drops the group rather than rendering a heading over
+nothing, and a deleted related product is absent rather than a broken link.
+
+### 1.28.9 What is now owed
+
+- **Run the harness**, and a browser pass — six new routes have never been rendered.
+- **`/collections` and `/edits` index pages.** §23.1a and §23.1b describe the *detail* pages and the
+  navigation reaches collections through the mega menu, so neither is a broken link today. Worth
+  having anyway.
+- **`generateMetadata`** on all six routes — Phase 24, exactly as Phases 10 to 13 deferred it.
+  `seoField()` is on every one of these collections waiting for it.
+- **The contact form** — gap **G-08**, and the caller Phase 19's contact-confirmation template
+  (**DEV-66**) is still waiting for. Not in §23's three sub-sections, so not built here.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -8467,4 +8594,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 20 — wishlist, account, recently viewed | 2026-09-09 | Notes **§1.25**. **No dependency and no migration**: `WishlistItems` was built to §6.1m in Phase 6 and already carried the compound unique index on `(customer, product)` with both columns required — so §20.1b's *"existing customer wishlist wins duplicates"* was already enforced by Postgres rather than by whichever code path ran first, the same mechanism as Phase 19's `dedupeKey` and Phase 17's event id. **The guest merge could not copy the cart's** (**DEV-68**): a guest cart is a database row named by a cookie, a guest wishlist is `localStorage`, and no server action can read a browser's storage — so the merge is client-initiated, has no parameter for whose list it is, validates every id against the published catalogue, is capped on the way in, and clears the device copy only on success. **`ProductCard` had to be restructured**: it was one `<Link>` around everything, and a heart in the obvious place would have put a `<button>` inside an `<a>` — invalid HTML that browsers recover from inconsistently, leaving the control unreachable by keyboard. It is now a wrapper, a link, and the control as its **sibling**, which is §11.1c's *"click wishlist → prevent card navigation"* solved structurally rather than with `stopPropagation`. The heart is **opt-in per call site**, because two of the five places the card renders are inside the bag drawer where each card sits in an `<li onClick={close}>`. One control, two mechanisms, and the customer is told which — a guest sees *"saved on this device"*, and the signed-out branch is deliberately not a form because there is no server for it to post to. Recently-viewed renders **nothing on the server**: its server snapshot is the empty list so hydration cannot flicker, and *"do not store sensitive personal information"* holds by construction because the parser can only represent a positive integer. `createLocalList` factors the `useSyncExternalStore` pattern out of `search-panel.tsx`, now that it is needed three times. The lint rule earned its keep: the rail's first version cleared its own state inside an effect and `react-hooks/set-state-in-effect` refused it, so the empty case is derived at render. Account: five navigable routes plus `[order]`, guard still per-page, and **the order route takes the order number rather than the database id** — an id is a running count of every order the shop has taken. A cross-account request is **not found, never forbidden**, because a 403 would confirm which order numbers are real. `/account/addresses` can add and remove because checkout snapshots onto the order and never writes to `addresses`, so a read-only screen would have been a page that looks like a feature and cannot do anything. **DEV-45 discharged.** New harness `pnpm verify:account` — 40 checks covering the two things the phase prompt names by title, cross-account access prevention and merge behaviour. **It has never been run**: the Neon password died during Phase 19's sweep, so `pnpm build` and all fifteen harnesses are blocked and only typecheck and lint could be gated. Recorded in `TODO.md` and in §1.25.8 rather than glossed. |
 | Phase 21 — reviews | 2026-09-09 | Notes **§1.26**. **No dependency and no migration** — `Reviews` was built to §6.1j in Phase 6 with every field, every bound, and the compound unique index on `(product, customer)` whose `customer` column was made **required** precisely so the index would bite, since Postgres treats NULLs as distinct. **The corpus disagrees with itself twice** and `AGENTS.md`'s precedence settled both (**DEV-69**): a purchase is a **badge, not a gate**, because the plan hedges twice while the matrix implies a gate — and a shop that only accepts reviews from buyers has none on a new product, which is when a customer most wants one; and the bar is **paid**, not the matrix's *"not delivered yet"*, with a refunded order still verifying because the customer did buy it. **Three things the browser cannot decide, each closed differently**: `status` defaults to pending *and* the field is staff-only, so a review lands pending through any door; `verifiedPurchase` is staff-only and set from an order lookup, because a badge the submitter can assert is not a badge; `customer` is *forced* by `enforceCustomerOwnership`, since `create: isActiveCustomer` alone would accept `POST /api/reviews` with somebody else's id. **The duplicate is caught by the index, not before it** — the newsletter action had already recorded that read-then-create is both a concurrency bug and a measurable timing oracle. §13.1f's *"do not show an empty star histogram"* is honoured literally: five bars at zero reads as five one-star reviews, so an unreviewed product gets one sentence and no chart, and the average is **`null`, never `0`** — the same distinction `lib/money.ts` makes for a price. Aggregates are computed from the same rows that render, because two queries can disagree and the failure is a page claiming forty-one reviews above a list of forty. Three deviations: **DEV-69** (badge not gate), **DEV-70** (no profanity filter — a word list publishes what it misses and rejects what it misreads, and a person already reads every review), **DEV-71** (no review photos — `media.create` is staff-only and **D-28** says media bytes are public the moment they are uploaded, so an unmoderated review photo would be fetchable before anyone saw it; the column stays, the upload path is a design question). Rate limiting is Phase 26's Turnstile and is recorded as owed without overclaiming. New harness `pnpm verify:reviews` — 30 checks covering the two tests the prompt names by title plus §21.1a's paid-order match and the cases that must NOT verify. **Never run**: the Neon password has been invalid since Phase 19's sweep, so only typecheck and lint could be gated. See `TODO.md`. |
 | Phase 22 — shop the look | 2026-09-09 | Notes **§1.27**. **No dependency, no migration, and no new component library** — `radix-ui@1.6.7` already ships `@radix-ui/react-popover`. §22 is unusually thin: no route, no test list, no acceptance gate. What it names is §22.1d's six numbered steps and a prohibition repeated twice — *"do not guess sizes silently"*, *"never silently guess unavailable or missing variants"* — and that prohibition is the phase. Phase 6 had already built §22.1a's fields (four coordinates as **percentages**, so *"do not hard-code hotspot coordinates in React"* was satisfied before this phase began) and Phase 10 had already shipped the marker, having named its own successor: *"a marker that opened an empty dialog would be §0.1.17's fake control."* **The naive upgrade would have broken the clause the plan did not have to state** (**DEV-72**): turning the marker into a button satisfies three of §22.1c's four clauses and breaks *"allow full PDP navigation"* — and breaks something §22.1c never mentions, because Phase 10's marker works with **no JavaScript**. So the trigger is still the anchor, wrapped in `Popover.Trigger asChild` with its default prevented: with JS the preview opens, without it the anchor navigates, and the preview **offers** the product page rather than replacing it. A **Popover, not a Dialog** — a preview is anchored to what opened it and does not deserve a focus trap, a scrim or a scroll lock; and the shell's `overlay-context` is deliberately not reused, because it exists for overlays with **no trigger in their own subtree** and would also enter a mutual-exclusion machine that closes the bag. Radix supplies the ARIA Phase 9 once got wrong by hand. **The preview is fetched when opened**, not when rendered: four blocks × eight markers would be thirty-two stock queries paid by everyone for a section most visitors never touch — and it means availability is resolved as it is *now*. §22.1d's step 3 is enforced by a **type**: products needing a size come back in a bucket carrying no variant to add, so a caller cannot guess by accident. One purchasable variant is not a guess (it is the single available thing); picking medium out of three in stock is. Step 6's report **separates the two reasons** — *"needs a size"* is a ten-second fix and *"not available"* is a dead end, and *"2 items skipped"* is neither. The count reported is what actually landed, since `addToCart` re-checks live stock. **`/lookbook` still 404s** and that is deliberate: §22 names no route, the page is Phase 23's, and building it here would be building a later phase early. New harness `pnpm verify:lookbook` — 20 checks asserting the prohibition, because §22 sets no tests of its own. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass on hotspot alignment, where `reserveBox`'s unguarded 16:9 fallback for a media record with no stored dimensions is the one path that could silently drift every marker. |
+| Phase 23 — editorial, collections, journal | 2026-09-09 | Notes **§1.28**. **No dependency and no migration** — the fourth phase running — and six new routes: `/collections/[slug]`, `/edits/[slug]`, `/lookbook`, `/lookbook/[slug]`, `/journal`, `/journal/[slug]`. **Two blocks had been authorable for seventeen phases and rendered nothing**: `gallery` and `pullQuote` have been on `collections.body` and `edits.body` since Phase 6 with no resolver case and no component anywhere, so an editor could compose one, publish, and find the section absent — §0.1.17's rule inverted, a CMS field that silently discards work. Invisible until now because no route rendered a body. **Two block resolvers now exist on purpose**: `home/resolve.ts`'s is module-private and typed to the Homepage union, and widening it would make the homepage's exhaustive `never` default reject two blocks the homepage can never receive. **A collection page is not a filterable grid** — DEV-09 ruled that out, and reusing `CatalogPage` would also have been a live defect: `requiresSearchIndex()` sends any collection query to Algolia, because membership is a Payload `join` with no column, so the page would have rendered **nothing at all** whenever the search service was down while every other listing survived. Reading the ordered id list through Postgres keeps it working with no search service and keeps the curator's order. **Featured products without a new field**: `Collections.products` is ordered and its own description says *"dragging a row is the curation"* — the front of a curated list is what featured means, resolved from the same cards as the grid so the two cannot disagree. **Products are never read through the relationship at depth**: `publishedOnly` checks `status` and explicitly not `publishedAt`, and knows nothing about `derived.priceFromMinor`, so a depth-populated grid would have shown scheduled drops and withdrawn garments. **The navigation has been broken since Phase 9 and is not any more** — `/lookbook` and `documentHref`'s `/lookbook/<slug>` both 404'd; building either alone would have left the other broken. §23.1c's *"avoid creating an editorial dead end"* is designed against rather than avoided: three exits per article, each resolved through the published rules so a withdrawn product is not offered rather than offered as a 404, and a fallback exit when an editor filled in none of them. New harness `pnpm verify:editorial` — 24 checks covering the four failure cases the prompt names by title. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass over six routes that have never rendered, `/collections` and `/edits` indexes, `generateMetadata` (Phase 24), and the contact form (**G-08**), which is still the missing caller for Phase 19's contact template. |
 > **Append this table, and the sections above it, at the end of every phase.**

@@ -49,6 +49,7 @@
     "verify:account": "payload run scripts/verify-account.ts",
     "verify:reviews": "payload run scripts/verify-reviews.ts",
     "verify:lookbook": "payload run scripts/verify-lookbook.ts",
+    "verify:editorial": "payload run scripts/verify-editorial.ts",
     "verify:orders": "payload run scripts/verify-orders.ts"
   },
   "dependencies": {
