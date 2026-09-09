@@ -192,6 +192,30 @@ const ServerEnvSchema = PublicEnvSchema.extend({
 
   /** Phase 19 — Resend. */
   RESEND_API_KEY: z.string().min(1).optional(),
+  /**
+   * Phase 19 — the verified sending identity, `Name <address@domain>` or a bare address.
+   *
+   * Grouped with the key rather than left standalone, because a key without a from address cannot
+   * send anything: that combination is a misconfiguration, and `partial` is exactly how this file
+   * reports one. Resend rejects any domain that has not been verified in the account, so this is not
+   * a value that can be guessed at deploy time.
+   */
+  EMAIL_FROM: z
+    .string()
+    .regex(/@/, 'EMAIL_FROM must contain an address — either `you@domain` or `Name <you@domain>`.')
+    .optional(),
+  /**
+   * Phase 19 — the only addresses a non-production environment may deliver to.
+   *
+   * The phase prompt asks for *"local/dev safeguards so emails are not accidentally sent to arbitrary
+   * recipients using production credentials"*. Resend has no test-mode key, so the guard cannot be on
+   * the credential; it is on the destination. Comma- or space-separated, and **empty means nothing is
+   * delivered outside production**, which is the safe default rather than the convenient one.
+   *
+   * Deliberately *not* in the `resend` group: it is a safety valve, not a credential, and a server
+   * with a key and no allowlist is correctly configured for production.
+   */
+  EMAIL_DEV_ALLOWLIST: z.string().optional(),
 
   /** Phase 25 — Sentry source-map upload; build-time only, never needed at runtime. */
   SENTRY_AUTH_TOKEN: z.string().min(1).optional(),
@@ -572,7 +596,7 @@ const INTEGRATIONS = {
     phase: 17,
     keys: ['NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
   },
-  resend: { phase: 19, keys: ['RESEND_API_KEY'] },
+  resend: { phase: 19, keys: ['RESEND_API_KEY', 'EMAIL_FROM'] },
   posthog: { phase: 25, keys: ['NEXT_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_HOST'] },
   sentry: { phase: 25, keys: ['NEXT_PUBLIC_SENTRY_DSN'] },
   ga4: { phase: 25, keys: ['NEXT_PUBLIC_GA_MEASUREMENT_ID'] },

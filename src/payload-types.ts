@@ -83,6 +83,7 @@ export interface Config {
     'order-items': OrderItem;
     promotions: Promotion;
     'stripe-events': StripeEvent;
+    'email-messages': EmailMessage;
     customers: Customer;
     addresses: Address;
     'wishlist-items': WishlistItem;
@@ -128,6 +129,7 @@ export interface Config {
     'order-items': OrderItemsSelect<false> | OrderItemsSelect<true>;
     promotions: PromotionsSelect<false> | PromotionsSelect<true>;
     'stripe-events': StripeEventsSelect<false> | StripeEventsSelect<true>;
+    'email-messages': EmailMessagesSelect<false> | EmailMessagesSelect<true>;
     customers: CustomersSelect<false> | CustomersSelect<true>;
     addresses: AddressesSelect<false> | AddressesSelect<true>;
     'wishlist-items': WishlistItemsSelect<false> | WishlistItemsSelect<true>;
@@ -1965,6 +1967,61 @@ export interface StripeEvent {
   createdAt: string;
 }
 /**
+ * Every transactional message this shop intended to send, why it was sent, and what happened. Written by the email service; not editable here.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "email-messages".
+ */
+export interface EmailMessage {
+  id: number;
+  /**
+   * Names the event this message reports — one message per event, enforced by a unique index.
+   */
+  dedupeKey: string;
+  kind:
+    | 'contactConfirmation'
+    | 'orderConfirmation'
+    | 'orderDelivered'
+    | 'orderShipped'
+    | 'passwordReset'
+    | 'refund'
+    | 'verification'
+    | 'welcome';
+  status: 'failed' | 'pending' | 'sent' | 'suppressed';
+  to: string;
+  subject: string;
+  /**
+   * Delivery attempts. Retried automatically up to 3, then left for a human.
+   */
+  attempts: number;
+  lastAttemptAt?: string | null;
+  sentAt?: string | null;
+  order?: (number | null) | Order;
+  customer?: (number | null) | Customer;
+  /**
+   * The provider's message id, once it has accepted the message.
+   */
+  providerId?: string | null;
+  /**
+   * The template data. Empty for messages carrying a single-use link, which are never re-rendered.
+   */
+  data?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
+   * Why the last attempt failed, or why a message was suppressed.
+   */
+  error?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Saved products. Guests keep their list on their own device until they sign in.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -2207,6 +2264,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'stripe-events';
         value: number | StripeEvent;
+      } | null)
+    | ({
+        relationTo: 'email-messages';
+        value: number | EmailMessage;
       } | null)
     | ({
         relationTo: 'customers';
@@ -2878,6 +2939,27 @@ export interface StripeEventsSelect<T extends boolean = true> {
   order?: T;
   error?: T;
   attempts?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "email-messages_select".
+ */
+export interface EmailMessagesSelect<T extends boolean = true> {
+  dedupeKey?: T;
+  kind?: T;
+  status?: T;
+  to?: T;
+  subject?: T;
+  attempts?: T;
+  lastAttemptAt?: T;
+  sentAt?: T;
+  order?: T;
+  customer?: T;
+  providerId?: T;
+  data?: T;
+  error?: T;
   updatedAt?: T;
   createdAt?: T;
 }

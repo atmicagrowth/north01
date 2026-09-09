@@ -20,7 +20,15 @@ import {
 import type { CollectionConfig } from 'payload'
 import { buildConfig } from 'payload'
 
-import { appEnv, integrationStatus, schemaPush, serverEnv, siteUrl } from './lib/env.core'
+import { buildCourier } from './lib/email/resend'
+import {
+  appEnv,
+  integrationStatus,
+  requireIntegration,
+  schemaPush,
+  serverEnv,
+  siteUrl,
+} from './lib/env.core'
 import { MAX_UPLOAD_BYTES, UPLOAD_LIMIT_MESSAGE } from './lib/media/limits'
 import { Addresses } from './payload/collections/Addresses'
 import { Campaigns } from './payload/collections/Campaigns'
@@ -40,12 +48,13 @@ import { Orders } from './payload/collections/Orders'
 import { ProductVariants } from './payload/collections/ProductVariants'
 import { Products } from './payload/collections/Products'
 import { Promotions } from './payload/collections/Promotions'
+import { EmailMessages } from './payload/collections/EmailMessages'
 import { StripeEvents } from './payload/collections/StripeEvents'
 import { Reviews } from './payload/collections/Reviews'
 import { SizeGuides } from './payload/collections/SizeGuides'
 import { Users } from './payload/collections/Users'
 import { WishlistItems } from './payload/collections/WishlistItems'
-import { logEmailAdapter } from './payload/email/logEmailAdapter'
+import { serviceEmailAdapter } from './payload/email/serviceEmailAdapter'
 import { cloudinaryStorage } from './payload/storage/cloudinary'
 import { Homepage } from './payload/globals/Homepage'
 import { Navigation } from './payload/globals/Navigation'
@@ -118,13 +127,34 @@ export default buildConfig({
   serverURL: siteUrl,
 
   /**
-   * **There is no email transport yet, and this says so out loud.** Phase 19 owns Resend; Phase 7
-   * owns a password-reset flow that has to work before then. Payload's unconfigured default logs the
-   * subject and discards the body, which for a reset mail discards the only copy of the token — so
-   * this adapter logs the message in full instead, and logs an error on every send outside local
-   * development. See `payload/email/logEmailAdapter.ts`.
+   * **Phase 19's transport.** Every message this application sends — Payload's own password reset
+   * included — goes through the one service in `lib/email/send.ts`, which owns the dedupe barrier,
+   * the dev safeguard and the delivery record. §19.1a: *"do not call Resend directly from random
+   * components"*, and an adapter with its own client would have been the first violation.
+   *
+   * With Resend unconfigured it keeps `logEmailAdapter`'s best property rather than falling silent:
+   * the message is logged in full so a local reset flow is completable end to end, and every send in
+   * a deployed environment is logged at `error` so an operator knows a customer is waiting for mail
+   * that is not coming. See `payload/email/serviceEmailAdapter.ts`.
    */
-  email: logEmailAdapter({ isLocal: appEnv === 'local' }),
+  email: serviceEmailAdapter({
+    /*
+     * Built here because this is one of the four files ESLint permits to read `env.core`, and the
+     * adapter is not. `null` when Resend is unconfigured, which the adapter treats as "log it in full
+     * locally, shout about it anywhere else" — the property `logEmailAdapter` had and Phase 7's reset
+     * flow still depends on.
+     */
+    courier: () =>
+      integrationStatus('resend') === 'configured'
+        ? buildCourier({
+            allowlist: serverEnv.EMAIL_DEV_ALLOWLIST,
+            apiKey: requireIntegration('resend').RESEND_API_KEY,
+            appEnv,
+            from: requireIntegration('resend').EMAIL_FROM,
+          })
+        : null,
+    isLocal: appEnv === 'local',
+  }),
 
   /**
    * **The file-size limit of plan §8.1b, and the flag without which it is worse than nothing.**
@@ -209,6 +239,7 @@ export default buildConfig({
     OrderItems,
     Promotions,
     StripeEvents,
+    EmailMessages,
 
     // Customers
     withSecureCookies(Customers),

@@ -6002,6 +6002,170 @@ counter is **still editable**, which is what a guard on one field must not cost.
 
 `verify:orders` is **74 checks**, up from 67. Every other harness re-run unchanged.
 
+## 1.24 Phase 19 — email / Resend
+
+Plan §19.1a–§19.1d. **Three dependencies added** at the pins `docs/STACK_VERSIONS.md` fixed for this
+phase — `resend@6.22.0`, `@react-email/components@1.0.12`, and `react-email@6.9.2` as a dev
+dependency for the preview server. **One migration**, generated and committed: the `email_messages`
+table and its unique index.
+
+### 1.24.1 One service, and the sentence that shaped everything else
+
+§19.1a: *"Build a centralized email service wrapper… **Do not call Resend directly from random
+components.**"*
+
+`resend` appears in exactly **one import** in this repository. Everything above it — the order
+confirmations, the dispatch notices, the refund notice, the welcome, and Payload's own password reset
+— deals in a `Transport`, which is a function from a message to an outcome. That is not tidiness: it
+is what makes the one integration nobody has credentials for the one with the fewest unverified
+claims, because a harness can supply a transport that opens no socket and drive the entire service.
+
+The old `logEmailAdapter` is gone. Its best property is not: an unconfigured mail provider still logs
+the whole message locally, so Phase 7's reset flow remains completable end to end with no key, and
+still shouts at `error` in a deployed environment, because an operator should be told that a customer
+is waiting for mail that is not coming.
+
+### 1.24.2 §19.1c is a constraint, not a check
+
+*"A webhook retry must not send two confirmation emails."*
+
+`email_messages.dedupe_key` is `UNIQUE`, and **the insert is the check**. `send.ts` never asks whether
+a message was already sent — it claims the key, and a violation is the answer. This is the mechanism
+`stripe-events.event_id` established in Phase 17, chosen for the reason Phase 17's sweeps paid for: a
+read-then-write has a window between the read and the write, and two concurrent retries both find
+nothing and both send.
+
+**The key names the thing that happened, never the message that reported it.** That distinction is the
+whole design, and an event id would have got it wrong twice over. Stripe sends
+`checkout.session.completed` **and** `payment_intent.succeeded` for one payment, with two different
+ids — keying on either would send two confirmations. And the shipped and delivered notices have no
+Stripe event at all: they originate in the admin panel, which posts the whole document on every save,
+so an unkeyed send would re-mail a customer every time somebody fixed a typo in a tracking URL.
+
+So: `order-confirmation:42` once per order forever; `order-shipped:42` once per transition;
+`refund:42:1500` once **per refunded amount**, because partial refunds are ordinary and a second one
+is a second thing the customer is owed; and `password-reset:<address>:<issued at>` deliberately *not*
+once per customer, because asking again is the entire point of asking again.
+
+Two duplicate shapes had to be recognised, and finding the second is what the harness earned:
+Payload validates uniqueness *before* inserting, so an ordinary sequential retry arrives as a
+`ValidationError`. That pre-check is itself a read-then-write and cannot see an uncommitted row, so a
+genuine race passes validation twice and the **database** refuses the second with SQLSTATE 23505.
+Matching only the first shape would have logged a fault every time the barrier did its job.
+
+### 1.24.3 The queue exists because Payload has no post-commit hook
+
+This was the finding that decided the architecture, and it was measured in `node_modules` rather than
+assumed: in Payload 3, `afterChange` and `afterOperation` **both run inside the open transaction** —
+`commitTransaction` comes after both, in `collections/operations/updateByID.js`. There is no
+post-commit collection hook.
+
+So a dispatch email sent from the hook that marks an order shipped would be a dispatch email sent for
+a dispatch that could still roll back, with a mail provider's latency added to the duration of a row
+lock that blocks every other staff write to that order.
+
+Sending is therefore split in two, and the split is not ceremony:
+
+- **`enqueueEmail`** writes a `pending` row and nothing else. Safe inside a transaction, and *correct*
+  inside one: if the order never reaches `shipped`, the intention to say so rolls back with it.
+- **`deliverEmail`** renders and hands the message to the provider, always outside.
+
+The confirmation and refund notices are queued and delivered in the same breath, because the webhook
+route is demonstrably outside a transaction by the time `applyStripeEvent` has returned — which
+`fulfil.ts` had already written down in Phase 17: *"the email is genuinely afterwards, and genuinely
+outside the transaction."*
+
+### 1.24.4 §19.1d: nothing here can undo the thing it reports
+
+*"A failed email should not roll back a successful payment/order."*
+
+Every function in the service returns an outcome; none throws. That is absolute rather than tidy, and
+the webhook route is why. It wraps its body in a catch that turns any throw into a 500; Stripe
+retries; the retry hits the unique event id and returns 200 **without reprocessing**. So a single
+thrown error from a mail call would leave an order paid and its customer permanently without a
+confirmation that nothing would ever resend. The same reasoning guards the `afterChange` hook, where a
+throw would call `killTransaction` and roll back a dispatch a warehouse has already performed.
+
+Failure is recorded rather than lost: status, reason, attempt count, timestamps, all visible in the
+admin panel, which is §19.1d's *"admin visibility"*. Retry is bounded at three attempts and then left
+for a human — a message failing on a malformed address fails identically on the hundredth attempt, and
+a queue that never gives up buries the one failure somebody could fix.
+
+### 1.24.5 The safeguard is on the destination, because it cannot be on the credential
+
+The phase prompt asks for *"local/dev safeguards so emails are not accidentally sent to arbitrary
+recipients using production credentials"*. One sentence naming **two** hazards, which rules out the
+obvious implementation: gating on whether a key is present does not help, because the dangerous case
+is a key that *is* present. Resend issues no test-mode key that would make the mistake harmless.
+
+So the gate is on where a message is going. In production every address is deliverable; anywhere else
+a message is delivered **only** to an address on `EMAIL_DEV_ALLOWLIST`, and everything else is
+recorded as `suppressed` — visible, never sent, and never retried into a send. An empty allowlist is
+the safe default rather than the convenient one: it suppresses everything.
+
+A developer running against a copy of the production database therefore cannot mail a real customer,
+which is precisely the accident the prompt describes.
+
+### 1.24.6 The `server-only` lesson, for the fourth time — and the opposite way round
+
+Three phases produced the rule *"a guard belongs where a secret or a request could leak, and nowhere
+else."* This phase produced its mirror image, and produced it as a failure: the first version put
+`import 'server-only'` on the module that constructs the Resend client, which is exactly where a
+secret lives — and `pnpm generate:types` died with `ERR_MODULE_NOT_FOUND: server-only`.
+
+The reason is one this project already knew and had not connected: Phase 19 routes Payload's own
+password-reset mail through the service, so `payload.config.ts` now transitively imports it — and the
+Payload CLI loads the config through tsx, **outside Next**, where the bare specifier does not resolve.
+A guard there would have broken `generate:types`, every migration, the seed and all fourteen `verify:*`
+harnesses at once.
+
+`lib/catalog/algolia.ts` had already solved it and said so: *"there is no `server-only` import here and
+no environment import either."* The credentials are **arguments**. `lib/email/resend.ts` now does the
+same, and `lib/email/courier.ts` is the guarded tier that reads them for application code, while the
+config and the scripts read their own from `env.core`, which they are exempt to import.
+
+So the rule gains a second half: **a guard belongs where a secret could leak, and never on a module the
+CLI has to load.** The two are in tension exactly once — on the module that holds an SDK client — and
+the resolution is to hold the client and not the key.
+
+A smaller version of the same fence: the ESLint rule banning `env.core` catches a *type-only* import
+too. Rather than weaken a rule added after a measured secret leak, the email service declares its own
+three-value `DeliveryEnv`. The duplication is load-bearing in one direction — add a fourth environment
+to `AppEnv` and this stops compiling until somebody decides whether mail may leave it.
+
+### 1.24.7 What was verified, and how
+
+| Surface | Evidence |
+|---|---|
+| §19.1b's eight templates | all eight rendered to HTML **and** plain text, asserted for the wordmark, for no leaked `undefined`, and for carrying no image or tracking pixel |
+| The receipt | contains the frozen line snapshot, the variant label, the total and the order number — §18.1d's guarantee, in the customer's copy |
+| §19.1c's keys | one key per *event*, distinct per refund amount, distinct per reset request, distinct between shipped and delivered |
+| **§19.1c's barrier** | **two simultaneous enqueues of one key produce exactly one message** — the race, run as a race |
+| The dev safeguard | production delivers; an empty allowlist delivers to nobody; a real address on a laptop is suppressed **even with a production key present**; matching is case-insensitive |
+| §19.1d's isolation | a transport that **throws** does not throw out of the service; a provider refusal is recorded with its reason and the message recovers on retry |
+| The ceiling | three attempts, then `failed` and left alone — and a `suppressed` message is never retried into a real send |
+| The claim on delivery | an already-sent message cannot be delivered twice, so two drains cannot both send one row |
+| End to end | a real order and its real line items queued, delivered, and refused a second time when the event replays |
+| The rest of the shop | orders 74, webhook 38, checkout 62, access 48, media 64, shell 100, home 185, catalogue 147, search 209, product 80, cart 78, promotions 67, shipping 97 |
+
+`pnpm verify:email` is **85 checks**, and none of them needs an API key.
+
+### 1.24.8 What is now owed
+
+- **A live Resend pass.** No key exists in this environment, so no message has left the building.
+  Everything up to and including the provider call is verified with a fake; the call itself is one
+  HTTP request whose failure path is recorded rather than thrown. **DEV-62**'s shape, a second time.
+- **A verified sending domain**, before any production send. `.env.example` says so and Resend
+  enforces it.
+- **Nothing drains on a schedule** — **DEV-67**. A queued dispatch notice is delivered by the next
+  Stripe webhook's bounded opportunistic drain, by `pnpm email:drain`, or by a staff member calling
+  the drain route. On a quiet shop a message can wait.
+- **Two of the eight templates have no caller** — **DEV-66**. Verification is off by Phase 7's
+  decision; the contact form is gap **G-08**, assigned to Phase 23.
+- **The newsletter has no double opt-in.** §19.1b does not list a newsletter template and the
+  `status` enum has no `pending` state; adding one is a schema change, and the features document
+  marks the whole item optional.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -7624,7 +7788,86 @@ are present, which is exactly what a dispatch notice needs to say. §19.1c's *"a
 send two confirmation emails"* has the same shape as the transition guard already built here: the
 email follows a state change that can only happen once.
 
-*Affects Phases 18 and 19. To be discharged in Phase 19.*
+*Affects Phases 18 and 19.* **Discharged in Phase 19** — `hooks/queueOrderEmails.ts` hangs the
+shipment notice on exactly that transition, and it queues rather than sends, because the hook runs
+inside the transaction. See §1.24.3.
+
+---
+
+### DEV-65 — Eight templates, not the features document's ten
+
+**Plan §19.1b says:** Welcome, Verification, Password reset, Order confirmation, Order shipped, Order
+delivered, Refund, Contact confirmation. **Eight.**
+
+**Features document §24 says:** the same eight plus *"Order cancelled"* and *"Optional
+back-in-stock"*. **Ten.**
+
+**We do:** the plan's eight.
+
+**Why:** `AGENTS.md` ranks the plan above the features matrix, and the two extras are weaker than they
+look. *Back-in-stock* is marked optional in its own source and needs a subscription surface nothing has
+built. *Order cancelled* is the more interesting one: this shop cancels an order in two places, and
+neither wants a mail. A Stripe `checkout.session.expired` cancels an order the customer never paid
+for and usually never knew existed — a message about it would be the first they hear of a purchase
+they did not make. A staff cancellation before dispatch is a refund conversation, and the refund
+message already covers the half where money moved.
+
+The template set is exhaustively keyed off `EMAIL_KINDS`, so adding either later is a type error until
+its template exists rather than a silent gap.
+
+*Resolves the §19.1b / §24 conflict. Affects Phase 19.*
+
+---
+
+### DEV-66 — Two of the eight templates are written and unwired
+
+**Plan §19.1b requires** a Verification template and a Contact confirmation template.
+
+**We do:** write both, render both, test both — and wire neither, because neither has a caller.
+
+**Why:** `Customers.auth.verify` is deliberately off, recorded in Phase 7: turning it on would make
+every registration depend on a message being delivered, and it interacts with `register()` signing the
+customer straight in. That decision is unchanged and is not Phase 19's to reverse. The contact form
+does not exist at all — `/contact` and the help routes are gap **G-08**, assigned to **Phase 23**.
+
+The alternative was to skip them, and it is worse. A template is a pure function of its data, so both
+are exercised by `pnpm verify:email` exactly as the wired six are; what is missing is a sender, which
+is one call each. The day verification is switched on should not also be the day somebody writes that
+email in a hurry.
+
+This is deliberately *not* a violation of §0.1.17's rule against building UI that looks functional and
+does nothing: nothing user-facing was added. There is no verification prompt, no contact form and no
+control anywhere that implies either exists.
+
+*Affects Phases 19, 21 and 23. To be discharged when verification is enabled and when Phase 23 builds
+the contact form.*
+
+---
+
+### DEV-67 — Nothing drains the email queue on a schedule
+
+**Plan §19.1d says:** *"Allow retry where appropriate."*
+
+**We do:** three deliberate drains and no scheduled one — the Stripe webhook drains a bounded five
+messages opportunistically, `pnpm email:drain` clears a backlog from a shell, and a
+staff-authenticated `POST /api/email/drain` does it from a deployed environment where there is no
+shell.
+
+**Why, and what it costs.** Most messages never touch the queue's slow path: the confirmation, the
+refund and the welcome are all delivered by the request that queued them. Only two cannot be — the
+shipped and delivered notices, which are queued *inside* a transaction because Payload 3 offers no
+post-commit collection hook, and anything that has already failed.
+
+So the cost is bounded and specific: **on a shop with no payment traffic, a dispatch notice can sit
+until somebody drains it.** On a busy one the webhook covers it within minutes.
+
+A scheduled drain is a cron entry, not application code, and it belongs with the rest of the
+deployment surface rather than being half-built here. The alternative considered and rejected was a
+`CRON_SECRET`-style bearer token on the drain route: a new secret to leak, rotate and document, when
+the audience that should be allowed to press it is exactly the staff who can already read
+`email-messages`.
+
+*Affects Phase 19 and the deployment phase. To be discharged by a scheduled call to the drain route.*
 
 
 # 3. Append log
@@ -7672,4 +7915,5 @@ email follows a state change that can only happen once.
 | Phase 17 — two post-implementation sweeps | 2026-09-08 | Notes **§1.22.9**. One defect and then its whole class. **Sweep 1** delivered two events for one payment *concurrently* — which is what Stripe actually sends — and **both reported `finalised`**: §17.1d's second barrier is a status *read*, and two transactions read `pending_payment` before either wrote `paid`. The first run hid it, because both computed the same absolute stock figure from the same stale read and the second write overwrote the first with an identical number; making the decrement atomic *made the damage visible* rather than fixing it, taking stock from 5 to 1 for a two-unit order. Closed with a **third barrier**: the order is **claimed** by one conditional `UPDATE … WHERE payment_status IN (<finalisable>)` rather than checked, so there is no window between the decision and the write because they are the same statement, and the finalisable list is derived from the state machine so the two cannot drift. The near-miss indicted the harness as much as the code — **24 passing checks** covered both documented barriers and every one ran its events *in sequence*. **Sweep 2** then hunted the *shape* rather than another instance and found two more read-then-writes: the **promotion `timesUsed` counter**, which is what a code's `usageLimit` is measured against — two customers paying with one code at the same instant are two different orders, so no barrier applies and both are owed an increment — and the webhook's `attempts` column. Both are expression updates now. Section K had *already tested* the promotion counter and passed, because it increments in sequence: the identical blind spot, in a check written by sweep 1. The replacement, section L, **failed at `1` instead of `2` before the fix**. Sweep 2 also checked §1.22.1's claim that nothing but `fulfil.ts` can mark an order paid and found **a fourth door**: `paymentStatus` was an ordinary editable select and `Orders.access.update` is `isStaff`, so a staff member could type the value `AGENTS.md` reserves for a signature-verified webhook. Closed with `nobodyField`, which `overrideAccess` skips — server path open, browser path gone — and proved three ways in `verify:access`. Route docblock corrected: it was headed *"why it always answers 200"* and omitted the **503** it returns when Stripe is unconfigured. One read-then-write in `cart.ts` was found and **deliberately left**, with the reason recorded: the write is absolute and already clamped, so the race can lose an increment but can never exceed availability or the per-line limit. New module `lib/checkout/events.ts` — the delivery counter, unguarded so a harness can drive it, which is the `server-only` rule for the fourth time. `verify:webhook` **38**, `verify:checkout` **62**, `verify:access` **48**; every other harness re-run unchanged and green. |
 | Phase 18 — order system | 2026-09-08 | Notes **§1.23**: the phase **DEV-03** said would confirm it, and it is confirmed — `displayStatus` derives plan §18.1b's single line from the two stored axes, all 35 payment x fulfilment combinations asserted, precedence checked in both directions, and the reason one column cannot do it stated: nothing single-valued holds *"refunded, but it shipped last week"*. **Two thirds of §18.1a was already Phase 17** — the pending order, the snapshots, the Stripe identifiers and *"finalize as paid only from validated Stripe state"* all held, so this phase tested them rather than rebuilding them. What was genuinely missing: **§18.1b's edges**, which the plan does not draw. Five legal transitions across 25 ordered pairs, asserted as a count so a machine that quietly grows an edge fails a check; `delivered` and `cancelled` terminal; **`shipped` cannot go back to `processing`**, because §18.1c hangs a dispatch email off that transition and moving the column back does not unsend it; **`shipped` cannot be cancelled**, which is this shop's answer to §18.1b's *"only where business rules allow"* — cancellation is available until dispatch, after which it is a return. Fulfilment starts at `PAID` with two exemptions that are the two-axis model earning its keep: `shipped -> delivered` records a parcel that has already gone (DEV-03's own refunded-in-transit case), and cancelling an unpaid order is ordinary. §18.1c's tracking condition refuses a dispatch with no carrier, no tracking number, or a tracking number of spaces, and the timestamps are written **by** the transition rather than typed beside it. Enforced in a **`beforeChange` hook**, not field access and not an admin component, because a hook runs on every path — with the subtlety that the panel posts the whole document on every save, so an unchanged status must not read as a transition or a delivered order becomes unsaveable. **§18.1d was half true**: the four columns were already snapshots, proved by renaming, repricing and re-SKU-ing the product and re-reading the line — but `OrderItems.access.update` is `isStaff`, so they could be **retyped**, the identical door Phase 17's sweep found on `paymentStatus`. Closed by `freezeOrderLines` on every path including `overrideAccess`; `quantity` and `lineTotalMinor` deliberately excluded, because the schema reserves them for a partial refund. **§18.1b's `PAID -> REFUNDED` now arrives from Stripe** — and `charge.refunded` carries the *charge's* metadata, not the session's, so adding the event type alone would have produced a handler that verified, recorded and ignored every refund; the order is resolved by **payment intent** instead, and the refund records how much and when (two new columns, one generated migration). Wiring it exposed a defect two phases of tests had missed: a `payment_intent.payment_failed` for a superseded attempt, racing the event that paid the order, **could write `payment_failed` over a completed payment** — the machine forbids it and the read-then-write never asked. Every payment transition is a conditional `UPDATE` now, its reachable-from list derived from the machine by `statusesThatCanReach`; both orderings end at `paid`, asserted concurrently. Deviation **DEV-64** (§18.1c's shipment email is a seam here and an email in Phase 19). New script `pnpm verify:orders` — **62 checks**, including staff, customer and anonymous attempts against the real access layer. Every other harness re-run green; typecheck, lint --max-warnings 0 and build pass. **Owed and named**: no browser or axe pass, because no browser tooling is available in this session — Phase 18 adds no storefront UI, but the order edit screen has not been looked at. |
 | Phase 18 — two post-implementation sweeps | 2026-09-08 | Notes **§1.23.11**. **Sweep 1** asked whether the brand-new fulfilment guard had the shape Phase 17's sweeps kept finding, and it did. Two staff, two requests, two transactions, both reading `processing` before either wrote: the ship succeeded, and the cancel **also** succeeded — a transition the machine calls impossible — leaving `final: cancelled, shippedAt = null`, with the carrier, the tracking number and the dispatch stamp wiped by the loser's stale document, after §18.1c had already triggered a shipment email for a parcel the record now says was never sent. Fixed with **`SELECT ... FOR UPDATE`** rather than a conditional `UPDATE`: this write goes through Payload because it must pass validation, run the remaining hooks and produce a document the panel can render, and a lock is the version of the same guarantee that works when something else does the writing. The interleaving is worth recording — **the first attempt to reproduce it passed**, because two `payload.update` calls fired together serialise on their own; the failure needs the second write in flight while the first still holds the row, which section J now sets up deliberately. Sweep 1 also found, by reading, that the tracking condition used `data.carrier ?? original.carrier` and `??` reads straight past an explicit `null`, so **one write could dispatch an order and clear the carrier it was dispatched with**. What held: the full-document re-save, checked because `unitPriceMinor` coming back as a string would have made every order line unsaveable and no existing test would have caught it. **Sweep 2** went after the class rather than the instance — *a rule stated in a docblock with nothing enforcing it* — by grepping for `readOnly: true` with no field access beside it. Fourteen hits, **four real**: `orders.stripePaymentIntentId` and `stripeCheckoutSessionId`, where the payment-intent field's own docblock names the danger (*"a hand-typed payment intent is an order attached to somebody else's money"*) and nothing stopped anyone typing it; `orders.paidAt`, which would be a lie about when money moved; and `promotions.timesUsed`, which is what `usageLimit` is measured against. All four closed with `nobodyField`, which `overrideAccess` skips. **And one investigated and correctly left alone** — `products.derived` has the same shape, and guarding it would have broken the cache it protects, because `syncProductDerived` writes with `req` and no `overrideAccess`: the shape is not the whole story, what matters is whether the maintaining code goes through the same door. Sweep 2 also reversed a precedence that had been reasoned about and still landed wrong — an order **cancelled and then refunded** read as *"Cancelled. Nothing was dispatched."*, true and silent about the money; the check beside it had quietly excluded `refunded`, which was the tell that the corner was noticed and never decided. And it found `preflight.ts` doing a find-then-create on `orders.cart`, so two simultaneous checkouts make **two pending orders for one bag** — **recorded, not fixed**, with the reasoning stated: each order is individually correct, a second charge needs a second card entry, and the fix is a partial unique index plus a retry in the checkout path, which changes how checkout fails and deserves more than the last hour of a sweep. The claims field access had only been *making* are now measured. `verify:orders` **74 checks**, up from 62; every other harness re-run unchanged; typecheck, lint --max-warnings 0 and build pass. |
+| Phase 19 — email / Resend | 2026-09-09 | Notes **§1.24**. Three dependencies at their pins — `resend@6.22.0`, `@react-email/components@1.0.12`, `react-email@6.9.2` (dev) — and one migration: `email_messages` with a **unique** `dedupe_key`. §19.1a's *"do not call Resend directly from random components"* is structural: `resend` appears in exactly one import, and everything above it deals in a `Transport` function, which is why the one integration nobody has credentials for has 85 passing checks and needs no API key. **§19.1c is a constraint, not a check** — the insert *is* the duplicate test, the Phase 17 mechanism reused. The key names **the thing that happened, never the message that reported it**: an event id would double-send, because Stripe sends two events for one payment, and would miss the shipped notice entirely, which has no event at all. Two duplicate shapes had to be handled — Payload validates uniqueness *before* inserting, so a sequential retry arrives as a `ValidationError`, while a genuine race passes that read-then-write twice and the database refuses the second with 23505; matching only the first would have logged a fault every time the barrier worked. **The queue exists because Payload 3 has no post-commit collection hook** — `afterChange` and `afterOperation` both run before `commitTransaction`, measured in `node_modules`, so a dispatch email sent there would announce a dispatch that could still roll back; intent is written inside the transaction and delivery happens outside. §19.1d is absolute: nothing in the service throws, because the webhook turns a throw into a 500 and Stripe's retry is then refused by the unique event id **without reprocessing** — one thrown mail error would lose a customer's confirmation permanently. The dev safeguard gates the **destination, not the credential**, because Resend has no test-mode key: outside production only `EMAIL_DEV_ALLOWLIST` is deliverable and an empty list delivers to nobody. **The `server-only` lesson arrived a fourth time, inverted** — the guard was correctly on the module holding the key and still had to come off, because `payload.config.ts` now imports the service and the CLI loads it outside Next; `catalog/algolia.ts` had already recorded the answer, and the rule gains a second half: never on a module the CLI has to load. Deviations **DEV-65** (the plan's eight templates, not the features doc's ten, with the *order cancelled* case argued rather than dropped), **DEV-66** (verification and contact confirmation written, tested and unwired — neither has a caller), **DEV-67** (no scheduled drain). **DEV-64 discharged.** New scripts `pnpm verify:email`, `pnpm email:drain`, `pnpm email:preview`; `logEmailAdapter` removed and replaced. Every other harness re-run unchanged; typecheck, lint `--max-warnings 0` and build all pass. |
 > **Append this table, and the sections above it, at the end of every phase.**

@@ -1,6 +1,9 @@
 import type Stripe from 'stripe'
 
 import { countWebhookDelivery } from '@/lib/checkout/events'
+import { courierFor } from '@/lib/email/courier'
+import { queueOrderConfirmation, queueRefundMessage } from '@/lib/email/orders'
+import { deliverEmail, drainEmails } from '@/lib/email/send'
 import { applyStripeEvent } from '@/lib/checkout/fulfil'
 import { isHandledEventType, parseOrderReference } from '@/lib/checkout/rules'
 import { isStripeConfigured, stripeClient, stripeWebhookSecret } from '@/lib/checkout/stripe'
@@ -189,6 +192,66 @@ export async function POST(request: Request): Promise<Response> {
       orderId,
       paymentIntentId,
     })
+
+    /*
+     * **§17.1d: *"Triggers email only after the correct state transition."***
+     *
+     * Gated on the outcome, which is the single value that means *this* call is the one that moved
+     * the order — not a replay, not the second event Stripe sends for the same payment. Both barriers
+     * upstream have already fired by the time a `finalised` reaches here, and the unique `dedupeKey`
+     * on `email-messages` is the third, which is what makes §17.1d's *"do not send duplicate
+     * confirmation email"* a database constraint rather than a hope.
+     *
+     * **`outOfStock` is included deliberately.** The money moved; §17.1f left the order paid and
+     * unfulfilled for a human to resolve. Withholding the receipt would leave a customer who has been
+     * charged with no record of it, which is a worse failure than the one it would avoid. What they
+     * receive is a confirmation of payment and of the order — never of dispatch, which is a separate
+     * message that will not be sent until somebody can send the goods.
+     *
+     * Wrapped so tightly because of what this route does with a throw: the catch below turns one into
+     * a 500, Stripe retries, and the retry is refused by the unique event id **without reprocessing**.
+     * A thrown error from a mail call would therefore leave the order paid and the customer
+     * permanently without a confirmation that nothing would ever resend. §19.1d, in its sharpest form.
+     */
+    try {
+      const courier = await courierFor(payload)
+
+      if (outcome.outcome === 'finalised' || outcome.outcome === 'outOfStock') {
+        const queued = await queueOrderConfirmation(payload, outcome.orderId)
+
+        if (queued.outcome === 'claimed' && courier) {
+          await deliverEmail(payload, queued.id, courier)
+        }
+      }
+
+      if (outcome.outcome === 'transitioned' && outcome.status === 'refunded') {
+        const queued = await queueRefundMessage(
+          payload,
+          outcome.orderId,
+          typeof object.amount_refunded === 'number' ? object.amount_refunded : null,
+        )
+
+        if (queued.outcome === 'claimed' && courier) {
+          await deliverEmail(payload, queued.id, courier)
+        }
+      }
+
+      /*
+       * Opportunistic, and bounded. The admin-panel messages are queued inside a transaction and have
+       * no sender of their own, so something has to carry them; a webhook is the most frequent
+       * server-side event this application has. `pnpm email:drain` and the staff-authenticated drain
+       * route are the deliberate paths — this is the one that means a backlog rarely forms.
+       */
+      if (courier) {
+        await drainEmails(payload, courier, { limit: 5 })
+      }
+    } catch (error) {
+      payload.logger.error({
+        err: error,
+        eventId: event.id,
+        msg: 'Sending an order email failed. The order is unaffected — see the email-messages record.',
+      })
+    }
 
     await payload.update({
       collection: 'stripe-events',

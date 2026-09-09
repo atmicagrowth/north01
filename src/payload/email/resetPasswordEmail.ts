@@ -1,5 +1,8 @@
 import type { PayloadRequest } from 'payload'
 
+import { renderEmail } from '@/emails/messages'
+import { subjectFor } from '@/lib/email/rules'
+
 /**
  * The storefront route that trades a reset token for a new password. Kept beside the message that
  * links to it, because the two are one contract: change the route and the mail points at a 404.
@@ -50,16 +53,25 @@ function siteOrigin(req: PayloadRequest | undefined): string {
  * link* and *reused reset link* two defined behaviours rather than one accident.
  */
 export const resetPasswordEmail = {
-  subject: () => 'Reset your NORTH / 01 password',
+  subject: () => subjectFor('passwordReset', {}),
 
-  html: ({ req, token }: { req?: PayloadRequest; token?: string } = {}) => {
+  /**
+   * **Phase 19 restyled this and changed nothing that matters.**
+   *
+   * The docblock above named what had to survive: *"the destination and the query parameter, which
+   * the reset page reads."* Both are still built here, by the same `siteOrigin` that refuses to read
+   * a `Host` header, and handed to the branded template as one absolute URL. What changed is only
+   * what the customer sees.
+   *
+   * `async`, because rendering a React Email template is. Payload types `generateEmailHTML` as
+   * returning `string | Promise<string>`, so this needs no adapter of its own.
+   */
+  html: async ({ req, token }: { req?: PayloadRequest; token?: string } = {}) => {
     const url = `${siteOrigin(req)}${RESET_PASSWORD_PATH}?token=${encodeURIComponent(token ?? '')}`
 
-    return [
-      '<p>Someone asked to reset the password for your NORTH / 01 account.</p>',
-      `<p><a href="${url}">Choose a new password</a></p>`,
-      `<p>${url}</p>`,
-      '<p>This link can be used once and expires in one hour. If you did not ask for it, nothing has changed and you can ignore this message.</p>',
-    ].join('\n')
+    const { html } = await renderEmail('passwordReset', { resetHref: url })
+
+    return html
   },
 }
+

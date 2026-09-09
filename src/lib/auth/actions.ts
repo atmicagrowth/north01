@@ -16,6 +16,10 @@ import type { ZodType } from 'zod'
 
 import { forgetCartCookie, mergeGuestCart } from '@/lib/cart/cart'
 import { getPayloadClient } from '@/lib/payload'
+import { courierFor } from '@/lib/email/courier'
+import { dedupeKeyFor } from '@/lib/email/rules'
+import { deliverEmail, enqueueEmail } from '@/lib/email/send'
+import { siteUrl } from '@/lib/env.server'
 import { checkPassword } from '@/lib/password-policy'
 
 import type { AuthFormState } from './form-state'
@@ -230,8 +234,10 @@ export async function register(
   const next = safeReturnPath(formData.get('next')?.toString())
   const payload = await getPayloadClient()
 
+  let created: { id: number } | null = null
+
   try {
-    await payload.create({
+    created = await payload.create({
       collection: 'customers',
       overrideAccess: false,
       data: {
@@ -285,6 +291,34 @@ export async function register(
   }
 
   await claimGuestCart(signedIn.user?.id)
+
+  /*
+   * **§19.1a's welcome message.**
+   *
+   * After the account exists and after the session does, and deliberately not before either: a
+   * welcome for an account that failed to be created is a lie, and this is the last thing before the
+   * redirect so nothing a mail provider does can delay a customer reaching their account.
+   *
+   * `.catch` and a `null` courier are both non-events. Plan §A.5 puts email on the non-critical side
+   * of the line, and a registration that failed because a message could not be sent would be exactly
+   * the coupling §19.1d forbids. The row is written either way, so an unconfigured shop still has a
+   * record of the welcome it owes and `pnpm email:drain` sends it when a key appears.
+   */
+  if (created) {
+    const queued = await enqueueEmail(payload, {
+      customerId: created.id,
+      data: { accountHref: `${siteUrl}/account`, firstName: parsed.data.firstName },
+      dedupeKey: dedupeKeyFor('welcome', { id: created.id }),
+      kind: 'welcome',
+      to: parsed.data.email,
+    }).catch(() => ({ outcome: 'error' as const, reason: 'enqueue threw' }))
+
+    const courier = await courierFor(payload)
+
+    if (queued.outcome === 'claimed' && courier) {
+      await deliverEmail(payload, queued.id, courier).catch(() => undefined)
+    }
+  }
 
   redirect(next ?? '/account')
 }

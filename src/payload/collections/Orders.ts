@@ -7,6 +7,7 @@ import { addressFields } from '../fields/address'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
 import { enforceOrderTransitions } from '../hooks/orderTransitions'
+import { queueOrderEmails } from '../hooks/queueOrderEmails'
 
 /**
  * The durable record of a purchase — the one table in this schema that must still be readable and
@@ -575,6 +576,13 @@ export const Orders: CollectionConfig = {
      * near the panel.
      */
     beforeChange: [enforceOrderTransitions],
+
+    /**
+     * §18.1c's shipment email, and its delivered counterpart. It **queues**; it does not send —
+     * `afterChange` runs inside the open transaction, so a send here would announce a dispatch that
+     * could still roll back. See `hooks/queueOrderEmails.ts`.
+     */
+    afterChange: [queueOrderEmails],
 
     /**
      * Reached only by a permanent delete from the trash view — the admin panel's ordinary delete is

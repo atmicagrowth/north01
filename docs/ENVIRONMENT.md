@@ -339,6 +339,8 @@ the key to a single index is a reasonable tightening and is not done here.
 | `STRIPE_SECRET_KEY` | server | 17 | same. `sk_test_…` or a restricted `rk_test_…`; **never a `_live_` key outside production** |
 | `STRIPE_WEBHOOK_SECRET` | server | 17 | Stripe → Webhooks → signing secret, `whsec_…` |
 | `RESEND_API_KEY` | server | 19 | Resend → API Keys. Verified sending domain before any production send |
+| `EMAIL_FROM` | server | 19 | Resend → Domains. The verified sending identity, `you@domain` or `Name <you@domain>` |
+| `EMAIL_DEV_ALLOWLIST` | server | 19 | Yours to choose. **The dev safeguard** — outside production, mail goes only to these addresses; empty means none |
 | `NEXT_PUBLIC_SENTRY_DSN` | **public** | 25 | Sentry → Project Settings → Client Keys. A DSN is public by design |
 | `SENTRY_AUTH_TOKEN` | server | 25 | Sentry → Auth Tokens. Build-time only, for source-map upload |
 | `NEXT_PUBLIC_POSTHOG_KEY` **†** | **public** | 25 | PostHog → Project Settings |
