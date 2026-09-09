@@ -6328,6 +6328,123 @@ That gap is the honest state of this phase and is recorded rather than glossed.
   currently discovers the merge by their list being right.
 - **Order pagination.** `/account/orders` reads fifty and stops.
 
+## 1.26 Phase 21 — reviews
+
+Plan §21.1a–§21.1c, plus §13.1f which is where the public rendering is actually specified.
+**No dependency and no migration** — the second phase running. `Reviews` was built to §6.1j in Phase 6
+and already carried every field, every bound and the constraint that makes duplicate prevention real.
+
+### 1.26.1 The corpus disagrees with itself, twice — DEV-69
+
+Plan §21.1a and feature matrix §9 are not the same specification, and `AGENTS.md` ranks the plan
+above the matrix.
+
+**Is a purchase required?** The plan hedges twice — *"**If** verified purchase is required"* and the
+prompt's *"**optional** verified-purchase checks"*. The matrix lists *"review for non-owned product"*
+as an abuse case, which only means anything if ownership is a gate. Resolved: **a purchase is a badge,
+not a gate.** Anyone signed in may review; those who bought it get the indicator §13.1f asks for.
+
+**Which order state counts?** The plan says a **paid** order. The matrix says *"order not delivered
+yet"* — four states further along §18.1b's machine. Resolved: **paid**, and a refunded order still
+counts, because the customer did buy it and had it long enough to form a view.
+
+### 1.26.2 Three things the browser cannot decide, each closed differently
+
+- **`status`** defaults to `pending` and the field carries `access: { create: isStaffField, update:
+  isStaffField }`. A review created through *any* door lands pending whatever the request body says.
+  §21.1b's moderation rule is access control, not a hook somebody could forget to run.
+- **`verifiedPurchase`** is staff-only for the same reason and is set from an order lookup. A badge
+  the submitter can assert is not a badge.
+- **`customer`** is *forced* by `enforceCustomerOwnership`, on create and on update alike, because
+  `create: isActiveCustomer` only asks whether the caller is an active customer — `POST /api/reviews`
+  with `{ customer: 42 }` would pass it.
+
+### 1.26.3 The duplicate is caught by the index, not by a check before it
+
+§21.1c's first abuse case. Phase 6 made `customer` **required** specifically so the compound unique
+index on `(product, customer)` would bite, since Postgres treats NULLs as distinct.
+
+So the action attempts the insert and catches the violation. The newsletter action had already
+recorded why read-then-create is wrong twice over: it is a concurrency bug, **and** a measurable
+timing oracle, because an unknown value costs a SELECT plus an INSERT while a known one costs only the
+SELECT. The catch is narrow — a validation error about some other field must not be reported to a
+customer as *"you already reviewed this"*.
+
+The eligibility check before the form is a **courtesy**, not the guarantee: it lets the page say so
+rather than the customer discovering it by submitting.
+
+### 1.26.4 The histogram is absent, not empty
+
+§13.1f: *"Do not show an empty star histogram."* That is the only place in the corpus where the plan
+pre-agrees on an **absence**, and it is worth honouring literally — five bars all at zero is not a
+neutral chart, it reads at a glance as five one-star reviews.
+
+The same logic runs through `summariseReviews`: with no reviews the average is **`null`, never `0`**.
+Zero is a rating somebody could have given; absence is not. `lib/money.ts` made the same distinction
+for a price, and *"0.0 stars"* on an unreviewed product is false information rather than no
+information.
+
+Aggregates are computed on read, from the same rows that are rendered. `Products.ts` decided in Phase
+6 not to cache them, and the other half of that decision is here: two queries can disagree, and the
+failure mode is a page claiming forty-one reviews above a list of forty.
+
+### 1.26.5 No profanity filter — DEV-70
+
+§21.1c lists *"profanity/spam"*. Neither the plan nor the matrix specifies a mechanism, a word list or
+a service, no phase is assigned one, and nothing in the approved stack does it.
+
+The answer this project gives is **human moderation**, which is what the pending-by-default status
+already is. An automated filter would be new ground with no specification behind it, and a bad one is
+worse than none: it publishes what it misses and rejects what it misreads, with nobody in the loop
+either way.
+
+### 1.26.6 No review photos — DEV-71
+
+§6.1j lists photos, §13.1f asks for *"photo reviews where available"*, and the `photos` array exists
+on the collection with `maxRows: 4` answering §21.1c's *"huge image upload"*.
+
+It cannot be wired, and the reason is not effort. `media.create` is staff-only, and **D-28** records
+that media bytes are **public the moment they are uploaded**. A customer-submitted review photo would
+therefore be publicly fetchable *before any person had seen it* — §21.1b's moderation rule defeated by
+the one field that bypasses it.
+
+Solving it properly means a private-by-default upload path, which is a Cloudinary and access-control
+design question rather than a wiring task. Recorded rather than half-built.
+
+### 1.26.7 No rate limiting
+
+Plan §26.1a names *"review submission"* as a Turnstile surface, and Turnstile is Phase 26's — as is
+its dependency. Recorded as owed rather than improvised, and stated without overclaiming: this is an
+authenticated write endpoint with a Zod-shaped body, and the only thing bounding it is that a customer
+may submit one review per product.
+
+### 1.26.8 What was verified, and how
+
+**Nothing was run.** The Neon password has been invalid since Phase 19's first sweep. See `TODO.md`.
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck` | passes |
+| `pnpm lint --max-warnings 0` | passes |
+| `pnpm build` | **blocked** |
+| `pnpm verify:reviews` | **written, never run** — 30 checks |
+
+The harness covers the two tests the prompt names by title — unauthorized submissions and duplicate
+reviews — plus rating validation, §13.1f's summary rules, and §21.1a's paid-order match including the
+cases that must *not* verify: another customer's order, a different product, and an order that never
+reached payment.
+
+### 1.26.9 What is now owed
+
+- **Run the harness**, with everything else queued behind the connection string.
+- **Review photos** — DEV-71, blocked on a private-upload path.
+- **Turnstile** — Phase 26.
+- **Whether an author may edit or withdraw a review.** Phase 6 deferred it to Phase 21 explicitly;
+  Phase 21 leaves `update`/`delete` staff-only, because a customer editing an approved review would
+  re-publish unmoderated text under a badge that had already been granted. Withdrawal is the more
+  defensible half and is worth designing on its own.
+- **Structured data.** §29 wants review aggregates in the markup; the numbers now exist for it.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -8068,6 +8185,78 @@ rather than losing a list the customer chose to keep.
 *Affects Phase 20. Follows from Phase 6's no-guest-table decision rather than departing from it.*
 
 
+---
+
+### DEV-69 — A purchase is a badge, not a gate, and the bar is *paid*
+
+**Plan §21.1a says:** *"Only authenticated customers should submit reviews unless a deliberately
+designed verified-review workflow is implemented."* Then: *"**If** verified purchase is required:
+match customer to a **paid** order containing the product."* The §21 prompt repeats the hedge —
+*"**optional** verified-purchase checks."*
+
+**Feature matrix §9 says:** *"review for non-owned product"* and *"order not delivered yet"* are abuse
+cases — which only means something if ownership is a gate and delivery is the bar.
+
+**We do:** authentication is the only gate. A purchase is looked up, stored on the row, and shown as
+§13.1f's *"verified indicator"*. The lookup takes any order that is no longer awaiting payment.
+
+**Why:** `AGENTS.md` ranks the plan above the features matrix, and the plan hedges twice in the same
+section rather than once in passing. There is also a design argument the precedence rule does not need
+to make: a shop that only accepts reviews from buyers has no reviews on a new product, which is
+exactly when a customer most wants one — and the badge already carries the distinction that matters,
+visibly, on each review.
+
+A **refunded** order still verifies. The customer bought it and had it; a return is often the most
+informed review there is.
+
+*Resolves the §21.1a / matrix §9 conflict. Affects Phase 21.*
+
+---
+
+### DEV-70 — Profanity and spam are handled by moderation, not by a filter
+
+**Plan §21.1c lists:** *"Profanity/spam."* **Feature matrix §9 lists:** *"Profanity/abuse
+moderation."*
+
+**We do:** nothing automated. Every review lands `pending` and a person approves it.
+
+**Why:** neither document specifies a mechanism, a word list or a service; no phase is assigned one;
+and nothing in `01_NORTH01_Tech_Stack` does it. Inventing one would be unspecified ground.
+
+It would also be worse than the alternative rather than better. A word list publishes what it misses
+and rejects what it misreads — a customer writing about a *"bloody awful zip"* is describing the
+product, and a filter that rejects them has removed a true review and told them nothing. Since every
+review is already read by a person before it is public, the filter would add false negatives and false
+positives to a process that has neither.
+
+*Affects Phase 21. Revisit if review volume makes human moderation impractical.*
+
+---
+
+### DEV-71 — Review photos are specified, built into the schema, and cannot be wired
+
+**Plan §6.1j lists** *"Photos"* on the review model. **§13.1f asks for** *"photo reviews where
+available."* The `photos` array exists on `Reviews` with `maxRows: 4`, answering §21.1c's *"huge image
+upload"*.
+
+**We do:** not wire it. There is no upload control on the review form.
+
+**Why, and it is not effort.** `media.create` is staff-only, and **D-28** records the property that
+makes this unfixable at this layer: **media bytes are public the moment they are uploaded.** A
+customer-submitted review photo would be publicly fetchable at its Cloudinary URL *before any person
+had seen it* — which is §21.1b's *"only approved reviews appear publicly"* defeated by the one field
+that does not go through the review's own status.
+
+Nothing in the corpus specifies a private-by-default upload path, and building one is a Cloudinary
+delivery-and-access design question rather than a wiring task: it needs signed URLs or a private
+folder, a promotion step on approval, and a decision about what happens to the bytes of a rejected
+review.
+
+The column stays. When the upload path exists, the form gains a control and nothing else changes.
+
+*Affects Phases 8 and 21. To be discharged when a private upload path is designed.*
+
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -8115,4 +8304,5 @@ rather than losing a list the customer chose to keep.
 | Phase 18 — two post-implementation sweeps | 2026-09-08 | Notes **§1.23.11**. **Sweep 1** asked whether the brand-new fulfilment guard had the shape Phase 17's sweeps kept finding, and it did. Two staff, two requests, two transactions, both reading `processing` before either wrote: the ship succeeded, and the cancel **also** succeeded — a transition the machine calls impossible — leaving `final: cancelled, shippedAt = null`, with the carrier, the tracking number and the dispatch stamp wiped by the loser's stale document, after §18.1c had already triggered a shipment email for a parcel the record now says was never sent. Fixed with **`SELECT ... FOR UPDATE`** rather than a conditional `UPDATE`: this write goes through Payload because it must pass validation, run the remaining hooks and produce a document the panel can render, and a lock is the version of the same guarantee that works when something else does the writing. The interleaving is worth recording — **the first attempt to reproduce it passed**, because two `payload.update` calls fired together serialise on their own; the failure needs the second write in flight while the first still holds the row, which section J now sets up deliberately. Sweep 1 also found, by reading, that the tracking condition used `data.carrier ?? original.carrier` and `??` reads straight past an explicit `null`, so **one write could dispatch an order and clear the carrier it was dispatched with**. What held: the full-document re-save, checked because `unitPriceMinor` coming back as a string would have made every order line unsaveable and no existing test would have caught it. **Sweep 2** went after the class rather than the instance — *a rule stated in a docblock with nothing enforcing it* — by grepping for `readOnly: true` with no field access beside it. Fourteen hits, **four real**: `orders.stripePaymentIntentId` and `stripeCheckoutSessionId`, where the payment-intent field's own docblock names the danger (*"a hand-typed payment intent is an order attached to somebody else's money"*) and nothing stopped anyone typing it; `orders.paidAt`, which would be a lie about when money moved; and `promotions.timesUsed`, which is what `usageLimit` is measured against. All four closed with `nobodyField`, which `overrideAccess` skips. **And one investigated and correctly left alone** — `products.derived` has the same shape, and guarding it would have broken the cache it protects, because `syncProductDerived` writes with `req` and no `overrideAccess`: the shape is not the whole story, what matters is whether the maintaining code goes through the same door. Sweep 2 also reversed a precedence that had been reasoned about and still landed wrong — an order **cancelled and then refunded** read as *"Cancelled. Nothing was dispatched."*, true and silent about the money; the check beside it had quietly excluded `refunded`, which was the tell that the corner was noticed and never decided. And it found `preflight.ts` doing a find-then-create on `orders.cart`, so two simultaneous checkouts make **two pending orders for one bag** — **recorded, not fixed**, with the reasoning stated: each order is individually correct, a second charge needs a second card entry, and the fix is a partial unique index plus a retry in the checkout path, which changes how checkout fails and deserves more than the last hour of a sweep. The claims field access had only been *making* are now measured. `verify:orders` **74 checks**, up from 62; every other harness re-run unchanged; typecheck, lint --max-warnings 0 and build pass. |
 | Phase 19 — email / Resend | 2026-09-09 | Notes **§1.24**. Three dependencies at their pins — `resend@6.22.0`, `@react-email/components@1.0.12`, `react-email@6.9.2` (dev) — and one migration: `email_messages` with a **unique** `dedupe_key`. §19.1a's *"do not call Resend directly from random components"* is structural: `resend` appears in exactly one import, and everything above it deals in a `Transport` function, which is why the one integration nobody has credentials for has 85 passing checks and needs no API key. **§19.1c is a constraint, not a check** — the insert *is* the duplicate test, the Phase 17 mechanism reused. The key names **the thing that happened, never the message that reported it**: an event id would double-send, because Stripe sends two events for one payment, and would miss the shipped notice entirely, which has no event at all. Two duplicate shapes had to be handled — Payload validates uniqueness *before* inserting, so a sequential retry arrives as a `ValidationError`, while a genuine race passes that read-then-write twice and the database refuses the second with 23505; matching only the first would have logged a fault every time the barrier worked. **The queue exists because Payload 3 has no post-commit collection hook** — `afterChange` and `afterOperation` both run before `commitTransaction`, measured in `node_modules`, so a dispatch email sent there would announce a dispatch that could still roll back; intent is written inside the transaction and delivery happens outside. §19.1d is absolute: nothing in the service throws, because the webhook turns a throw into a 500 and Stripe's retry is then refused by the unique event id **without reprocessing** — one thrown mail error would lose a customer's confirmation permanently. The dev safeguard gates the **destination, not the credential**, because Resend has no test-mode key: outside production only `EMAIL_DEV_ALLOWLIST` is deliverable and an empty list delivers to nobody. **The `server-only` lesson arrived a fourth time, inverted** — the guard was correctly on the module holding the key and still had to come off, because `payload.config.ts` now imports the service and the CLI loads it outside Next; `catalog/algolia.ts` had already recorded the answer, and the rule gains a second half: never on a module the CLI has to load. Deviations **DEV-65** (the plan's eight templates, not the features doc's ten, with the *order cancelled* case argued rather than dropped), **DEV-66** (verification and contact confirmation written, tested and unwired — neither has a caller), **DEV-67** (no scheduled drain). **DEV-64 discharged.** New scripts `pnpm verify:email`, `pnpm email:drain`, `pnpm email:preview`; `logEmailAdapter` removed and replaced. Every other harness re-run unchanged; typecheck, lint `--max-warnings 0` and build all pass. |
 | Phase 20 — wishlist, account, recently viewed | 2026-09-09 | Notes **§1.25**. **No dependency and no migration**: `WishlistItems` was built to §6.1m in Phase 6 and already carried the compound unique index on `(customer, product)` with both columns required — so §20.1b's *"existing customer wishlist wins duplicates"* was already enforced by Postgres rather than by whichever code path ran first, the same mechanism as Phase 19's `dedupeKey` and Phase 17's event id. **The guest merge could not copy the cart's** (**DEV-68**): a guest cart is a database row named by a cookie, a guest wishlist is `localStorage`, and no server action can read a browser's storage — so the merge is client-initiated, has no parameter for whose list it is, validates every id against the published catalogue, is capped on the way in, and clears the device copy only on success. **`ProductCard` had to be restructured**: it was one `<Link>` around everything, and a heart in the obvious place would have put a `<button>` inside an `<a>` — invalid HTML that browsers recover from inconsistently, leaving the control unreachable by keyboard. It is now a wrapper, a link, and the control as its **sibling**, which is §11.1c's *"click wishlist → prevent card navigation"* solved structurally rather than with `stopPropagation`. The heart is **opt-in per call site**, because two of the five places the card renders are inside the bag drawer where each card sits in an `<li onClick={close}>`. One control, two mechanisms, and the customer is told which — a guest sees *"saved on this device"*, and the signed-out branch is deliberately not a form because there is no server for it to post to. Recently-viewed renders **nothing on the server**: its server snapshot is the empty list so hydration cannot flicker, and *"do not store sensitive personal information"* holds by construction because the parser can only represent a positive integer. `createLocalList` factors the `useSyncExternalStore` pattern out of `search-panel.tsx`, now that it is needed three times. The lint rule earned its keep: the rail's first version cleared its own state inside an effect and `react-hooks/set-state-in-effect` refused it, so the empty case is derived at render. Account: five navigable routes plus `[order]`, guard still per-page, and **the order route takes the order number rather than the database id** — an id is a running count of every order the shop has taken. A cross-account request is **not found, never forbidden**, because a 403 would confirm which order numbers are real. `/account/addresses` can add and remove because checkout snapshots onto the order and never writes to `addresses`, so a read-only screen would have been a page that looks like a feature and cannot do anything. **DEV-45 discharged.** New harness `pnpm verify:account` — 40 checks covering the two things the phase prompt names by title, cross-account access prevention and merge behaviour. **It has never been run**: the Neon password died during Phase 19's sweep, so `pnpm build` and all fifteen harnesses are blocked and only typecheck and lint could be gated. Recorded in `TODO.md` and in §1.25.8 rather than glossed. |
+| Phase 21 — reviews | 2026-09-09 | Notes **§1.26**. **No dependency and no migration** — `Reviews` was built to §6.1j in Phase 6 with every field, every bound, and the compound unique index on `(product, customer)` whose `customer` column was made **required** precisely so the index would bite, since Postgres treats NULLs as distinct. **The corpus disagrees with itself twice** and `AGENTS.md`'s precedence settled both (**DEV-69**): a purchase is a **badge, not a gate**, because the plan hedges twice while the matrix implies a gate — and a shop that only accepts reviews from buyers has none on a new product, which is when a customer most wants one; and the bar is **paid**, not the matrix's *"not delivered yet"*, with a refunded order still verifying because the customer did buy it. **Three things the browser cannot decide, each closed differently**: `status` defaults to pending *and* the field is staff-only, so a review lands pending through any door; `verifiedPurchase` is staff-only and set from an order lookup, because a badge the submitter can assert is not a badge; `customer` is *forced* by `enforceCustomerOwnership`, since `create: isActiveCustomer` alone would accept `POST /api/reviews` with somebody else's id. **The duplicate is caught by the index, not before it** — the newsletter action had already recorded that read-then-create is both a concurrency bug and a measurable timing oracle. §13.1f's *"do not show an empty star histogram"* is honoured literally: five bars at zero reads as five one-star reviews, so an unreviewed product gets one sentence and no chart, and the average is **`null`, never `0`** — the same distinction `lib/money.ts` makes for a price. Aggregates are computed from the same rows that render, because two queries can disagree and the failure is a page claiming forty-one reviews above a list of forty. Three deviations: **DEV-69** (badge not gate), **DEV-70** (no profanity filter — a word list publishes what it misses and rejects what it misreads, and a person already reads every review), **DEV-71** (no review photos — `media.create` is staff-only and **D-28** says media bytes are public the moment they are uploaded, so an unmoderated review photo would be fetchable before anyone saw it; the column stays, the upload path is a design question). Rate limiting is Phase 26's Turnstile and is recorded as owed without overclaiming. New harness `pnpm verify:reviews` — 30 checks covering the two tests the prompt names by title plus §21.1a's paid-order match and the cases that must NOT verify. **Never run**: the Neon password has been invalid since Phase 19's sweep, so only typecheck and lint could be gated. See `TODO.md`. |
 > **Append this table, and the sections above it, at the end of every phase.**

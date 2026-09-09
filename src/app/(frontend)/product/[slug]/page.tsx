@@ -3,6 +3,8 @@ import { notFound } from 'next/navigation'
 import { ProductPage } from '@/components/product/product-page'
 import { getCustomer } from '@/lib/auth/session'
 import { getPayloadClient } from '@/lib/payload'
+import { ProductReviews } from '@/components/reviews/product-reviews'
+import { readProductReviews, resolveEligibility } from '@/lib/reviews/read'
 import { readWishlistProductIds } from '@/lib/wishlist/read'
 import { loadProductParams } from '@/lib/product/params'
 import { getProduct } from '@/lib/product/product'
@@ -58,12 +60,40 @@ export default async function ProductDetailPage({
    * it there.
    */
   const customer = await getCustomer()
+  const payload = await getPayloadClient()
 
   const savedForCustomer =
     customer !== null &&
-    (await readWishlistProductIds(await getPayloadClient(), customer.id)).includes(view.product.id)
+    (await readWishlistProductIds(payload, customer.id)).includes(view.product.id)
+
+  /*
+   * **§13.1f's block, read on the server.**
+   *
+   * Reviews are public content and belong in the markup — a rating that arrives after hydration is a
+   * rating a crawler never sees, and §29 wants review data in the structured markup eventually.
+   *
+   * `resolveEligibility` costs **no queries at all** for a signed-out visitor, which is the
+   * overwhelming majority of product-page views: the answer is already known without asking anything.
+   */
+  const [{ reviews, summary }, eligibility] = await Promise.all([
+    readProductReviews(payload, view.product.id),
+    resolveEligibility(payload, customer, view.product.id, true),
+  ])
 
   return (
-    <ProductPage savedForCustomer={savedForCustomer} signedIn={customer !== null} view={view} />
+    <ProductPage
+      reviews={
+        <ProductReviews
+          displayName={customer?.firstName ?? ''}
+          eligibility={eligibility}
+          productId={view.product.id}
+          reviews={reviews}
+          summary={summary}
+        />
+      }
+      savedForCustomer={savedForCustomer}
+      signedIn={customer !== null}
+      view={view}
+    />
   )
 }

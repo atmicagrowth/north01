@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 import { AddToBag } from '@/components/cart/add-to-bag'
 import { RecentlyViewed, RecordProductView } from '@/components/recently-viewed/recently-viewed'
 import { WishlistControl } from '@/components/wishlist/wishlist-button'
@@ -56,10 +58,19 @@ import type { Media } from '@/payload-types'
  * is that variant's exactly.
  */
 export function ProductPage({
+  reviews,
   savedForCustomer = false,
   signedIn = false,
   view,
 }: {
+  /**
+   * §13.1f's review block, composed by the route.
+   *
+   * Passed in rather than read here, because this component is a pure render of a `ProductView` and
+   * the reviews need a customer, an order history and an eligibility decision that a view model has
+   * no business carrying. The route owns the reads; this owns the layout.
+   */
+  reviews?: ReactNode
   /** Whether this product is on the signed-in customer's list. Resolved on the server, per request. */
   savedForCustomer?: boolean
   signedIn?: boolean
@@ -232,6 +243,9 @@ export function ProductPage({
         that reads it is below, and both are deliberately absent from the server's markup.
       */}
       <RecordProductView productId={product.id} />
+
+      {/* §13.1f. Above recently-viewed and recommendations: it is about *this* product. */}
+      {reviews}
 
       <RecentlyViewed exclude={product.id} />
 
