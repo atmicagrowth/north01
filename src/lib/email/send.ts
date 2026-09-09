@@ -2,10 +2,11 @@ import { sql } from '@payloadcms/db-postgres'
 import type { Payload, PayloadRequest } from 'payload'
 
 import type { EmailData } from '@/emails/messages'
-import type { DeliveryEnv, EmailKind, Transport } from './rules'
+import type { DeliveryEnv, EmailKind, EmailStatus, Transport } from './rules'
 
 import { renderEmail } from '@/emails/messages'
 import {
+  isRetryable,
   MAX_DELIVERY_ATTEMPTS,
   resolveRecipient,
   subjectFor,
@@ -62,6 +63,13 @@ import {
  * makes the dev safeguard testable from both sides: the harness asks what happens in `production` and
  * what happens on a laptop, without setting environment variables.
  */
+/**
+ * How long a failed message waits before the drain looks at it again. Five minutes: long enough that
+ * the condition which caused the failure could plausibly have changed, short enough that a transient
+ * blip clears without anybody being asked to do anything.
+ */
+const RETRY_BACKOFF_MS = 5 * 60 * 1000
+
 export type Courier = {
   allowlist: readonly string[]
   appEnv: DeliveryEnv
@@ -215,23 +223,45 @@ export async function deliverEmail(
   courier: Courier,
   prerendered?: { html: string; subject: string; text: string },
 ): Promise<DeliverOutcome> {
-  const claim = await payload.db.drizzle.execute(
-    sql`UPDATE "email_messages"
-        SET "attempts" = "attempts" + 1, "last_attempt_at" = ${new Date().toISOString()}
-        WHERE "id" = ${messageId}
-          AND "status" IN ('pending', 'failed')
-          AND "attempts" < ${MAX_DELIVERY_ATTEMPTS}`,
-  )
-
-  if ((claim.rowCount ?? 0) === 0) {
-    return { outcome: 'notClaimable' }
-  }
-
   const row = await payload
     .findByID({ collection: 'email-messages', depth: 0, id: messageId, overrideAccess: true })
     .catch(() => null)
 
   if (!row) {
+    return { outcome: 'notClaimable' }
+  }
+
+  const observed = toAttemptCount(row.attempts)
+
+  if (!isRetryable(row.status as EmailStatus, observed)) {
+    return { outcome: 'notClaimable' }
+  }
+
+  /*
+   * **A compare-and-set, not a counted increment.** Phase 19's first sweep found the difference, and
+   * it is subtle enough to be worth stating.
+   *
+   * The first version incremented under `WHERE attempts < 3`. Postgres serialises the two statements,
+   * but that is not the same as excluding the second: the loser re-evaluates its predicate against
+   * the row the winner just wrote, `status` is still `pending` because nothing has recorded an
+   * outcome yet, and `1 < 3` is still true. Both matched, both rendered, and the customer received
+   * the message twice. The docblock claimed the loser sees zero rows; the harness only ever tested
+   * the sequential case, where the status has already moved to `sent` — which is precisely the blind
+   * spot Phase 17's sweeps named.
+   *
+   * `AND "attempts" = ${observed}` fixes it, because the winner changes the value the loser matched
+   * on. Same shape as the order claim in `checkout/fulfil.ts`: the condition and the write are one
+   * statement, and the write invalidates the condition.
+   */
+  const claim = await payload.db.drizzle.execute(
+    sql`UPDATE "email_messages"
+        SET "attempts" = "attempts" + 1, "last_attempt_at" = ${new Date().toISOString()}
+        WHERE "id" = ${messageId}
+          AND "status" IN ('pending', 'failed')
+          AND "attempts" = ${observed}`,
+  )
+
+  if ((claim.rowCount ?? 0) === 0) {
     return { outcome: 'notClaimable' }
   }
 
@@ -289,6 +319,15 @@ export async function deliverEmail(
     .transport({
       from: courier.from,
       html: body.html,
+      /*
+       * **The provider's own barrier, and what makes "pending is not a lock" safe.**
+       *
+       * There is an unavoidable window between the provider accepting a message and this process
+       * recording that it did. A deploy, an OOM kill, or a failed `record()` inside that window
+       * leaves the row `pending`, and the next drain re-sends. Handing Resend the same key both
+       * times collapses the replay on their side, which turns a crash from a duplicate into a no-op.
+       */
+      idempotencyKey: String(row.dedupeKey),
       replyTo: courier.replyTo,
       subject: String(row.subject),
       text: body.text,
@@ -349,6 +388,19 @@ export async function drainEmails(
   courier: Courier,
   { limit = 25 }: { limit?: number } = {},
 ): Promise<{ attempted: number; failed: number; sent: number; suppressed: number }> {
+  /*
+   * **A message that just failed is not retried in the same breath.**
+   *
+   * Sweep 1's finding: the webhook route delivers a message and then, twenty lines later, drains — so
+   * a provider refusal was re-attempted milliseconds later against the same provider that had just
+   * refused it, and the whole retry budget was spent inside one request. `last_attempt_at` was
+   * written by the claim and read by nothing.
+   *
+   * It is read now. A retry budget is only worth having if the attempts are far enough apart for the
+   * condition to have changed — a domain being verified, an outage ending.
+   */
+  const cutoff = new Date(Date.now() - RETRY_BACKOFF_MS).toISOString()
+
   const { docs } = await payload.find({
     collection: 'email-messages',
     depth: 0,
@@ -359,6 +411,7 @@ export async function drainEmails(
       and: [
         { status: { in: ['pending', 'failed'] } },
         { attempts: { less_than: MAX_DELIVERY_ATTEMPTS } },
+        { or: [{ lastAttemptAt: { exists: false } }, { lastAttemptAt: { less_than: cutoff } }] },
       ],
     },
   })
@@ -399,5 +452,16 @@ async function record(
 ): Promise<void> {
   await payload
     .update({ collection: 'email-messages', data, id, overrideAccess: true })
-    .catch(() => undefined)
+    .catch((error: unknown) => {
+      /*
+       * Logged rather than discarded. A terminal write that fails after a successful send is the one
+       * error that *creates* a duplicate — the row stays `pending`, the next drain re-sends it, and
+       * without this line nothing anywhere would say why.
+       */
+      payload.logger.error({
+        err: error,
+        messageId: id,
+        msg: 'An email outcome could not be recorded. The message may be re-attempted.',
+      })
+    })
 }

@@ -275,6 +275,14 @@ export const SUPPRESSION_COPY: Record<SuppressionReason, string> = {
 export type TransportMessage = {
   from: string
   html: string
+  /**
+   * The message's own `dedupeKey`, handed to the provider as its idempotency key.
+   *
+   * This is the barrier that covers the one window the database cannot: between the provider
+   * accepting a message and this application recording that it did. A crash there leaves the row
+   * `pending` and the next drain re-sends — with the same key, so the provider collapses it.
+   */
+  idempotencyKey: string
   replyTo: null | string
   subject: string
   text: string

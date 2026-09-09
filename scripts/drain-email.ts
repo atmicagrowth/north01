@@ -41,7 +41,40 @@ import config from '../src/payload.config'
 
 import { buildCourier } from '../src/lib/email/resend'
 import { drainEmails } from '../src/lib/email/send'
-import { appEnv, integrationStatus, requireIntegration, serverEnv } from '../src/lib/env.core'
+import {
+  appEnv,
+  developmentDatabase,
+  integrationStatus,
+  requireIntegration,
+  serverEnv,
+} from '../src/lib/env.core'
+
+/**
+ * **The one refusal this script does need**, found by Phase 19's first sweep.
+ *
+ * Three separately reasonable decisions combined into a destructive one. This script deliberately has
+ * no D-10 guard, because draining a production queue is a legitimate thing to do. `appEnv` cannot see
+ * a connection string and reads `local` on a laptop (env.core.ts says so in as many words). And
+ * suppression is **terminal** — a suppressed row is excluded from every future drain and nothing in
+ * the application can reset it.
+ *
+ * So an operator investigating a missing confirmation, who exports the production `DATABASE_URL` and
+ * runs this, would claim up to fifty real pending messages — confirmations for customers who have
+ * been charged, dispatch notices for parcels in transit — and mark every one of them `suppressed`
+ * forever. It would print "50 suppressed", which reads exactly like the safeguard working.
+ *
+ * The safeguard was right; consuming somebody else's queue to apply it was not. A laptop pointed at
+ * production is refused outright, and the message says which of the two things to change.
+ */
+if (!developmentDatabase.ok && appEnv !== 'production') {
+  throw new Error(
+    'drain-email refuses to run: DATABASE_URL does not name the development database ' +
+      `(${developmentDatabase.reason}), and this process is not production (appEnv=${appEnv}).\n` +
+      'Delivering from here would suppress every queued message permanently, because suppression is ' +
+      'terminal and nothing can reset it. Point DATABASE_URL at development, or run the drain from ' +
+      'the deployed environment — POST /api/email/drain, signed in as staff.',
+  )
+}
 
 const { getPayload } = await import('payload')
 

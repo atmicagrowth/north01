@@ -431,6 +431,11 @@ try {
 
     check('G: a claimed message is delivered', outcome.outcome === 'sent', outcome.outcome)
     check('G: …the transport was handed both bodies', seen[0]?.html !== '' && seen[0]?.text !== '')
+    check(
+      'G: **…and the provider idempotency key**, which covers the send-then-record window',
+      seen[0]?.idempotencyKey === `verify-deliver-${suffix}`,
+      String(seen[0]?.idempotencyKey),
+    )
     check('G: …and the from identity', seen[0]?.from.includes('no-reply@example.test') === true)
 
     const row = await messageById(queued.id)

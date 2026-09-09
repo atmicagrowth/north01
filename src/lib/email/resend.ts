@@ -42,14 +42,23 @@ export function createEmailTransport({ apiKey }: { apiKey: string }): Transport 
 
   return async (message) => {
     try {
-      const { data, error } = await client.emails.send({
-        from: message.from,
-        html: message.html,
-        replyTo: message.replyTo ?? undefined,
-        subject: message.subject,
-        text: message.text,
-        to: message.to,
-      })
+      const { data, error } = await client.emails.send(
+        {
+          from: message.from,
+          html: message.html,
+          replyTo: message.replyTo ?? undefined,
+          subject: message.subject,
+          text: message.text,
+          to: message.to,
+        },
+        /*
+         * Resend's second argument becomes the `Idempotency-Key` header. Without it, the deliberate
+         * decision that a stuck `pending` row is retried rather than locked would turn every crash
+         * in the send-then-record window into a duplicate in a customer's inbox. Sweep 1 found the
+         * claim that "the provider's own idempotency makes that safe" written down and not done.
+         */
+        { idempotencyKey: message.idempotencyKey },
+      )
 
       if (error) {
         return { error: `${error.name}: ${error.message}`, ok: false }
