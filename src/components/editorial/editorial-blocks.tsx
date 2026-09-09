@@ -2,6 +2,8 @@ import { Prose } from '@/components/editorial/prose'
 import { EditorialBlock } from '@/components/layout/editorial-block'
 import { PageContainer } from '@/components/layout/page-container'
 import { Section } from '@/components/layout/section'
+import { AddEntireLook } from '@/components/editorial/add-entire-look'
+import { Hotspot } from '@/components/editorial/hotspot'
 import { MediaImage } from '@/components/media/media-image'
 import { Link, NewTabHint } from '@/components/ui/link'
 import { cn } from '@/lib/cn'
@@ -177,16 +179,16 @@ export function EditorialTextSection({ section }: { section: SectionOf<'editoria
  * `c_fill` would move every marker off its garment. That is why there is no `mobileContext` here
  * either; the mobile coordinates re-position the markers on the *same* frame.
  *
- * ### What a hotspot is in Phase 10, and what it is not
+ * ### What a hotspot is, and what Phase 22 changed
  *
- * It is **a link to the product**, positioned over the photograph. Plan §22.1c's behaviour — tap to
- * open a product preview, "add the entire look" — belongs to **Phase 22**, and the preview needs a
- * PDP (Phase 13) and a cart (Phase 14) to be worth opening. A marker that opened an empty dialog
- * would be §0.1.17's fake control.
+ * Phase 10 rendered each marker as **an anchor to the product**, and recorded that §22.1c's preview
+ * belonged to Phase 22 because *"the preview needs a PDP (Phase 13) and a cart (Phase 14) to be worth
+ * opening. A marker that opened an empty dialog would be §0.1.17's fake control."* Both exist now.
  *
- * So each marker is an anchor with a real accessible name — the product's name and price, visually
- * hidden — which means the whole look is operable by keyboard today and reads correctly to a screen
- * reader, rather than being a decorative dot that only a mouse can use.
+ * **The anchor survived the upgrade.** `Hotspot` wraps the same `Link` in a `Popover.Trigger`, so
+ * with JavaScript a marker opens a preview and without it the anchor still navigates to the product
+ * page. §22.1c asks for the preview *and* for *"full PDP navigation"*, and the preview offers the
+ * page rather than replacing it.
  *
  * The markers are positioned with inline `style` because the coordinates are per-hotspot data, not
  * design tokens; Tailwind cannot express an arbitrary runtime percentage without generating a class
@@ -210,39 +212,15 @@ export function ShopTheLookSection({ section }: { section: SectionOf<'shopTheLoo
           />
 
           {section.hotspots.map((hotspot, index) => (
-            <Link
-              key={index}
-              href={hotspot.product.href}
-              variant="unstyled"
-              className={cn(
-                'absolute grid size-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full',
-                'left-[var(--x-mobile)] top-[var(--y-mobile)]',
-                'md:left-[var(--x)] md:top-[var(--y)]',
-                'transition-transform duration-(--duration-base) ease-entrance hover:scale-110',
-                hotspot.tone === 'dark'
-                  ? 'bg-canvas/80 text-foreground ring-1 ring-foreground/30'
-                  : 'bg-foreground/85 text-canvas ring-1 ring-canvas/20',
-              )}
-              style={
-                {
-                  '--x': `${hotspot.x}%`,
-                  '--y': `${hotspot.y}%`,
-                  '--x-mobile': `${hotspot.xMobile}%`,
-                  '--y-mobile': `${hotspot.yMobile}%`,
-                } as React.CSSProperties
-              }
-            >
-              {/* A plus, drawn rather than iconised — guide §06's "simple geometry, small footprint". */}
-              <span aria-hidden className="text-body-sm leading-none">
-                +
-              </span>
-
-              <span className="sr-only">
-                {hotspot.label ?? hotspot.product.name} — {hotspot.product.priceLabel}
-              </span>
-            </Link>
+            <Hotspot hotspot={hotspot} key={index} />
           ))}
         </div>
+
+        {/*
+          §22.1d. Only the products still on the image — the resolver has already dropped any hotspot
+          whose product failed to resolve, so this cannot offer to add something that is not shown.
+        */}
+        <AddEntireLook productIds={section.hotspots.map((hotspot) => hotspot.product.id)} />
       </PageContainer>
     </Section>
   )

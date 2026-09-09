@@ -6445,6 +6445,135 @@ reached payment.
   defensible half and is worth designing on its own.
 - **Structured data.** §29 wants review aggregates in the markup; the numbers now exist for it.
 
+## 1.27 Phase 22 — shop the look
+
+Plan §22.1a–§22.1d. **No dependency and no migration** — the third phase running, and this time not
+even a new component library: `radix-ui@1.6.7` already ships `@radix-ui/react-popover`, so the
+preview needed nothing installed.
+
+§22 is unusually thin. It names no route, no test list and no acceptance gate. What it names instead
+is a **sequence** — §22.1d's six numbered steps — and a prohibition repeated twice: *"do not guess
+sizes silently"*, *"never silently guess unavailable or missing variants."* That prohibition is the
+phase.
+
+### 1.27.1 Phase 6 had already built §22.1a, and Phase 10 had already built the marker
+
+`hotspotFields()` carries every field §22.1a names: a product reference, an optional label, an
+optional styling variant (`markerTone`, capped at two options so the CMS does not become a styling
+system), and four coordinates — desktop and mobile, as **percentages** of the rendered box.
+
+*"Do not hard-code hotspot coordinates in React"* was satisfied before this phase began.
+
+`ShopTheLookSection` had also existed since Phase 10, and its docblock had already named its own
+successor: *"a marker that opened an empty dialog would be §0.1.17's fake control"*, so the preview
+waited for a PDP and a cart. Both exist now, so Phase 22 is an **upgrade to a working component**
+rather than a new one — which is a materially different job, and the difference is what §1.27.2 is
+about.
+
+### 1.27.2 The naive upgrade would have broken the clause the plan did not have to state
+
+§22.1c asks for four things: open a preview, show image/name/price/variant state, allow add to bag,
+and **allow full PDP navigation**.
+
+The obvious implementation — turn the marker from an anchor into a button that opens a popover —
+satisfies the first three by breaking the fourth. It also breaks something §22.1c never mentions,
+because it had no reason to: Phase 10's marker *works without JavaScript*.
+
+So the trigger is still the anchor. `Popover.Trigger asChild` wraps the same `Link`, and the click
+handler prevents default. With JavaScript the preview opens; without it the anchor navigates to the
+product page exactly as it did before. The preview **offers** the PDP rather than replacing it, which
+is what the fourth clause asks for read literally.
+
+It also keeps the accessible name Phase 10 gave the marker — the product's name and price, visually
+hidden — rather than turning it into a dot only a mouse can use.
+
+### 1.27.3 A popover, not a dialog, and not the shell's overlay context
+
+`Popover`, because a preview is anchored to the thing that opened it and does not deserve a focus
+trap, a scrim or a scroll lock. A customer scanning a look opens one marker, glances, and moves to
+the next; the shell's three overlays are modal because they *replace* the page, and this augments it.
+
+The shell's `overlay-context` is deliberately not reached for, and the reason is worth recording
+because it looks like reuse. That context exists because the cart, menu and search panels are mounted
+beside the footer with **no trigger in their own subtree** — Radix focuses a null ref and drops focus
+to `document.body`, a WCAG 2.4.3 failure Phase 9 found by driving a browser. A hotspot's trigger sits
+next to its content, so Radix's own restoration is correct. Using the context would also enter a
+mutual-exclusion state machine that would close the customer's bag.
+
+Radix supplies `aria-haspopup`, `aria-expanded` and `aria-controls`, and keeps the last one in step
+with mounting. Phase 9 got that wrong by hand — an `aria-controls` pointing at an unmounted id is a
+real violation, and two clean axe sweeps had passed over markup missing `aria-haspopup` entirely,
+because axe treats it as an enhancement. None of it is hand-written here.
+
+### 1.27.4 The preview is fetched when it is opened
+
+A homepage can carry four shop-the-look blocks with eight markers each. Resolving thirty-two
+products' live stock on every render — for a section most visitors never touch — would be paid by
+everyone for the benefit of a few.
+
+So the marker stays cheap and the preview costs one round trip when asked for. The loading state
+renders the name and price the page already had rather than a spinner, because the marker's
+accessible name carried them: only the *variant state* has to wait.
+
+It also means the preview is resolved against stock as it is **now**, not as it was when the page
+rendered — which is why a product withdrawn since has its own state in the popover rather than an
+empty frame.
+
+### 1.27.5 §22.1d, and why the three outcomes are not a count
+
+The six steps are implemented in order, and step 3 is enforced by a **type** rather than by a rule
+somebody remembers: `planLookAddition` returns products needing a size in a bucket that carries **no
+variant to add**. A caller cannot add one by accident, because there is nothing there to add.
+
+*"One purchasable variant"* is the whole definition of unambiguous. A product with three sizes of
+which one is in stock is still added without asking — that is not a guess, it is the single available
+thing. What is forbidden is picking medium out of three in stock.
+
+Step 6 says *"report skipped unavailable items"*, and the notice separates the two reasons rather
+than counting them. **"Needs a size" is a ten-second fix; "not available" is a dead end.** *"2 items
+skipped"* is neither, and collapsing them turns an actionable outcome into a shrug.
+
+The count reported is what **actually landed**, not what was planned: `addToCart` re-checks live
+inventory, so a variant that sold out between the plan and the write is refused there.
+
+### 1.27.6 The route is Phase 23's, and the navigation is still broken
+
+`/lookbook` is in the navigation and **404s today**. It did before this phase and it does after.
+
+§22 names no route — it is the interaction system, and the four surfaces that carry hotspots
+(homepage block, collection page, edit page, lookbook chapter) all get the upgrade at once because
+they all render `ShopTheLookSection`. Plan §23 owns the lookbook *page*. Building it here would be
+building a later phase's feature early, which `AGENTS.md` forbids without qualification.
+
+Recorded so it is not mistaken for an oversight: **the nav link is broken until Phase 23**, and it is
+the next phase.
+
+### 1.27.7 What was verified, and how
+
+**Nothing was run.** The Neon password has been invalid since Phase 19's first sweep. See `TODO.md`.
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck` | passes |
+| `pnpm lint --max-warnings 0` | passes |
+| `pnpm build` | **blocked** |
+| `pnpm verify:lookbook` | **written, never run** — 20 checks |
+
+The harness asserts the prohibition, because §22 sets no tests of its own and a prohibition nothing
+tests is one that holds until somebody refactors: one variant resolves, two resolve to `null` rather
+than to the first, zero is not a default in disguise, and out-of-stock and inactive variants are not
+purchasable.
+
+### 1.27.8 What is now owed
+
+- **Run the harness.**
+- **A browser pass.** Hotspot alignment is the one thing in this phase that cannot be asserted from
+  source: it depends on the delivered image having the framing the editor placed the coordinates on.
+  The `editorial` context crops nothing, which is what makes it hold — but `reserveBox` falls back to
+  16:9 when a media record has no stored dimensions, and **that path is unguarded**. Worth a
+  deliberate look rather than discovering it on a live page.
+- **The lookbook route** — Phase 23.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -8257,6 +8386,38 @@ The column stays. When the upload path exists, the form gains a control and noth
 *Affects Phases 8 and 21. To be discharged when a private upload path is designed.*
 
 
+---
+
+### DEV-72 — The hotspot trigger stays an anchor
+
+**Plan §22.1c says:** *"Click hotspot: open product preview… allow add to bag. Allow full PDP
+navigation."*
+
+**We do:** wrap Phase 10's existing product link in `Popover.Trigger asChild` and prevent its default,
+rather than replacing it with a button.
+
+**Why:** the obvious implementation satisfies three of §22.1c's four clauses and breaks the fourth. A
+button that opens a preview has no PDP navigation of its own — the preview must then carry it, which
+it does, but the *marker* has stopped being a link at all.
+
+It also breaks something §22.1c never mentions, because it had no reason to. Phase 10's marker works
+with no JavaScript: it is an anchor with a real accessible name, and the whole look is operable and
+readable before a single byte of the bundle arrives. A button is inert until hydration.
+
+Keeping the anchor gives both. With JavaScript the click is prevented and the preview opens; without
+it the anchor navigates. That is the same reasoning that makes `AddToBag` a real `<form>` with hidden
+inputs rather than a click handler, and the same reasoning that made the guest wishlist heart
+*not* a form in Phase 20 — the question each time is what the control does when the script does not
+run, and the answer has to be something rather than nothing.
+
+**The cost, named:** an anchor carrying `aria-haspopup="dialog"` is unusual, and a customer using a
+screen reader is told it opens a dialog while the element is semantically a link. The alternative was
+a control that does nothing without JavaScript, which is worse — and the link's destination *is* what
+the popover offers, so the announcement is not a lie about where it goes.
+
+*Affects Phases 10 and 22.*
+
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -8305,4 +8466,5 @@ The column stays. When the upload path exists, the form gains a control and noth
 | Phase 19 — email / Resend | 2026-09-09 | Notes **§1.24**. Three dependencies at their pins — `resend@6.22.0`, `@react-email/components@1.0.12`, `react-email@6.9.2` (dev) — and one migration: `email_messages` with a **unique** `dedupe_key`. §19.1a's *"do not call Resend directly from random components"* is structural: `resend` appears in exactly one import, and everything above it deals in a `Transport` function, which is why the one integration nobody has credentials for has 85 passing checks and needs no API key. **§19.1c is a constraint, not a check** — the insert *is* the duplicate test, the Phase 17 mechanism reused. The key names **the thing that happened, never the message that reported it**: an event id would double-send, because Stripe sends two events for one payment, and would miss the shipped notice entirely, which has no event at all. Two duplicate shapes had to be handled — Payload validates uniqueness *before* inserting, so a sequential retry arrives as a `ValidationError`, while a genuine race passes that read-then-write twice and the database refuses the second with 23505; matching only the first would have logged a fault every time the barrier worked. **The queue exists because Payload 3 has no post-commit collection hook** — `afterChange` and `afterOperation` both run before `commitTransaction`, measured in `node_modules`, so a dispatch email sent there would announce a dispatch that could still roll back; intent is written inside the transaction and delivery happens outside. §19.1d is absolute: nothing in the service throws, because the webhook turns a throw into a 500 and Stripe's retry is then refused by the unique event id **without reprocessing** — one thrown mail error would lose a customer's confirmation permanently. The dev safeguard gates the **destination, not the credential**, because Resend has no test-mode key: outside production only `EMAIL_DEV_ALLOWLIST` is deliverable and an empty list delivers to nobody. **The `server-only` lesson arrived a fourth time, inverted** — the guard was correctly on the module holding the key and still had to come off, because `payload.config.ts` now imports the service and the CLI loads it outside Next; `catalog/algolia.ts` had already recorded the answer, and the rule gains a second half: never on a module the CLI has to load. Deviations **DEV-65** (the plan's eight templates, not the features doc's ten, with the *order cancelled* case argued rather than dropped), **DEV-66** (verification and contact confirmation written, tested and unwired — neither has a caller), **DEV-67** (no scheduled drain). **DEV-64 discharged.** New scripts `pnpm verify:email`, `pnpm email:drain`, `pnpm email:preview`; `logEmailAdapter` removed and replaced. Every other harness re-run unchanged; typecheck, lint `--max-warnings 0` and build all pass. |
 | Phase 20 — wishlist, account, recently viewed | 2026-09-09 | Notes **§1.25**. **No dependency and no migration**: `WishlistItems` was built to §6.1m in Phase 6 and already carried the compound unique index on `(customer, product)` with both columns required — so §20.1b's *"existing customer wishlist wins duplicates"* was already enforced by Postgres rather than by whichever code path ran first, the same mechanism as Phase 19's `dedupeKey` and Phase 17's event id. **The guest merge could not copy the cart's** (**DEV-68**): a guest cart is a database row named by a cookie, a guest wishlist is `localStorage`, and no server action can read a browser's storage — so the merge is client-initiated, has no parameter for whose list it is, validates every id against the published catalogue, is capped on the way in, and clears the device copy only on success. **`ProductCard` had to be restructured**: it was one `<Link>` around everything, and a heart in the obvious place would have put a `<button>` inside an `<a>` — invalid HTML that browsers recover from inconsistently, leaving the control unreachable by keyboard. It is now a wrapper, a link, and the control as its **sibling**, which is §11.1c's *"click wishlist → prevent card navigation"* solved structurally rather than with `stopPropagation`. The heart is **opt-in per call site**, because two of the five places the card renders are inside the bag drawer where each card sits in an `<li onClick={close}>`. One control, two mechanisms, and the customer is told which — a guest sees *"saved on this device"*, and the signed-out branch is deliberately not a form because there is no server for it to post to. Recently-viewed renders **nothing on the server**: its server snapshot is the empty list so hydration cannot flicker, and *"do not store sensitive personal information"* holds by construction because the parser can only represent a positive integer. `createLocalList` factors the `useSyncExternalStore` pattern out of `search-panel.tsx`, now that it is needed three times. The lint rule earned its keep: the rail's first version cleared its own state inside an effect and `react-hooks/set-state-in-effect` refused it, so the empty case is derived at render. Account: five navigable routes plus `[order]`, guard still per-page, and **the order route takes the order number rather than the database id** — an id is a running count of every order the shop has taken. A cross-account request is **not found, never forbidden**, because a 403 would confirm which order numbers are real. `/account/addresses` can add and remove because checkout snapshots onto the order and never writes to `addresses`, so a read-only screen would have been a page that looks like a feature and cannot do anything. **DEV-45 discharged.** New harness `pnpm verify:account` — 40 checks covering the two things the phase prompt names by title, cross-account access prevention and merge behaviour. **It has never been run**: the Neon password died during Phase 19's sweep, so `pnpm build` and all fifteen harnesses are blocked and only typecheck and lint could be gated. Recorded in `TODO.md` and in §1.25.8 rather than glossed. |
 | Phase 21 — reviews | 2026-09-09 | Notes **§1.26**. **No dependency and no migration** — `Reviews` was built to §6.1j in Phase 6 with every field, every bound, and the compound unique index on `(product, customer)` whose `customer` column was made **required** precisely so the index would bite, since Postgres treats NULLs as distinct. **The corpus disagrees with itself twice** and `AGENTS.md`'s precedence settled both (**DEV-69**): a purchase is a **badge, not a gate**, because the plan hedges twice while the matrix implies a gate — and a shop that only accepts reviews from buyers has none on a new product, which is when a customer most wants one; and the bar is **paid**, not the matrix's *"not delivered yet"*, with a refunded order still verifying because the customer did buy it. **Three things the browser cannot decide, each closed differently**: `status` defaults to pending *and* the field is staff-only, so a review lands pending through any door; `verifiedPurchase` is staff-only and set from an order lookup, because a badge the submitter can assert is not a badge; `customer` is *forced* by `enforceCustomerOwnership`, since `create: isActiveCustomer` alone would accept `POST /api/reviews` with somebody else's id. **The duplicate is caught by the index, not before it** — the newsletter action had already recorded that read-then-create is both a concurrency bug and a measurable timing oracle. §13.1f's *"do not show an empty star histogram"* is honoured literally: five bars at zero reads as five one-star reviews, so an unreviewed product gets one sentence and no chart, and the average is **`null`, never `0`** — the same distinction `lib/money.ts` makes for a price. Aggregates are computed from the same rows that render, because two queries can disagree and the failure is a page claiming forty-one reviews above a list of forty. Three deviations: **DEV-69** (badge not gate), **DEV-70** (no profanity filter — a word list publishes what it misses and rejects what it misreads, and a person already reads every review), **DEV-71** (no review photos — `media.create` is staff-only and **D-28** says media bytes are public the moment they are uploaded, so an unmoderated review photo would be fetchable before anyone saw it; the column stays, the upload path is a design question). Rate limiting is Phase 26's Turnstile and is recorded as owed without overclaiming. New harness `pnpm verify:reviews` — 30 checks covering the two tests the prompt names by title plus §21.1a's paid-order match and the cases that must NOT verify. **Never run**: the Neon password has been invalid since Phase 19's sweep, so only typecheck and lint could be gated. See `TODO.md`. |
+| Phase 22 — shop the look | 2026-09-09 | Notes **§1.27**. **No dependency, no migration, and no new component library** — `radix-ui@1.6.7` already ships `@radix-ui/react-popover`. §22 is unusually thin: no route, no test list, no acceptance gate. What it names is §22.1d's six numbered steps and a prohibition repeated twice — *"do not guess sizes silently"*, *"never silently guess unavailable or missing variants"* — and that prohibition is the phase. Phase 6 had already built §22.1a's fields (four coordinates as **percentages**, so *"do not hard-code hotspot coordinates in React"* was satisfied before this phase began) and Phase 10 had already shipped the marker, having named its own successor: *"a marker that opened an empty dialog would be §0.1.17's fake control."* **The naive upgrade would have broken the clause the plan did not have to state** (**DEV-72**): turning the marker into a button satisfies three of §22.1c's four clauses and breaks *"allow full PDP navigation"* — and breaks something §22.1c never mentions, because Phase 10's marker works with **no JavaScript**. So the trigger is still the anchor, wrapped in `Popover.Trigger asChild` with its default prevented: with JS the preview opens, without it the anchor navigates, and the preview **offers** the product page rather than replacing it. A **Popover, not a Dialog** — a preview is anchored to what opened it and does not deserve a focus trap, a scrim or a scroll lock; and the shell's `overlay-context` is deliberately not reused, because it exists for overlays with **no trigger in their own subtree** and would also enter a mutual-exclusion machine that closes the bag. Radix supplies the ARIA Phase 9 once got wrong by hand. **The preview is fetched when opened**, not when rendered: four blocks × eight markers would be thirty-two stock queries paid by everyone for a section most visitors never touch — and it means availability is resolved as it is *now*. §22.1d's step 3 is enforced by a **type**: products needing a size come back in a bucket carrying no variant to add, so a caller cannot guess by accident. One purchasable variant is not a guess (it is the single available thing); picking medium out of three in stock is. Step 6's report **separates the two reasons** — *"needs a size"* is a ten-second fix and *"not available"* is a dead end, and *"2 items skipped"* is neither. The count reported is what actually landed, since `addToCart` re-checks live stock. **`/lookbook` still 404s** and that is deliberate: §22 names no route, the page is Phase 23's, and building it here would be building a later phase early. New harness `pnpm verify:lookbook` — 20 checks asserting the prohibition, because §22 sets no tests of its own. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass on hotspot alignment, where `reserveBox`'s unguarded 16:9 fallback for a media record with no stored dimensions is the one path that could silently drift every marker. |
 > **Append this table, and the sections above it, at the end of every phase.**
