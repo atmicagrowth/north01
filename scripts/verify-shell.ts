@@ -28,6 +28,9 @@
  * try/catch and no rules, which is why every rule is somewhere this script can reach.
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
+
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
@@ -535,9 +538,134 @@ check(
  * F — the degraded shell
  * ---------------------------------------------------------------------------------------------- */
 
+/**
+ * **Every page the app can render, read from the route tree itself.**
+ *
+ * Phase 30 found two 404s in the fallback header — `/about`, which no phase builds, and `/new`, which
+ * the live navigation has never used (it sends NEW to `/shop?sort=newest`). Neither was visible,
+ * because the fallback only renders when the CMS read has failed, and this harness asserted the
+ * *count* of links rather than whether any of them went anywhere.
+ *
+ * So a link is checked against what exists, derived from `src/app` on every run, rather than against
+ * a list somebody has to remember to update. Each pattern is a list of segments: a literal, `*` for
+ * one dynamic segment, `**` for a catch-all and `**?` for an optional one. Route groups, private
+ * folders and parallel slots are not in the URL, so they are not in the pattern.
+ */
+function pagePatterns(): string[][] {
+  const out: string[][] = []
+
+  const walk = (dir: string, segments: string[]) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const name = entry.name
+
+      if (entry.isDirectory()) {
+        const invisible =
+          (name.startsWith('(') && name.endsWith(')')) || name.startsWith('_') || name.startsWith('@')
+
+        walk(path.join(dir, name), invisible ? segments : [...segments, name])
+      } else if (name === 'page.tsx' || name === 'page.ts') {
+        out.push(
+          segments.map((segment) =>
+            segment.startsWith('[[...')
+              ? '**?'
+              : segment.startsWith('[...')
+                ? '**'
+                : segment.startsWith('[')
+                  ? '*'
+                  : segment,
+          ),
+        )
+      }
+    }
+  }
+
+  walk(path.join(process.cwd(), 'src', 'app'), [])
+
+  return out
+}
+
+const PAGE_PATTERNS = pagePatterns()
+
+/**
+ * Every `href` anywhere in a resolved navigation — primary items, mega-menu columns, feature panels,
+ * the footer. Walked rather than enumerated, so a new place a link can live is covered the day it is
+ * added instead of the day somebody remembers this harness.
+ */
+function allHrefs(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(allHrefs)
+  if (value === null || typeof value !== 'object') return []
+
+  return Object.entries(value).flatMap(([key, inner]) =>
+    key === 'href' && typeof inner === 'string' ? [inner] : allHrefs(inner),
+  )
+}
+
+/** Whether an internal href lands on a page. The query and fragment are not part of the route. */
+function isRenderedPage(href: string): boolean {
+  const segments = (href.split(/[?#]/)[0] ?? '').split('/').filter(Boolean)
+
+  return PAGE_PATTERNS.some((pattern) => {
+    for (let index = 0; index < pattern.length; index++) {
+      const part = pattern[index]
+
+      if (part === '**?') return true
+      if (part === '**') return segments.length > index
+      if (index >= segments.length) return false
+      if (part !== '*' && part !== segments[index]) return false
+    }
+
+    return pattern.length === segments.length
+  })
+}
+
+/*
+ * The negative control comes first. A matcher that answered `true` for everything would make the
+ * two checks below pass vacuously, which is the exact failure this section exists to end.
+ */
 check(
-  'fallback: six primary destinations, including NEW (DEV-07)',
-  FALLBACK_NAVIGATION.primary.length === 6 && FALLBACK_NAVIGATION.primary[0]?.label === 'New',
+  'route tree: the matcher tells a real page from a missing one',
+  PAGE_PATTERNS.length > 10 &&
+    isRenderedPage('/') &&
+    isRenderedPage('/shop?sort=newest') &&
+    isRenderedPage('/product/any-slug') &&
+    !isRenderedPage('/about') &&
+    !isRenderedPage('/new') &&
+    !isRenderedPage('/product'),
+  `${PAGE_PATTERNS.length} page(s) in the tree`,
+)
+
+/*
+ * **Five, and NEW first — DEV-07 as amended in Phase 30.** This read `=== 6`. The sixth was ABOUT,
+ * withdrawn in Phase 30 because `/about` has no route and no phase that claims one. The assertion is
+ * amended rather than deleted, so that bringing ABOUT back is a deliberate act with a page behind it.
+ */
+check(
+  'fallback: five primary destinations, NEW first, and no ABOUT (DEV-07, amended in Phase 30)',
+  FALLBACK_NAVIGATION.primary.length === 5 &&
+    FALLBACK_NAVIGATION.primary[0]?.label === 'New' &&
+    !FALLBACK_NAVIGATION.primary.some((item) => item.label === 'About'),
+)
+
+const deadFallback = [
+  ...FALLBACK_NAVIGATION.primary.map((item) => item.href),
+  ...FALLBACK_NAVIGATION.footer.flatMap((column) => column.links.map((entry) => entry.href)),
+].filter((href) => !isRenderedPage(href))
+
+check(
+  'fallback: every href is a page the app renders — resolved against the route tree',
+  deadFallback.length === 0,
+  deadFallback.join(', '),
+)
+
+const deadUtility = Object.values(utilityNav)
+  .map((entry) => (entry as { href?: unknown }).href)
+  .filter((href): href is string => typeof href === 'string')
+  .filter((href) => !isRenderedPage(href))
+
+check(
+  'utilities: every href is a page the app renders — resolved against the route tree',
+  deadUtility.length === 0,
+  deadUtility.join(', '),
 )
 check(
   'fallback: no mega menu, no featured panel — structure, never merchandising',
@@ -606,6 +734,22 @@ try {
   check(
     'live: every rendered primary item has a real href',
     navigation.primary.every((item) => item.href.startsWith('/') || isExternalHref(item.href)),
+  )
+
+  /*
+   * "A real href" above means *well-formed*. This is the stronger question — does it go anywhere —
+   * and it is the one Phase 30 had to answer with a browser, finding four navigation links that 404'd
+   * on every page of the shop.
+   */
+  const liveInternal = allHrefs(navigation).filter(
+    (href) => href.startsWith('/') && !isExternalHref(href),
+  )
+  const deadLive = liveInternal.filter((href) => !isRenderedPage(href))
+
+  check(
+    'live: every internal href in the navigation is a page the app renders — resolved against the route tree',
+    liveInternal.length > 0 && deadLive.length === 0,
+    deadLive.length > 0 ? deadLive.join(', ') : `${liveInternal.length} href(s) checked`,
   )
   check(
     'live: every mega-menu column that survived has at least one link',

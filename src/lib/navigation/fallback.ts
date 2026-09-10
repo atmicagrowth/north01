@@ -10,13 +10,20 @@ import type { ShellNavigation } from '@/lib/navigation/resolve'
  *
  * ### What is in here, and what is deliberately not
  *
- * **Structure, not merchandising.** The six primary destinations (**DEV-07**: six, including NEW)
- * and the structural footer columns are facts about this site's information architecture, fixed by
- * structure document §2 and §20 and not by an editor. Reproducing them is not inventing content.
+ * **Structure, not merchandising.** The primary destinations (**DEV-07**, which named six including
+ * NEW) and the structural footer columns are facts about this site's information architecture, fixed
+ * by structure document §2 and §20 and not by an editor. Reproducing them is not inventing content.
  *
+ * **Five, not six, since Phase 30.** DEV-07's sixth was ABOUT, and `/about` is a route no phase
+ * builds — so it was a 404 in the one header that renders when everything else has already gone
+ * wrong. And NEW pointed at `/new`, which was *also* a 404: the live navigation has always sent it to
+ * `/shop?sort=newest` (see `scripts/seed.ts`), and this copy invented a route instead of repeating
+ * that one. Neither was visible, because this list renders only when the CMS read fails — which is
+ * why `verify:shell` now resolves every href here against the route tree rather than trusting it.
+  *
  * **No mega menu, no featured panel, no social links.** Those *are* merchandising — a column of
  * categories or a campaign image is a choice someone made in the CMS — and fabricating them would
- * put words in an editor's mouth. When the database is unreachable the header degrades to six plain
+ * put words in an editor's mouth. When the database is unreachable the header degrades to five plain
  * links, which is a quieter header, not a wrong one.
  *
  * **No Journal in the primary set** — C-07, the structure document's own Simplicity rule. It is in
@@ -29,7 +36,7 @@ import type { ShellNavigation } from '@/lib/navigation/resolve'
  */
 export const FALLBACK_NAVIGATION: ShellNavigation = {
   primary: [
-    { label: 'New', href: '/new', external: false, columns: [], feature: null },
+    { label: 'New', href: '/shop?sort=newest', external: false, columns: [], feature: null },
     { label: 'Shop', href: '/shop', external: false, columns: [], feature: null },
     { label: 'Collections', href: '/collections', external: false, columns: [], feature: null },
     { label: 'Edit', href: '/edit', external: false, columns: [], feature: null },
@@ -39,7 +46,7 @@ export const FALLBACK_NAVIGATION: ShellNavigation = {
     {
       heading: 'Shop',
       links: [
-        { label: 'New', href: '/new', external: false },
+        { label: 'New', href: '/shop?sort=newest', external: false },
         { label: 'Shop All', href: '/shop', external: false },
         { label: 'Collections', href: '/collections', external: false },
         { label: 'Edit', href: '/edit', external: false },

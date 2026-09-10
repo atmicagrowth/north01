@@ -6,7 +6,7 @@ import { Section } from '@/components/layout/section'
 import { MediaImage } from '@/components/media/media-image'
 import { Link } from '@/components/ui/link'
 import { getLookbookIndex } from '@/lib/editorial/read'
-import { HOME_IMAGE_SIZES } from '@/lib/home/sizes'
+import { EDITORIAL_GRID_TWO_UP } from '@/lib/media/grid'
 
 export const metadata: Metadata = { title: 'Lookbook' }
 
@@ -57,7 +57,7 @@ export default async function LookbookIndexPage() {
                       context="editorial"
                       imageClassName="transition-opacity duration-(--duration-base) ease-editorial group-hover:opacity-85"
                       media={lookbook.coverImage}
-                      sizes={HOME_IMAGE_SIZES.figureContained}
+                      sizes={EDITORIAL_GRID_TWO_UP}
                     />
                   ) : null}
 

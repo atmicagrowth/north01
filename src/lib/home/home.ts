@@ -144,6 +144,8 @@ const loadHome = unstable_cache(
             .find({
               collection: 'products',
               depth: RAIL_DEPTH,
+              // Neither join field is read — see `PRODUCT_CARD_POPULATE` in `lib/catalog/resolve.ts`.
+              joins: false,
               limit,
               pagination: false,
               sort: ['sortOrder', '-publishedAt'],

@@ -8,7 +8,7 @@ import type { Collection, Edit, Journal, Lookbook, Media } from '@/payload-types
 
 import { getCatalogSettings } from '@/lib/catalog/catalog'
 import { publishedProductWhere } from '@/lib/catalog/query'
-import { resolveProductCards } from '@/lib/catalog/resolve'
+import { PRODUCT_CARD_POPULATE, resolveProductCards } from '@/lib/catalog/resolve'
 import { getPayloadClient } from '@/lib/payload'
 import { documentSeo, type DocumentSeo } from '@/lib/seo/document'
 import { resolveEditorialBody } from './resolve'
@@ -82,6 +82,8 @@ export async function readProductCards(ids: readonly number[]): Promise<ProductC
   const { docs } = await payload.find({
     collection: 'products',
     depth: 1,
+    // Neither join field is read — see `PRODUCT_CARD_POPULATE` in `lib/catalog/resolve.ts`.
+    joins: false,
     limit: wanted.length,
     ...STOREFRONT_ACCESS,
     where: { and: [...publishedProductWhere(new Date().toISOString()), { id: { in: wanted } }] },
@@ -126,6 +128,12 @@ export const getCollectionPage = cache(async (slug: string): Promise<CollectionV
     collection: 'collections',
     depth: 2,
     limit: 1,
+    /*
+     * Products arrive here populated — through the list, a block, or a hotspot — and a card reads
+     * six of their fields. Without this each one also carries both of its joins; see
+     * `PRODUCT_CARD_POPULATE`.
+     */
+    populate: { products: PRODUCT_CARD_POPULATE },
     ...STOREFRONT_ACCESS,
     where: { slug: { equals: slug } },
   })
@@ -194,6 +202,12 @@ export const getEditPage = cache(async (slug: string): Promise<EditView | null> 
     collection: 'edits',
     depth: 2,
     limit: 1,
+    /*
+     * Products arrive here populated — through the list, a block, or a hotspot — and a card reads
+     * six of their fields. Without this each one also carries both of its joins; see
+     * `PRODUCT_CARD_POPULATE`.
+     */
+    populate: { products: PRODUCT_CARD_POPULATE },
     ...STOREFRONT_ACCESS,
     where: { slug: { equals: slug } },
   })
@@ -210,13 +224,26 @@ export const getEditPage = cache(async (slug: string): Promise<EditView | null> 
    * answer the first, the intro the second, the captioned product groups the third, and every group
    * is itself a way to shop, which is the fourth.
    *
-   * The groups are resolved in series rather than in parallel: they are few, and each one's product
-   * query is bounded by its own list.
+   * **One query for every group, not one per group.** These were resolved in series, with a comment
+   * reasoning that groups are few — true, and on a database a round trip away it is also the whole
+   * cost: each group was a full query waiting on the one before it, and `/edit/cold` spent 1.45s
+   * before its first byte. The union goes out once and each group takes its own products back out
+   * of it, in its own curated order.
+   *
+   * Nothing about the rules changes. `readProductCards` still applies `publishedProductWhere` to
+   * every id, so a withdrawn product is absent from whichever groups named it, and each group's list
+   * is de-duplicated exactly as the per-group call de-duplicated it.
    */
+  const productGroups = edit.productGroups ?? []
+  const cards = await readProductCards(productGroups.flatMap((group) => relatedIds(group.products)))
+  const cardsById = new Map(cards.map((card) => [card.id, card]))
+
   const groups: EditView['groups'] = []
 
-  for (const group of edit.productGroups ?? []) {
-    const products = await readProductCards(relatedIds(group.products))
+  for (const group of productGroups) {
+    const products = [...new Set(relatedIds(group.products))]
+      .map((id) => cardsById.get(id))
+      .filter((card): card is ProductCard => card !== undefined)
 
     /* A captioned set with nothing left in it is a caption. The prompt's "empty product
      * relationships", answered by omission rather than by an empty row. */
@@ -273,6 +300,12 @@ export const getLookbook = cache(async (slug: string): Promise<LookbookView | nu
     collection: 'lookbooks',
     depth: 2,
     limit: 1,
+    /*
+     * Products arrive here populated — through the list, a block, or a hotspot — and a card reads
+     * six of their fields. Without this each one also carries both of its joins; see
+     * `PRODUCT_CARD_POPULATE`.
+     */
+    populate: { products: PRODUCT_CARD_POPULATE },
     ...STOREFRONT_ACCESS,
     where: { slug: { equals: slug } },
   })
@@ -414,6 +447,12 @@ export const getJournalArticle = cache(async (slug: string): Promise<JournalView
     collection: 'journal',
     depth: 2,
     limit: 1,
+    /*
+     * Products arrive here populated — through the list, a block, or a hotspot — and a card reads
+     * six of their fields. Without this each one also carries both of its joins; see
+     * `PRODUCT_CARD_POPULATE`.
+     */
+    populate: { products: PRODUCT_CARD_POPULATE },
     ...STOREFRONT_ACCESS,
     where: { slug: { equals: slug } },
   })

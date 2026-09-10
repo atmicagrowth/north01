@@ -5,7 +5,7 @@ import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
 import { Link } from '@/components/ui/link'
-import { HOME_IMAGE_SIZES } from '@/lib/home/sizes'
+import { EDITORIAL_GRID_TWO_UP } from '@/lib/media/grid'
 
 /**
  * **The index page `/collections` and `/edit` both needed, and neither had.**
@@ -58,7 +58,7 @@ export function EditorialIndex({
                       context="editorial"
                       imageClassName="transition-opacity duration-(--duration-base) ease-editorial group-hover:opacity-85"
                       media={entry.heroImage}
-                      sizes={HOME_IMAGE_SIZES.figureContained}
+                      sizes={EDITORIAL_GRID_TWO_UP}
                     />
                   ) : null}
 

@@ -253,6 +253,37 @@ export function resolveProductCard(
   }
 }
 
+/**
+ * **Every product field a card or a tile reads — and nothing else.** Pass it as
+ * `populate: { products: PRODUCT_CARD_POPULATE }` on any read whose products arrive *populated*
+ * through a relationship rather than queried directly.
+ *
+ * Phase 30 measured why it exists. A product carries two `join` fields — `variants` and
+ * `collections` — and Payload populates both on every product it populates, at whatever depth is
+ * left. A collection page read at `depth: 2` therefore fetched nine products **with ten variants
+ * each**, every variant's image, and each product's collection back-references, then handed them to
+ * `resolveProductCards`, which reads six fields. `joins: false` on the outer query does not reach
+ * the nested products; this does. Measured against the development branch: 890ms to 675ms on a
+ * collection, 900 to 720 on a journal article, 480 to 380 on an edit.
+ *
+ * The list is the union of what `resolveProductCards` (above) and `resolveProductTile`
+ * (`lib/home/resolve.ts`) read. Add to it when either starts reading a new field — a field missing
+ * here arrives `undefined`, and a card treats `undefined` as *unknown*, so the failure is a card that
+ * quietly says less rather than one that errors.
+ *
+ * Direct reads use `joins: false` instead, for the same reason and with the same measurement behind
+ * it: no storefront code reads either join field. The product page reads its variants with an
+ * explicit, exhaustive query, and a card reads `derived`.
+ */
+export const PRODUCT_CARD_POPULATE = {
+  derived: true,
+  gallery: true,
+  isLimitedEdition: true,
+  isNew: true,
+  name: true,
+  slug: true,
+} as const
+
 export const resolveProductCards = (
   values: readonly unknown[] | null | undefined,
   currency: CurrencyCode,

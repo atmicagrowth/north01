@@ -38,8 +38,18 @@ import { buildVariantMatrix, type SelectableVariant, type VariantMatrix } from '
 
 const STOREFRONT_ACCESS = { overrideAccess: false, user: null } as const
 
-/** Two hops: `gallery[].image` and `variants[].image` are the only relationships the page renders. */
-const PRODUCT_DEPTH = 2
+/**
+ * One hop. `gallery[].image`, `video`, `sizeGuide`, `categories` and `seo.image` are the
+ * relationships the page renders, and every one of them is a direct relationship of the product.
+ *
+ * This was `2`, with a comment naming `variants[].image` as the second hop — but the variants are not
+ * read through the product at all; `readVariants` queries them. What the second hop actually bought
+ * was the `variants` **join** populated ten rows deep with every image, and the `collections` join,
+ * all discarded. Phase 30 measured the product read at **770ms at depth 2 and 380ms at depth 1** with
+ * joins off, against a round-trip floor of about 80ms, and the rendered page byte-identical either
+ * way.
+ */
+const PRODUCT_DEPTH = 1
 
 /**
  * Every size of every colour.
@@ -88,13 +98,19 @@ export type ProductRecord = Omit<ProductView, 'matrix'>
  * the only part that depends on the selection — is built on top of the memoised result.
  */
 export const getProductRecord = cache(async (slug: string): Promise<ProductRecord | null> => {
-  const payload = await getPayloadClient()
-  const settings = await getCatalogSettings()
   const now = new Date().toISOString()
+
+  /*
+   * The settings are needed only by the recommendations, and the product read needs nothing from
+   * them — so the two go out together rather than one after the other.
+   */
+  const [payload, settings] = await Promise.all([getPayloadClient(), getCatalogSettings()])
 
   const { docs } = await payload.find({
     collection: 'products',
     depth: PRODUCT_DEPTH,
+    // Neither join field is read here — see `PRODUCT_CARD_POPULATE` in `lib/catalog/resolve.ts`.
+    joins: false,
     limit: 1,
     ...STOREFRONT_ACCESS,
     where: { and: [...publishedProductWhere(now), { slug: { equals: slug } }] },
@@ -106,13 +122,24 @@ export const getProductRecord = cache(async (slug: string): Promise<ProductRecor
     return null
   }
 
+  /*
+   * **Concurrently.** These were two `await`s inside the object literal, which JavaScript evaluates
+   * in order — so the variants query did not start until the recommendations had finished, and
+   * neither depends on the other. On a remote database that is one full round trip and a query's
+   * worth of population added to every product page for nothing.
+   */
+  const [recommendations, variants] = await Promise.all([
+    readRecommendations(payload, product, settings, now),
+    readVariants(payload, product.id),
+  ])
+
   return {
     product,
-    recommendations: await readRecommendations(payload, product, settings, now),
+    recommendations,
     settings,
     sizeGuide:
       typeof product.sizeGuide === 'object' && product.sizeGuide ? product.sizeGuide : null,
-    variants: await readVariants(payload, product.id),
+    variants,
   }
 })
 
@@ -209,6 +236,7 @@ async function readRecommendations(
     const { docs } = await payload.find({
       collection: 'products',
       depth: 1,
+      joins: false,
       limit: 4,
       sort: ['sortOrder', '-publishedAt', 'slug'],
       ...STOREFRONT_ACCESS,

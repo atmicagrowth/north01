@@ -410,6 +410,8 @@ async function runPostgres(
   const result = await payload.find({
     collection: 'products',
     depth: CARD_DEPTH,
+    // Neither join field is read — see `PRODUCT_CARD_POPULATE` in `lib/catalog/resolve.ts`.
+    joins: false,
     limit: CATALOG_PAGE_SIZE,
     page: query.page,
     sort: CATALOG_SORT_FIELDS[query.sort],
@@ -460,6 +462,7 @@ async function rehydrateProductIds(
   const result = await payload.find({
     collection: 'products',
     depth: CARD_DEPTH,
+    joins: false,
     limit: ids.length,
     pagination: false,
     ...STOREFRONT_ACCESS,
@@ -826,6 +829,7 @@ export const getCuratedProducts = cache(async (limit = 4): Promise<ProductCard[]
       const result = await payload.find({
         collection: 'products',
         depth: CARD_DEPTH,
+        joins: false,
         limit,
         sort: ['sortOrder', '-publishedAt', 'slug'],
         ...STOREFRONT_ACCESS,

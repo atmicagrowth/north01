@@ -100,7 +100,16 @@ export default async function ProductDetailPage({
 }) {
   const [{ slug }, selection] = await Promise.all([params, loadProductParams(searchParams)])
 
-  const view = await getProduct(slug, selection)
+  /*
+   * The customer and the product are independent reads, and on a remote database each is a round
+   * trip — so they go out together. `getCustomer` for a guest is a cookie check and costs nothing;
+   * for a signed-in customer it was a whole query waiting on the product for no reason.
+   */
+  const [view, customer, payload] = await Promise.all([
+    getProduct(slug, selection),
+    getCustomer(),
+    getPayloadClient(),
+  ])
 
   if (!view) {
     notFound()
@@ -114,9 +123,6 @@ export default async function ProductDetailPage({
    * and only when somebody is signed in — a guest's list lives on their device and the control reads
    * it there.
    */
-  const customer = await getCustomer()
-  const payload = await getPayloadClient()
-
   const savedForCustomer =
     customer !== null &&
     (await readWishlistProductIds(payload, customer.id)).includes(view.product.id)

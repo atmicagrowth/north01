@@ -100,9 +100,20 @@ export function ProductGallery({
         role="group"
         tabIndex={0}
       >
+        {/*
+          `relative` is load-bearing and invisible. `sr-only` is `position: absolute`, so without a
+          positioned ancestor its containing block is the *initial* one — the document — and an
+          absolutely positioned box is **not clipped by an `overflow-x: auto` ancestor that is not
+          its containing block**. Both spans below therefore escaped their scrollers and extended
+          `documentElement.scrollWidth`, giving the product page a horizontal scrollbar at 320, 375,
+          430 and 768px: measured 448px of scroll width in a 320px viewport, from two 1px spans.
+
+          Scoping the containing block to the button puts them back inside the scroller, which does
+          clip them. Nothing moves; the page simply stops being 128px wider than the phone.
+        */}
         {shown.map((frame, index) => (
           <button
-            className="w-full shrink-0 snap-start lg:cursor-zoom-in"
+            className="relative w-full shrink-0 snap-start lg:cursor-zoom-in"
             key={frame?.id ?? index}
             onClick={() => {
               openedFrom.current = index
@@ -154,7 +165,7 @@ export function ProductGallery({
             <button
               aria-checked={index === active}
               className={cn(
-                'w-16 shrink-0 border transition-colors duration-(--duration-fast)',
+                'relative w-16 shrink-0 border transition-colors duration-(--duration-fast)',
                 index === active
                   ? 'border-border-strong'
                   : 'border-transparent hover:border-border',

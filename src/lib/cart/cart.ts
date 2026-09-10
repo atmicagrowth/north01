@@ -632,6 +632,8 @@ async function readCartRecommendations(
     const { docs } = await payload.find({
       collection: 'products',
       depth: 1,
+      // Neither join field is read — see `PRODUCT_CARD_POPULATE` in `lib/catalog/resolve.ts`.
+      joins: false,
       limit: 4,
       overrideAccess: true,
       sort: ['sortOrder', '-publishedAt', 'slug'],

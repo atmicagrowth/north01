@@ -46,6 +46,8 @@ export async function readRecentlyViewedCards(
   const { docs } = await payload.find({
     collection: 'products',
     depth: 1,
+    // Neither join field is read — see `PRODUCT_CARD_POPULATE` in `lib/catalog/resolve.ts`.
+    joins: false,
     limit: wanted.length,
     ...STOREFRONT_ACCESS,
     where: { and: [...publishedProductWhere(now), { id: { in: [...wanted] } }] },

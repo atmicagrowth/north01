@@ -6,7 +6,7 @@ import { Section } from '@/components/layout/section'
 import { MediaImage } from '@/components/media/media-image'
 import { Link } from '@/components/ui/link'
 import { getJournalIndex } from '@/lib/editorial/read'
-import { HOME_IMAGE_SIZES } from '@/lib/home/sizes'
+import { EDITORIAL_GRID_THREE_UP } from '@/lib/media/grid'
 
 export const metadata: Metadata = { title: 'Journal' }
 
@@ -47,7 +47,7 @@ export default async function JournalIndexPage() {
                       context="editorial"
                       imageClassName="transition-opacity duration-(--duration-base) ease-editorial group-hover:opacity-85"
                       media={article.heroImage}
-                      sizes={HOME_IMAGE_SIZES.figureContained}
+                      sizes={EDITORIAL_GRID_THREE_UP}
                     />
                   ) : null}
 
