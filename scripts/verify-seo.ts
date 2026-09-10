@@ -274,7 +274,7 @@ const SITE = 'https://north01.example'
     '/journal/note',
     '/lookbook',
     '/collections/ss26',
-    '/edits/layering',
+    '/edit/layering',
   ]) {
     check(`E: \`${path}\` is indexable`, isIndexablePath(path))
   }

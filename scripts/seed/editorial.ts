@@ -56,7 +56,7 @@ import { rich, upsert } from './shared'
  * - **The fifth Edit is not in the navigation.** `seed.ts` builds the Edit menu column from its own
  *   `editSpecs` array, and DEV-01 fixes that menu at the structure document's four. `Edits.ts` predicts
  *   exactly this — *"a fifth Edit is reachable only from within the section"* — and it is the right
- *   outcome, not an oversight. It is reachable at `/edits/cold` and from the collections it neighbours.
+ *   outcome, not an oversight. It is reachable at `/edit/cold` and from the collections it neighbours.
  * - **No reviews, orders or customers.** Not content; `seed.ts` says why at length.
  *
  * The one place it reaches outside its own documents is `relatedArticles` on the three articles

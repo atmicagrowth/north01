@@ -1,6 +1,6 @@
 import { SpeedInsights as VercelSpeedInsights } from '@vercel/speed-insights/next'
 
-import { appEnv } from '@/lib/env.server'
+import { appEnv, serverEnv } from '@/lib/env.server'
 
 /**
  * **Plan §25.1e — Vercel Speed Insights, and the condition attached to it.**
@@ -20,7 +20,19 @@ import { appEnv } from '@/lib/env.server'
  * for the project in the Vercel dashboard. `TODO.md` carries that as an owner action.
  */
 export function SpeedInsights() {
-  if (appEnv !== 'production') {
+  /**
+   * **`VERCEL` as well as `appEnv`, and Phase 30 measured why.**
+   *
+   * `appEnv` resolves to `production` for any build running with `NODE_ENV=production` — including
+   * `pnpm start` on a laptop, which is exactly how the responsive pass runs the site. The beacon
+   * script lives at `/_vercel/speed-insights/script.js`, which only Vercel serves, so every page of a
+   * local production build requested it and got a **404**. Harmless, and it is a real request on the
+   * critical path of a performance audit, in the console of anybody debugging one.
+   *
+   * The component's own docblock already said the data is meaningless off Vercel. This makes the code
+   * agree with it: the platform has to be present, not merely the build mode.
+   */
+  if (appEnv !== 'production' || !serverEnv.VERCEL) {
     return null
   }
 

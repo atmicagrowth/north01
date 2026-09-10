@@ -1232,7 +1232,6 @@ try {
           ],
         },
         { label: 'Lookbook', kind: 'url', href: '/lookbook' },
-        { label: 'About', kind: 'url', href: '/about' },
       ],
       footer: [
         {
@@ -1404,7 +1403,12 @@ try {
           body: rich(
             'NORTH / 01 is an online-only label. No shops, no seasonal churn, and no pretending that a garment needs to be replaced every six months.',
           ),
-          cta: { kind: 'url' as const, label: 'About the label', href: '/about' },
+          /*
+           * Points at the journal, not at `/about` — Phase 30's audit found that route does not
+           * exist and never has. The block's whole job is to send a reader somewhere, so it sends
+           * them to the writing that says the same thing rather than to a 404.
+           */
+          cta: { kind: 'url' as const, label: 'Read the journal', href: '/journal' },
         })),
         ...(socialItems.length >= 3
           ? [{ blockType: 'socialGallery' as const, heading: 'Worn by', items: socialItems }]

@@ -454,3 +454,95 @@ export const getJournalArticle = cache(async (slug: string): Promise<JournalView
     relatedProducts,
   }
 })
+
+/* -------------------------------------------------------------------------------------------------
+ * The two index pages — Phase 30
+ * ---------------------------------------------------------------------------------------------- */
+
+export type EditorialCard = {
+  description: null | string
+  heroImage: Media | null
+  href: string
+  title: string
+}
+
+/**
+ * **`/collections` and `/edit`, which the header has linked to since Phase 9 and which did not
+ * exist.**
+ *
+ * Phase 23 built the *detail* pages and recorded both indexes as owed; Phase 28's audit repeated it;
+ * Phase 30's responsive pass finally asked the browser for every navigation href and got a 404 from
+ * each. A link in the primary navigation that answers 404 is §0.1.17's fake control on the surface
+ * that appears on every page of the shop.
+ *
+ * One reader for both, because the two collections differ in their *detail* pages and not in what an
+ * index needs: a title, a line of description, a cover and a link. Two near-identical readers would
+ * be two places to fix the same publication rule.
+ *
+ * Published only, through `STOREFRONT_ACCESS` — the same narrowing every other read here uses, so a
+ * draft is absent rather than forbidden and a URL cannot enumerate unreleased work.
+ */
+const indexOf = async (
+  collection: 'collections' | 'edits',
+  prefix: string,
+): Promise<EditorialCard[]> => {
+  const payload = await getPayloadClient()
+
+  const { docs } = await payload
+    .find({
+      collection,
+      depth: 1,
+      limit: 100,
+      sort: 'title',
+      ...STOREFRONT_ACCESS,
+    })
+    .catch(() => ({ docs: [] as { id: number }[] }))
+
+  return (docs as Record<string, unknown>[])
+    .filter((doc) => typeof doc.slug === 'string' && doc.slug.length > 0)
+    .map((doc) => ({
+      /*
+       * A collection's `description` is rich text and an edit's `intro` is too, so both are
+       * flattened to a sentence rather than rendered — an index is a list, not a page.
+       */
+      description: trimIndexText(collection === 'collections' ? doc.description : doc.intro),
+      heroImage: asMedia(collection === 'collections' ? doc.heroMedia : doc.hero),
+      href: `${prefix}/${String(doc.slug)}`,
+      title: String(doc.title),
+    }))
+}
+
+/** The first sentence or so of a rich-text field, for a card. `null` when there is nothing. */
+function trimIndexText(value: unknown): null | string {
+  const parts: string[] = []
+
+  const walk = (node: unknown): void => {
+    if (parts.join(' ').length > 200 || node === null || typeof node !== 'object') return
+
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child)
+
+      return
+    }
+
+    const record = node as { children?: unknown; root?: unknown; text?: unknown }
+
+    if (typeof record.text === 'string' && record.text.length > 0) parts.push(record.text)
+    if (record.root !== undefined) walk(record.root)
+    if (Array.isArray(record.children)) walk(record.children)
+  }
+
+  walk(value)
+
+  const text = parts.join(' ').replace(/\s+/g, ' ').trim()
+
+  if (text.length === 0) return null
+
+  return text.length <= 160 ? text : `${text.slice(0, text.lastIndexOf(' ', 160)).trim()}…`
+}
+
+export const getCollectionIndex = cache(async (): Promise<EditorialCard[]> =>
+  indexOf('collections', '/collections'),
+)
+
+export const getEditIndex = cache(async (): Promise<EditorialCard[]> => indexOf('edits', '/edit'))

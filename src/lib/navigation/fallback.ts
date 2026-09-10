@@ -34,7 +34,6 @@ export const FALLBACK_NAVIGATION: ShellNavigation = {
     { label: 'Collections', href: '/collections', external: false, columns: [], feature: null },
     { label: 'Edit', href: '/edit', external: false, columns: [], feature: null },
     { label: 'Lookbook', href: '/lookbook', external: false, columns: [], feature: null },
-    { label: 'About', href: '/about', external: false, columns: [], feature: null },
   ],
   footer: [
     {

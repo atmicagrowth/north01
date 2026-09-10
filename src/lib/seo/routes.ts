@@ -75,8 +75,15 @@ export type SitemapEntry = {
 export const STATIC_SITEMAP_ROUTES: readonly SitemapEntry[] = [
   { changeFrequency: 'daily', path: '/', priority: 1 },
   { changeFrequency: 'daily', path: '/shop', priority: 0.9 },
+  /* `/collections` and `/edit` were built in Phase 30; §24.1c wanted them from the start. */
+  { changeFrequency: 'weekly', path: '/collections', priority: 0.7 },
+  { changeFrequency: 'weekly', path: '/edit', priority: 0.7 },
   { changeFrequency: 'weekly', path: '/lookbook', priority: 0.6 },
   { changeFrequency: 'weekly', path: '/journal', priority: 0.6 },
+  /* Phase 28 built these three from content that had been in the CMS since Phase 6. */
+  { changeFrequency: 'monthly', path: '/help/faq', priority: 0.4 },
+  { changeFrequency: 'monthly', path: '/help/shipping', priority: 0.4 },
+  { changeFrequency: 'monthly', path: '/help/returns', priority: 0.4 },
 ]
 
 /**

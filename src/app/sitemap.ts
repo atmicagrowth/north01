@@ -96,7 +96,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     add(products, '/product', 'weekly', 0.8)
     add(categories, '/shop', 'weekly', 0.7)
     add(collections, '/collections', 'weekly', 0.7)
-    add(edits, '/edits', 'weekly', 0.6)
+    /*
+     * `/edit`, singular — `documentHref` in `lib/navigation/routes.ts` is the one map every link in
+     * this application goes through, and it emits `/edit/<slug>`. Phase 24 wrote `/edits` here and
+     * Phase 23 had built the route directory under the same wrong spelling, so the sitemap submitted
+     * URLs that answered 404 while the mega menu linked somewhere else that also did. Phase 30's
+     * responsive pass found it by asking the browser for every navigation href.
+     */
+    add(edits, '/edit', 'weekly', 0.6)
     add(lookbooks, '/lookbook', 'monthly', 0.5)
     add(journal, '/journal', 'monthly', 0.5)
   } catch (error) {

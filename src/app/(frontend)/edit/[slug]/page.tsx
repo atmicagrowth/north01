@@ -8,7 +8,7 @@ import { privateMetadata } from '@/lib/seo/metadata'
 import { pageMetadata } from '@/lib/seo/site'
 
 /**
- * **`/edits/[slug]`** — plan §23.1b's intent-based shopping pages.
+ * **`/edit/[slug]`** — plan §23.1b's intent-based shopping pages.
  *
  * Same shape as every other document route. The four questions §23.1b asks an edit to answer are
  * answered by the composition rather than by this file — see `edit-page.tsx`.
@@ -28,7 +28,7 @@ export async function generateMetadata({
   return pageMetadata({
     description: edit.intro,
     image: edit.hero,
-    path: `/edits/${slug}`,
+    path: `/edit/${slug}`,
     seo: edit.seo,
     title: edit.title,
   })
