@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { initialReviewFormState } from '@/lib/reviews/form-state'
 import { submitReviewAction } from '@/lib/reviews/actions'
 import { MAX_RATING, MIN_RATING, REVIEW_SECTION_COPY } from '@/lib/reviews/rules'
+import { TurnstileWidget } from '@/components/security/turnstile-widget'
 
 /**
  * **The review form** — plan §21.1a.
@@ -127,6 +128,8 @@ export function ReviewForm({
           </p>
         ) : null}
       </div>
+
+      <TurnstileWidget submissionCount={state.submissionCount} />
 
       <div>
         <Button disabled={pending} size="lg" type="submit" variant="primary">

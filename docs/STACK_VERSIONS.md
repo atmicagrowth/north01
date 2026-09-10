@@ -26,14 +26,14 @@
 
 | Package | Pin | Why this version |
 |---|---|---|
-| `next` | 16.3.2 | Current stable. Inside `@payloadcms/next@3.88.0`'s supported range `>=16.2.6 <17.0.0`. |
+| `next` | 16.3.3 | **Security patch, Phase 26.** `16.3.2` carries two CRITICAL advisories — unauthenticated RCE on Windows-hosted servers, and unauthenticated RCE in the Image Optimization API with AVIF. Both fixed in `16.3.3`, which is still inside `@payloadcms/next@3.88.0`'s range `>=16.2.6 <17.0.0`. A patch bump is exactly the *evidence* this table asks for. |
 | `react` / `react-dom` | 19.2.8 | Satisfies Next 16 (`^19.0.0`) and Payload's stricter `^19.0.1 \|\| ^19.1.2 \|\| ^19.2.1`. |
 | `payload` | 3.88.0 | Current stable `latest`. **Payload 4.x is canary only — excluded.** |
 | `@payloadcms/next` | 3.88.0 | Declares `payload: "3.88.0"` as an *exact* peer. |
 | `@payloadcms/db-postgres` | 3.88.0 | Exact peer `payload: "3.88.0"`. Drizzle + node-postgres under the hood. |
 | `@payloadcms/richtext-lexical` | 3.88.0 | **Phase 6 — installed.** Exact peer on `payload`, plus `@faceless-ui/modal@3.0.0` and `@faceless-ui/scroll-info@2.0.0`, both of which `@payloadcms/ui` already pulled in — so the install resolved clean with no peer warnings. Brings `lexical@0.41.0` and its `@lexical/*` siblings. |
 | `graphql` | 16.14.2 | **Unavoidable peer dependency of `payload` itself** (`^16.8.1`). See note in §5. |
-| ~~`sharp`~~ | ~~0.35.3~~ | **Not installed. Phase 8 decided against it — see §8 and D-27.** It remains resolved in the lockfile as an optional dependency of `next@16.3.2`, which is where Next's own image optimizer would find it. |
+| ~~`sharp`~~ | ~~0.35.3~~ → `>=0.35.4` | **Not installed. Phase 8 decided against it — see §8 and D-27.** It remains resolved in the lockfile as an optional dependency of `next`, which is where Next's own image optimizer would find it, and is never invoked. Phase 26 pins it forward past two libheif advisories anyway: an override costs nothing and removes a finding, which is worth more than a paragraph explaining why the finding is harmless. |
 
 **Every `@payloadcms/*` package must move in lockstep at the identical version.** They declare exact
 peers on `payload`, so a mixed set will not resolve.
@@ -144,7 +144,7 @@ Plan §2.1b: *"Do not install the entire final dependency list on day one."* Six
 
 | Runtime | | Dev | |
 |---|---|---|---|
-| `next` | 16.3.2 | `typescript` | 5.9.3 |
+| `next` | 16.3.3 | `typescript` | 5.9.3 |
 | `react` / `react-dom` | 19.2.8 | `eslint` | 9.39.5 |
 | `payload` | 3.88.0 | `eslint-config-next` | 16.3.2 |
 | `@payloadcms/next` | 3.88.0 | `prettier` | 3.9.6 |

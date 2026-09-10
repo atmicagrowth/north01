@@ -271,9 +271,17 @@ const has = (haystack: unknown, needle: string) => JSON.stringify(haystack).incl
 
 /* ============================================ F — §25.1d, redaction by value */
 {
+  /*
+   * **Every credential-shaped fixture in this file carries `EXAMPLE` inside the matched span**, so
+   * `pnpm scan:secrets` classifies it as a placeholder rather than a finding. That is the strict
+   * version of the fix: the alternative — allowlisting `scripts/` in the scanner — would be a hole
+   * exactly where somebody is most likely to paste a real key while debugging.
+   *
+   * The redaction patterns do not care what is inside a key, so the fixtures test the same thing.
+   */
   check(
     'F: **a Stripe secret key in a message is redacted**',
-    redactString('Failed with sk_live_51QQabcdefghijklmnop') === `Failed with ${REDACTED}`,
+    redactString('Failed with sk_live_EXAMPLEabcdefghijkl') === `Failed with ${REDACTED}`,
   )
 
   check('F: …a restricted key too', !redactString('rk_live_abcd1234').includes('rk_live'))
@@ -285,14 +293,14 @@ const has = (haystack: unknown, needle: string) => JSON.stringify(haystack).incl
 
   check(
     'F: **a Postgres URL goes whole, password included**',
-    !redactString('postgresql://neondb_owner:hunter2@ep-x.aws.neon.tech/neondb').includes(
-      'hunter2',
+    !redactString('postgresql://example_user:example_pw@ep-x.example.test/db').includes(
+      'example_pw',
     ),
   )
 
   check(
     'F: …and it is not half-eaten by the email rule, leaving the host behind',
-    redactString('postgresql://u:p@host.example/db') === REDACTED,
+    redactString('postgresql://example:example@host.test/db') === REDACTED,
   )
 
   check(
@@ -458,7 +466,7 @@ const has = (haystack: unknown, needle: string) => JSON.stringify(haystack).incl
       values: [
         {
           type: 'Error',
-          value: 'Invalid API Key provided: sk_live_51QQabcdefghijkl',
+          value: 'Invalid API Key provided: sk_live_EXAMPLEabcdefghijkl',
         },
       ],
     },
@@ -481,7 +489,7 @@ const has = (haystack: unknown, needle: string) => JSON.stringify(haystack).incl
 
   check(
     'H: **a secret near the truncation boundary goes whole** — replaced before the string is cut',
-    !redactString(`${'x'.repeat(1_995)}sk_live_abcdefghijkl`).includes('sk_live'),
+    !redactString(`${'x'.repeat(1_995)}sk_live_EXAMPLEabcdefghij`).includes('sk_live'),
   )
 
   check(

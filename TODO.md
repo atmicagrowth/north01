@@ -137,3 +137,29 @@ The Phase 25 prompt asks for it in as many words: *"verify events in local/previ
 before enabling production measurement."* That has **not** been done — no account exists to do it
 against. The taxonomy and the GA4 reshaping are covered by `pnpm verify:analytics` (89 checks); what
 is unverified is that events arrive, which only a network tab against a real property can show.
+
+---
+
+## 7. Cloudflare Turnstile — the four public forms are unprotected until these exist
+
+Phase 26 wired verification into the newsletter, review submission, registration and login forms. With
+no keys, **the widget is not rendered and nothing is verified** — by design, and stated here rather
+than implied to be protection that exists.
+
+| Variable | Where it comes from |
+| --- | --- |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare → Turnstile → your site |
+| `TURNSTILE_SECRET_KEY` | same page, the secret half |
+
+Both are needed. A site key with no secret is treated as **unconfigured**, deliberately: a widget
+nothing can verify is decoration, which is exactly what §26.1a warns against.
+
+### One consequence to know before you set them
+
+**If Cloudflare is unreachable, those four forms stop accepting submissions.** That is the one control
+in this application that fails closed, and it is the correct trade for a control whose whole purpose
+is to refuse — the alternative is no bot protection at all, on exactly the forms an attacker is
+hammering, at a moment the attacker can cause. Deviation **DEV-75** records it.
+
+Use the **Managed** widget type unless you have a reason not to; it is the one that challenges only
+when it needs to.

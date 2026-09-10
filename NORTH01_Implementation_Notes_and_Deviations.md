@@ -7240,6 +7240,202 @@ regressions for the key matcher in both directions, the truncation boundary, and
   **G-17**.
 - **The five harnesses** D-10 still holds until a development connection string exists.
 
+## 1.31 Phase 26 — security and bot protection
+
+Plan §26.1a–§26.1d. **No dependency added** and no migration — Turnstile is a script tag and a POST.
+One dependency was **upgraded**, and that is the phase's most consequential change.
+
+### 1.31.1 `next@16.3.2` carried two unauthenticated RCE advisories
+
+The phase prompt asks for a *"dependency audit"*, and this is what it found:
+
+| Severity | Package | Advisory |
+|---|---|---|
+| **CRITICAL** | `next` | Unauthenticated **remote code execution** on Windows-hosted servers |
+| **CRITICAL** | `next` | Unauthenticated **RCE** in the Image Optimization API with AVIF files |
+| HIGH ×4 | `fast-uri` | Two SSRF, two host confusion |
+| HIGH | `sharp` | Two libheif advisories |
+| HIGH | `js-yaml` | Unbounded CPU on empty merge sources |
+| MODERATE | `payload` | Default account-unlock access |
+
+`next@16.3.3` closes both criticals and is still inside `@payloadcms/next@3.88.0`'s declared range.
+`docs/STACK_VERSIONS.md` says *"version pins are evidence-based"*; two unauthenticated RCEs is the
+evidence. The other three are transitive and closed with overrides beside the two this project
+already carried.
+
+**`pnpm audit` went from 9 findings — 2 critical, 6 high, 1 moderate — to 1 moderate.**
+
+### 1.31.2 The one remaining finding was already closed, in config, two phases ago
+
+`payload@<=3.88.0`'s `unlock` access defaults to `defaultAccess`, which is `Boolean(user)` — **any**
+authenticated user on **either** auth collection. A signed-in shopper could therefore
+`POST /api/customers/unlock` with somebody else's address and clear the five-failure lockout that
+`maxLoginAttempts` exists to impose, repeatedly, turning §7.1e's brute-force protection into a speed
+bump.
+
+The upgrade Payload names, `3.88.1`, is **not available to this project**: every `@payloadcms/*`
+package pins an *exact* peer on `payload@3.88.0`, so overriding one would put the tree in a state its
+own peers declare invalid.
+
+It did not need to be. `Customers.ts` sets `unlock` to staff-only and `Users.ts` sets it to
+admin-only, and both have since the phases that wrote them. **The advisory describes a missing
+default this project never relied on.** That was verified by reading the two collections rather than
+assumed from the fact that somebody once thought about it — and it is worth recording, because the
+first instinct during this sweep was to *add* the access rules, which would have been a duplicate
+key and a compile error.
+
+### 1.31.3 §26.1a's own sentence is the whole design
+
+> *"Server must verify Turnstile response. Client-side widget alone is not security."*
+
+`turnstile-widget.tsx` renders a challenge and writes a token. Whether that token means anything is
+decided in `lib/security/guard.ts`, on the server, with a secret the browser has never seen.
+
+**Delete the widget and every guarded form starts refusing, not accepting.** That is the right way
+round and is worth stating, because the opposite arrangement — a client that decides whether
+verification applies — is the common one and is the failure §26.1a is warning about.
+
+The mechanism is that `verifyTurnstile` reads the **configured state itself**, from the server
+environment, rather than taking a `required` flag from its caller. There is no argument a call site
+can pass and no field a client can omit that turns a required verification into a skipped one.
+Omitting the token is a refusal. `pnpm verify:security` asserts exactly that.
+
+### 1.31.4 Which forms, and the one that does not exist
+
+§26.1a names four. Three exist:
+
+- **Newsletter** — the classic list-poisoning target; it writes a row per address with no
+  authentication at all.
+- **Review submission** — §21.1c's abuse cases, and the only form whose output is *published*.
+  Moderation catches what is submitted; this bounds how much there is to catch.
+- **Registration** — account farming, and the door to everything behind it.
+- **Login** — §26.1a hedges with *"where abuse warrants it"*, and the answer is yes. A login form is
+  the most attacked endpoint any shop has, and the question is what the form **is** rather than
+  whether abuse has been observed on this one yet. It composes with the existing five-failure
+  lockout rather than replacing it: a challenge raises the cost of each attempt, the lockout bounds
+  how many one account can suffer, and neither is sufficient alone — a lockout with no challenge is
+  a denial-of-service primitive against a known address.
+
+**Contact does not exist.** Gap **G-08** has recorded that since Phase 19, which is also still
+waiting on it for the contact-confirmation email template (**DEV-66**). It gets a challenge the day
+it is built.
+
+The guard runs **first** in each action, before validation: a refused request costs one Cloudflare
+round trip and never reaches a query, a hash or a write, and a bot's malformed payload does not get
+a free field-by-field critique of the form it is attacking.
+
+### 1.31.5 Unconfigured skips, and an outage refuses — DEV-75
+
+Two failure modes that look similar and are opposites.
+
+**Unconfigured** — no site key or no secret — means the widget was never rendered and nothing is
+verified. Failing closed with no keys would make an unconfigured deployment a shop nobody can
+register with, which is not more secure; it is broken. This project has settled that trade three
+times (**DEV-62**: the checkout page says payment is unavailable rather than showing a form that can
+only fail). A *partial* configuration is treated as unconfigured, matching `integrationStatus`: a
+site key with no secret renders a widget nothing can verify, which is precisely the decoration
+§26.1a warns about.
+
+**An outage** — Cloudflare unreachable, a 500, a timeout — is a **refusal**. This is the one control
+in the project that fails closed, and it is deliberate: everywhere else the shop degrades, because
+the cost of degrading is a worse page. Here the cost of degrading is *no bot protection at all* on
+exactly the forms an attacker is hammering, and an attacker can cause the outage they benefit from.
+
+The consequence is stated rather than hidden: **if Cloudflare is unreachable, those four forms stop
+accepting submissions.** That is the correct trade for a control whose entire purpose is to refuse.
+Recorded as **DEV-75**.
+
+The customer sees one sentence for every failure — an expired token, a duplicate, a missing one, a
+network error. Telling somebody *which* check they failed is telling an attacker which knob to turn,
+and none of the distinctions is actionable by an honest customer, whose fix is the same in every
+case. The reason **is** logged, once, because an operator watching `timeout-or-duplicate` is watching
+a replay and an operator watching `http-500` is watching an incident.
+
+### 1.31.6 §26.1b — the API depth cap was the one real finding
+
+Payload's default `maxDepth` is **10**, and `/api/*` is a public REST surface. `GET
+/api/products?depth=10` asks the database to walk relationships ten levels deep for every document in
+the page, on an endpoint that needs no authentication to reach published content. That is an
+amplification primitive — one cheap request, an unbounded amount of work — and nothing in this
+application asks for it.
+
+**`maxDepth: 3`.** The deepest read anywhere in the project is two: the four editorial readers and
+`PRODUCT_DEPTH` all use `depth: 2`. Three leaves one level of headroom rather than pinning the cap to
+today's exact usage.
+
+`defaultDepth` is deliberately left at Payload's 2. Lowering it would change what the admin panel
+receives from its own REST calls — a functional change to the CMS in the name of a limit `maxDepth`
+already enforces. A cap on what a caller may *ask for* is the precise control.
+
+The rest of §26.1b was **verified rather than changed**, which is the honest outcome of a review:
+
+| §26.1b | State |
+|---|---|
+| Secure cookies | `payload.config.ts` sets `{ sameSite: 'Lax', secure: appEnv !== 'local' }` on both auth collections — Payload's default is `secure: false` |
+| Production secret | `PAYLOAD_SECRET` is validated at startup and at build; never a literal |
+| Rate limiting / anti-abuse | `maxLoginAttempts: 5`, `lockTime: 10 minutes` — Payload's defaults, restated explicitly on `customers` and inherited by `users`. Confirmed by reading `payload/dist/collections/config/defaults.js`, not assumed |
+| Admin access | `Users.access.admin` is explicit; `role` is field-access-guarded against self-promotion |
+| Access controls | Unchanged, and the `unlock` advisory above is the audit of them |
+
+### 1.31.7 §26.1c — reviewed, and what the review actually found
+
+| Check | Finding |
+|---|---|
+| **XSS in rich text** | **No `dangerouslySetInnerHTML` renders CMS content anywhere.** The only occurrence in the project is `JsonLd`, which escapes `<`, `>`, `&`, `U+2028` and `U+2029` before writing. Lexical is rendered as React elements, so text is text |
+| **Open redirect** | `isSameSitePath` refuses anything not starting with a single `/`, plus `//host`, `/\host` and any control character — so a `Location:` cannot be smuggled through a newline. 14 assertions |
+| **Input validation** | Every Server Action parses with Zod before acting. Unchanged |
+| **Authorization** | Payload access controls, applied through `overrideAccess: false` on the storefront paths that write |
+| **Server-only boundaries** | `env.server` carries the guard, `env.core` is fenced by ESLint (**D-14**), and Phase 19 recorded why a guard must never sit on a module the Payload CLI loads |
+| **Query parameterization** | Every raw SQL statement in this project is a Drizzle `sql` template with interpolated **parameters**, never string concatenation |
+| **File uploads** | An **allowlist** of six MIME types, all `image/*` or `video/*`. No PDF, no SVG — an SVG is a script container — no HTML, no `application/octet-stream`. Bounded in bytes and in pixels, the second being the decompression bomb |
+| **CSRF** | `SameSite=Lax` on the session cookie, and Next Server Actions carry their own origin check. The `/api` REST surface is the reason `Lax` is load-bearing rather than incidental |
+
+### 1.31.8 §26.1d — a scan that runs, not a scan that was run
+
+`pnpm scan:secrets` walks `git ls-files` and matches high-confidence vendor patterns. A one-off grep
+satisfies the sentence once; a committed script satisfies it every time.
+
+**The first version's Resend pattern matched English.** `re_[A-Za-z0-9_-]{16,}` hit
+`Structu`**`re_Current_OnlineOnly`**`.md` and `figu`**`re_mobile_image_idx`** — a filename and a
+database index. A scan that reports noise is a scan people learn to skim, so every pattern now either
+carries a vendor prefix meaningless in prose or requires structure prose does not have.
+
+It then found four real matches, all of them **fixtures in `verify-analytics.ts`** — the strings that
+prove the Sentry redaction works. Two ways to resolve that, and the tempting one is wrong:
+allowlisting `scripts/` would put a hole exactly where somebody is most likely to paste a real key
+while debugging. Instead every credential-shaped fixture now carries `EXAMPLE` inside the matched
+span, which the scanner already classifies as a placeholder. The redaction patterns do not care what
+is inside a key, so the fixtures test the same thing.
+
+**Result: no secrets in 388 tracked files.**
+
+### 1.31.9 What was verified, and how
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck` | passes |
+| `pnpm lint --max-warnings 0` | passes |
+| `pnpm build` | passes, on `next@16.3.3` |
+| `pnpm verify:security` | **51/51** |
+| `pnpm scan:secrets` | **clean**, 388 files |
+| `pnpm audit` | **9 → 1**, and the 1 is closed in config |
+
+`verify:security` is the **third** harness that opens no connection: the Cloudflare verifier is
+injected, so every branch is driven without a network or an account. The phase prompt's closing
+sentence — *"do not weaken security to make a test pass"* — is why each assertion states the rule
+rather than the current behaviour: there is nothing here to relax.
+
+### 1.31.10 What is now owed
+
+- **Turnstile keys.** Until `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` exist, the
+  widget is not rendered and nothing is verified — by design, and stated in `TODO.md` §7 rather than
+  implied to be protection that exists.
+- **The contact form** — **G-08**, still, and now owed by two phases.
+- **A browser pass over the four guarded forms**, which have never rendered a widget.
+- **`payload@3.88.1`** when the `@payloadcms/*` packages catch up, so the advisory leaves the audit
+  rather than being explained in it.
+- **The five database harnesses**, still held by D-10.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -9136,4 +9332,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 23 — editorial, collections, journal | 2026-09-09 | Notes **§1.28**. **No dependency and no migration** — the fourth phase running — and six new routes: `/collections/[slug]`, `/edits/[slug]`, `/lookbook`, `/lookbook/[slug]`, `/journal`, `/journal/[slug]`. **Two blocks had been authorable for seventeen phases and rendered nothing**: `gallery` and `pullQuote` have been on `collections.body` and `edits.body` since Phase 6 with no resolver case and no component anywhere, so an editor could compose one, publish, and find the section absent — §0.1.17's rule inverted, a CMS field that silently discards work. Invisible until now because no route rendered a body. **Two block resolvers now exist on purpose**: `home/resolve.ts`'s is module-private and typed to the Homepage union, and widening it would make the homepage's exhaustive `never` default reject two blocks the homepage can never receive. **A collection page is not a filterable grid** — DEV-09 ruled that out, and reusing `CatalogPage` would also have been a live defect: `requiresSearchIndex()` sends any collection query to Algolia, because membership is a Payload `join` with no column, so the page would have rendered **nothing at all** whenever the search service was down while every other listing survived. Reading the ordered id list through Postgres keeps it working with no search service and keeps the curator's order. **Featured products without a new field**: `Collections.products` is ordered and its own description says *"dragging a row is the curation"* — the front of a curated list is what featured means, resolved from the same cards as the grid so the two cannot disagree. **Products are never read through the relationship at depth**: `publishedOnly` checks `status` and explicitly not `publishedAt`, and knows nothing about `derived.priceFromMinor`, so a depth-populated grid would have shown scheduled drops and withdrawn garments. **The navigation has been broken since Phase 9 and is not any more** — `/lookbook` and `documentHref`'s `/lookbook/<slug>` both 404'd; building either alone would have left the other broken. §23.1c's *"avoid creating an editorial dead end"* is designed against rather than avoided: three exits per article, each resolved through the published rules so a withdrawn product is not offered rather than offered as a 404, and a fallback exit when an editor filled in none of them. New harness `pnpm verify:editorial` — 24 checks covering the four failure cases the prompt names by title. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass over six routes that have never rendered, `/collections` and `/edits` indexes, `generateMetadata` (Phase 24), and the contact form (**G-08**), which is still the missing caller for Phase 19's contact template. |
 | Phase 24 — search engine optimization | 2026-09-09 | Notes **§1.29**. **No dependency and no migration** — the fifth phase running. **Three site-wide CMS fields and a nine-collection field group had been authorable since Phase 6 and read by nothing**: `defaultSeoTitle`, `defaultSeoDescription`, `defaultOgImage` and `seoField()`'s title/description/image. `SiteSettings.ts` and `seo.ts` both named Phase 24 as the phase that would read them; both promises are kept, and the precedence — document override, then page content, then site default, then built-in — is stated once in `pageMetadata`. An **emptied override is not an override**: a cleared field means *derive it*, never *publish an empty tag*. **§24.1b is enforced by shape, not by a check**: offers are built only from variants that are active, in stock and priced, so a sold-out size cannot set the price; nothing buyable emits `OutOfStock` **with no price at all**, because a price nobody can pay is the forbidden claim; a product with no variants emits no `offers` key; and `aggregateRating` appears only when a real approved review exists — no key, not a zero, not five stars from nobody. **`getProduct`'s memoisation did not apply to its second caller**: React's `cache` compares arguments with `Object.is`, so two callers passing `{ color: null, size: null }` both ran the queries — memoisation that silently does not apply is worse than none. Split into `getProductRecord(slug)`, keyed by a string, with the variant matrix built on top. **The canonical never comes from the request** (Phase 7's host-header argument) and never carries a query — `/shop`'s nine parameters and `/product/x?size=m` are one page each. **The homepage exported no metadata at all**, to dodge the *"NORTH / 01 · NORTH / 01"* title template — which cost the front page its canonical and its OG card; `absoluteTitle` is the answer, and the layout's metadata now reads the site name from the CMS. **`robots.txt` needs three rules per prefix**: `/account/` misses `/account`, `/account` blocks `/accounts-payable`, and an RFC 9309 matched path includes the query string, so neither touches `/search?q=` — the exclusion's whole point. One shared constant with the sitemap, because the two disagreeing is the classic SEO defect. **JSON-LD is escaped**: a raw-text element ends at the first literal `</script`, and every value in it comes from the database. New harness `pnpm verify:seo` — **90/90, and the first in this project that touches no database**, so no D-10 guard: everything §24 decides is a pure function. `pnpm build` passed — the first since Phase 18 — and `robots.txt` and `sitemap.xml` were read back out of the build output (35 URLs from real data) rather than assumed. Two stale docblock claims corrected: the homepage has **not** been statically prerendered since Phase 9 (the layout awaits `cookies()`), and four routes' *"SEO is Phase 24"* notes now say what was decided. Owed: `/collections` and `/edits` indexes, `generateStaticParams` (Phase 30), `priceValidUntil` and `shippingDetails` (neither claimable today), a browser pass, and the five harnesses D-10 still holds until a **development** connection string exists. |
 | Phase 25 — analytics and observability | 2026-09-09 | Notes **§1.30**. **Three dependencies installed at their pins** (`posthog-js` 1.418.10, `@sentry/nextjs` 10.70.0, `@vercel/speed-insights` 2.0.0); GA4 is a script tag; no migration. **The taxonomy is a type**: `AnalyticsEvent` is a union of exactly §25.1a's seventeen names and `trackEvent` takes it, so a typo is a compile error rather than an empty dashboard column — and the internal names *are* the GA4 names for the ten that overlap, because a translation table is somewhere for the two to drift invisibly. **Money crosses the vendor boundary once**, in `toGa4Params`: a price field that is sometimes cents and sometimes dollars reports revenue a hundred times too high and is not recoverable, so the conversion is pure and asserted — including that a zero value is a real zero and an unknown value is absent. **Server Components stayed server components**: `ProductCard` gained two data attributes and `TrackList` delegates from the grid wrapper in the capture phase, rather than an `onClick` converting the most-rendered component in the shop and everything it renders. **Every event is emitted where it is true, not where it was clicked** — `addToBagAction` can refuse, and an `add_to_cart` on the click would report adds that never happened; `useActionResult` fires on the action's result, guarded by reference identity. **`purchase` is gated on the webhook**, not on arrival (§17.1g), and deduped in `sessionStorage` by order number, because the success URL is refreshable and a double-count doubles reported revenue. **§25.1d is enforced on the way out**, on two independent grounds — by key and by value — with cookies and headers dropped rather than scrubbed, the user reduced to an id, and the URL keeping its route while losing its token; the whole-URL pattern runs before the email pattern, or a Postgres URL is left with its host and password intact. **Two of the seventeen events are deliberately not emitted**: `add_payment_info` (**DEV-73** — Stripe Checkout is hosted, this application never sees payment details, and firing it at redirect would report leaving for Stripe as entering a card) and `quick_view_opened` (**DEV-74** — no quick view exists). Sentry is wired into four entry points because Next has four kinds of failure; `global-error.tsx` renders `error.digest` and never `error.message`, per §4.1b. **`@sentry/cli`'s postinstall is denied** in `pnpm-workspace.yaml` — source-map upload is off, so **production stack traces will be minified**, stated rather than discovered. §25.1e honoured as the schedule it is: Speed Insights renders in production only, and a second gate lives in the Vercel dashboard. New harness `pnpm verify:analytics` — **89/89**, the second in this project that touches no database. What it cannot cover is the prompt's own *"verify events in local/preview"*: no account exists, and `TODO.md` §6 says so. New gap **G-17**: no consent gate in front of any vendor. |
+| Phase 26 — security and bot protection | 2026-09-09 | Notes **§1.31**. **No dependency added**; one upgraded, and that is the phase's most consequential change: `next@16.3.2` carried **two CRITICAL unauthenticated RCE advisories** — Windows-hosted servers, and the Image Optimization API with AVIF — both fixed in `16.3.3`, which is still inside `@payloadcms/next@3.88.0`'s range. Overrides added for `fast-uri` (2 SSRF, 2 host confusion), `js-yaml` and `sharp`. **`pnpm audit` went from 9 findings (2 critical, 6 high, 1 moderate) to 1 moderate** — and that one, Payload's default `unlock` access letting any authenticated user clear anyone's lockout, **was already closed in config two phases ago**: `Customers.ts` is staff-only and `Users.ts` admin-only. Verified by reading them, not assumed; the first instinct was to add the rules, which would have been a duplicate key. The named upgrade `payload@3.88.1` is unavailable because every `@payloadcms/*` package pins an exact peer on 3.88.0. **§26.1a's own sentence is the design**: delete the widget and every guarded form starts **refusing**, because `verifyTurnstile` reads the configured state from the **server** environment rather than taking a flag from its caller — no argument a call site can pass and no field a client can omit turns a required verification into a skipped one. Wired into newsletter, review submission, registration and **login** (§26.1a's *"where abuse warrants it"*, answered by what the form is rather than by whether abuse has been seen yet), each **before** validation so a refusal costs no query and no field-by-field critique. **DEV-75**: unconfigured skips, an outage **refuses** — the one control in this project that fails closed, because the cost of degrading here is no bot protection on exactly the forms being hammered, by an attacker who can cause the outage they benefit from. One sentence for every failure; the reason logged, never shown. **§26.1b's one real finding was API depth**: Payload defaults `maxDepth` to 10 on a public REST surface, which is an amplification primitive — capped at 3, one above the project's deepest read. Everything else in §26.1b was verified rather than changed. **§26.1c**: no `dangerouslySetInnerHTML` renders CMS content anywhere (the only one is `JsonLd`, which escapes first); uploads are a six-entry allowlist with no SVG and no PDF; `isSameSitePath` refuses control characters so a `Location:` cannot ride a newline. **§26.1d** is a committed scan rather than a grep somebody ran: `pnpm scan:secrets`, whose first Resend pattern matched **English** (`Structure_Current_…`, `figure_mobile_image_idx`) and whose four real hits were the redaction harness's own fixtures — resolved by marking them `EXAMPLE` rather than allowlisting `scripts/`, which would be a hole exactly where a real key gets pasted while debugging. Clean across 388 files. New harness `pnpm verify:security` — **51/51**, the third that opens no connection. Owed: Turnstile keys (`TODO.md` §7), the contact form (**G-08**, now owed by two phases), a browser pass over four forms that have never rendered a widget, and `payload@3.88.1` when its peers catch up. |
 > **Append this table, and the sections above it, at the end of every phase.**

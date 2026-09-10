@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { register } from '@/lib/auth/actions'
 import { initialAuthFormState } from '@/lib/auth/form-state'
 import { PASSWORD_RULE_TEXT } from '@/lib/password-policy'
+import { TurnstileWidget } from '@/components/security/turnstile-widget'
 
 /**
  * Create an account. Plan §7.1e.
@@ -66,6 +67,8 @@ export function RegisterForm({ next }: { next?: string }) {
         hint={PASSWORD_RULE_TEXT}
         error={state.fieldErrors.password}
       />
+
+      <TurnstileWidget submissionCount={state.submissionCount} />
 
       <Button type="submit" variant="primary" size="lg" block loading={pending}>
         Create account

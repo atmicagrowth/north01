@@ -387,6 +387,27 @@ export default buildConfig({
     ],
   }),
 
+  /**
+   * **Plan §26.1b's *"API depth"*, capped — Phase 26.**
+   *
+   * Payload's default `maxDepth` is **10**, and `/api/*` is a public REST surface: `GET
+   * /api/products?depth=10` asks the database to walk relationships ten levels deep, for every
+   * document in the page, on an endpoint that needs no authentication to reach published content.
+   * That is an amplification primitive rather than a feature — one cheap request, an unbounded
+   * amount of work — and nothing in this application asks for it.
+   *
+   * **Three, because the deepest read in the project is two.** `getCollectionPage`, `getEditPage`,
+   * `getLookbook` and `getJournalArticle` all use `depth: 2`; `PRODUCT_DEPTH` is 2. Three leaves one
+   * level of headroom rather than pinning the cap to today's exact usage, and it is far below the
+   * point where the query fans out.
+   *
+   * `defaultDepth` is deliberately **left at Payload's 2**. Lowering it would change what the admin
+   * panel receives from its own REST calls, which is a functional change to the CMS made in the name
+   * of a limit that `maxDepth` already enforces. A cap on what a caller may *ask for* is the precise
+   * control; a change to what everyone gets by default is not.
+   */
+  maxDepth: 3,
+
   // Payload signs and encrypts with this. Server-only; must never be exposed.
   secret: serverEnv.PAYLOAD_SECRET,
 

@@ -7,6 +7,7 @@ import { FormStatus } from '@/components/auth/form-status'
 import { Button } from '@/components/ui/button'
 import { login } from '@/lib/auth/actions'
 import { initialAuthFormState } from '@/lib/auth/form-state'
+import { TurnstileWidget } from '@/components/security/turnstile-widget'
 
 /**
  * Sign in. Plan §7.1e.
@@ -53,6 +54,8 @@ export function LoginForm({ next }: { next?: string }) {
         required
         error={state.fieldErrors.password}
       />
+
+      <TurnstileWidget submissionCount={state.submissionCount} />
 
       <Button type="submit" variant="primary" size="lg" block loading={pending}>
         Sign in

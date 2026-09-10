@@ -16,6 +16,7 @@ import type { ZodType } from 'zod'
 
 import { forgetCartCookie, mergeGuestCart } from '@/lib/cart/cart'
 import { getPayloadClient } from '@/lib/payload'
+import { publicFormRefusal } from '@/lib/security/guard'
 import { courierFor } from '@/lib/email/courier'
 import { dedupeKeyFor } from '@/lib/email/rules'
 import { deliverEmail, enqueueEmail } from '@/lib/email/send'
@@ -225,6 +226,18 @@ export async function register(
   previous: AuthFormState,
   formData: FormData,
 ): Promise<AuthFormState> {
+  /*
+   * **§26.1a, before anything else happens.** Verification is the first gate rather than the last,
+   * so a refused request costs one Cloudflare round trip and never reaches a query, a hash or a
+   * write. It runs before validation too: a bot's malformed payload should not get a free field-by-
+   * field critique of the form it is attacking.
+   */
+  const refused = await publicFormRefusal(formData)
+
+  if (refused) {
+    return failure(previous, formData, refused)
+  }
+
   const parsed = parse(RegisterSchema, formData)
 
   if (!parsed.ok) {
@@ -328,6 +341,22 @@ export async function register(
  * ---------------------------------------------------------------------------------------------- */
 
 export async function login(previous: AuthFormState, formData: FormData): Promise<AuthFormState> {
+  /*
+   * **§26.1a's *"login where abuse warrants it"*, answered yes.** A login form is the single most
+   * attacked endpoint any shop has, and the question is what the form *is* rather than whether
+   * abuse has been observed on this one yet.
+   *
+   * It composes with the lockout below rather than replacing it. Turnstile raises the cost of each
+   * attempt; the five-failure lockout bounds how many attempts one account can suffer. Neither is
+   * sufficient alone — a lockout with no challenge is a denial-of-service primitive against a known
+   * address, and a challenge with no lockout still yields to a determined attacker.
+   */
+  const refused = await publicFormRefusal(formData)
+
+  if (refused) {
+    return failure(previous, formData, refused)
+  }
+
   const parsed = parse(LoginSchema, formData)
 
   if (!parsed.ok) {

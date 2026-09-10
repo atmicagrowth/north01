@@ -10,6 +10,7 @@ import { FormStatus } from '@/components/auth/form-status'
 import { Button } from '@/components/ui/button'
 import { subscribe } from '@/lib/newsletter/actions'
 import { initialNewsletterFormState } from '@/lib/newsletter/form-state'
+import { TurnstileWidget } from '@/components/security/turnstile-widget'
 
 /**
  * **The footer's newsletter column.** Structure §20 lists it among the footer's five columns and
@@ -100,6 +101,8 @@ export function NewsletterSignup() {
           required
           error={state.fieldErrors.newsletterEmail}
         />
+
+        <TurnstileWidget submissionCount={state.submissionCount} />
 
         <Button type="submit" variant="secondary" loading={pending}>
           Sign up

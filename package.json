@@ -52,7 +52,9 @@
     "verify:editorial": "payload run scripts/verify-editorial.ts",
     "verify:orders": "payload run scripts/verify-orders.ts",
     "verify:seo": "payload run scripts/verify-seo.ts",
-    "verify:analytics": "payload run scripts/verify-analytics.ts"
+    "verify:analytics": "payload run scripts/verify-analytics.ts",
+    "scan:secrets": "payload run scripts/scan-secrets.ts",
+    "verify:security": "payload run scripts/verify-security.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",
@@ -68,7 +70,7 @@
     "clsx": "2.1.1",
     "graphql": "16.14.2",
     "lucide-react": "1.33.0",
-    "next": "16.3.2",
+    "next": "16.3.3",
     "nuqs": "2.10.1",
     "payload": "3.88.0",
     "posthog-js": "1.418.10",

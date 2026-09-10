@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 
 import { getCustomer } from '@/lib/auth/session'
 import { getPayloadClient } from '@/lib/payload'
+import { publicFormRefusal } from '@/lib/security/guard'
 
 import type { ReviewFormState } from './form-state'
 import { hasPaidOrderFor, isReviewableProduct } from './read'
@@ -83,6 +84,17 @@ export async function submitReviewAction(
     submissionCount: previous.submissionCount + 1,
     values,
   })
+
+  /*
+   * **§26.1a.** The one form in this shop whose output is *published*, which is why §21.1c gave it
+   * moderation and why it gets a challenge as well: moderation catches what is submitted, and this
+   * bounds how much there is to catch.
+   */
+  const refused = await publicFormRefusal(formData)
+
+  if (refused) {
+    return fail(refused)
+  }
 
   const productId = Number(formData.get('productId'))
 

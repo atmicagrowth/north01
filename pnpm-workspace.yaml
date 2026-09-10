@@ -45,3 +45,23 @@ overrides:
   # Verified beyond `audit`: `pnpm migrate:status` and `pnpm migrate:create` both still work, which is
   # the only thing drizzle-kit is used for.
   esbuild: '>=0.25.0'
+
+  # ---- Phase 26, the §26 dependency audit ----
+  #
+  # Four fast-uri advisories, two of them SSRF and two host confusion, all fixed in 3.1.6. Reached
+  # through ajv, which reaches this project through the toolchain rather than the application:
+  #   eslint-config-next > ... > ajv > fast-uri
+  # Nothing here parses a URI with it at runtime. Free to remove, and an advisory left in the tree
+  # makes every future audit noisier until nobody reads it.
+  fast-uri: '>=3.1.6'
+
+  # GHSA: js-yaml's `maxTotalMergeKeys` does not bound CPU for empty merge sources. Build-time only
+  # (config loading), and fixed in 4.3.2.
+  js-yaml: '>=4.3.2'
+
+  # sharp < 0.35.4 carries two libheif advisories. This project deliberately does NOT install sharp —
+  # `Media.ts` records why, and Payload's image processing is off because of it — so sharp is here
+  # only as an OPTIONAL dependency of `next` and a transitive one of the Sentry webpack plugin.
+  # It is never invoked. The override costs nothing and removes the finding rather than explaining it
+  # away in a document nobody reads during an incident.
+  sharp: '>=0.35.4'

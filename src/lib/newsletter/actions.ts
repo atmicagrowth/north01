@@ -1,6 +1,7 @@
 'use server'
 
 import { getPayloadClient } from '@/lib/payload'
+import { publicFormRefusal } from '@/lib/security/guard'
 
 import type { NewsletterFormState } from './form-state'
 import { NewsletterSchema } from './schemas'
@@ -121,6 +122,24 @@ export async function subscribe(
   previous: NewsletterFormState,
   formData: FormData,
 ): Promise<NewsletterFormState> {
+  /*
+   * **§26.1a, before anything else happens.** Verification is the first gate rather than the last,
+   * so a refused request costs one Cloudflare round trip and never reaches a query, a hash or a
+   * write. It runs before validation too: a bot's malformed payload should not get a free field-by-
+   * field critique of the form it is attacking.
+   */
+  const refused = await publicFormRefusal(formData)
+
+  if (refused) {
+    return {
+      fieldErrors: {},
+      message: refused,
+      status: 'error',
+      submissionCount: previous.submissionCount + 1,
+      values: {},
+    }
+  }
+
   const submitted = formData.get('newsletterEmail')
   const values: Record<string, string> =
     typeof submitted === 'string' && submitted !== '' ? { newsletterEmail: submitted } : {}
