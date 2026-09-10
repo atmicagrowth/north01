@@ -293,9 +293,29 @@ export function SearchPanel() {
       return
     }
 
-    listRef.current
-      .querySelector(`#${CSS.escape(options[active]?.id ?? '')}`)
-      ?.scrollIntoView({ block: 'nearest' })
+    /**
+     * **The id is read before the selector is built — Phase 27's first sweep.**
+     *
+     * This was `querySelector(\`#${CSS.escape(options[active]?.id ?? '')}\`)`, and the `?? ''`
+     * fallback is where it went wrong: `CSS.escape('')` is `''`, so the selector became the single
+     * character `'#'`, and `querySelector('#')` **throws** a `DOMException` rather than returning
+     * null. The optional chaining after it shows a null was expected; the throw happens first, and
+     * inside an effect it escapes to the error boundary and takes the whole overlay down.
+     *
+     * The active index outliving the list is reachable rather than theoretical: this panel honours
+     * cross-tab writes to the recent-searches key, and `recent` is part of `options` whenever the
+     * input is empty. Arrow down to a late option, clear the list in another tab, and `active` is
+     * past the end. Every other consumer of that stale index is already guarded — the
+     * `aria-activedescendant` read and the submit handler both use `options[active]?.` — and this
+     * one was the exception.
+     */
+    const id = options[active]?.id
+
+    if (!id) {
+      return
+    }
+
+    listRef.current.querySelector(`#${CSS.escape(id)}`)?.scrollIntoView({ block: 'nearest' })
   }, [active, options])
 
   const go = useCallback(

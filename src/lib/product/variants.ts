@@ -284,9 +284,26 @@ export function buildVariantMatrix(
 
   return {
     colors,
+    /**
+     * **Feature matrix §7's "invalid variant query" — and it never fired for the case the matrix
+     * names.** Phase 27's first sweep.
+     *
+     * The first two clauses catch a colour or a size that does not exist **on the product at all**.
+     * They missed the ordinary version of the problem: `?color=Cream&size=M` where Cream/M was never
+     * made but **Black/M was**. `sizes` is every size across the whole product — each entry carrying
+     * `missing` for the selected colour — so `matchSize` found "M", the flag stayed false, and the
+     * live region that exists to say *"that combination is not available — showing what we do have"*
+     * said nothing. The customer saw M apparently selected, Add to bag disabled, and no explanation
+     * of why.
+     *
+     * The third clause states the rule the other two were approximating: they asked for a specific
+     * combination and it does not exist. It cannot fire when no size was requested, because
+     * `selectedSize` is `null` until one is.
+     */
     invalidSelection:
       (requestedColor !== null && matchColor === undefined) ||
-      (requestedSize !== null && matchSize === undefined),
+      (requestedSize !== null && matchSize === undefined) ||
+      (requestedSize !== null && selectedSize !== null && selectedVariant === undefined),
     selected: selectedVariant
       ? resolveVariant(selectedVariant, currency, locale, lowStockThreshold)
       : null,

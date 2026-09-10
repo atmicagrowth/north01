@@ -319,6 +319,28 @@ describe('the plan’s named case: Black / M exists but Cream / M does not', () 
   it('still resolves Black / M, so the combination that was made is unaffected', () => {
     expect(matrix({ color: 'Black', size: 'M' }).selected?.id).toBe(2)
   })
+
+  it('flags it as an invalid selection, so the page explains itself instead of going quiet', () => {
+    /*
+     * **The defect Phase 27's tests found, now pinned.**
+     *
+     * `invalidSelection` used to catch only a colour or a size that exists nowhere on the product.
+     * It missed the version feature matrix §7 actually names: `sizes` is every size across the
+     * WHOLE product — each entry carrying `missing` for the selected colour — so "M" was found,
+     * the flag stayed false, and the live region that exists to say *"that combination is not
+     * available — showing what we do have"* said nothing at all. The customer saw M apparently
+     * chosen, Add to bag disabled, and no explanation.
+     *
+     * `product-page.tsx` is the only consumer, and it renders exactly that sentence.
+     */
+    const result = matrix({ color: 'Cream', size: 'M' })
+
+    expect(result.invalidSelection).toBe(true)
+
+    /* And it stays false where nothing was asked for that does not exist. */
+    expect(matrix({ color: 'Cream', size: 'S' }).invalidSelection).toBe(false)
+    expect(matrix({ color: 'Cream' }).invalidSelection).toBe(false)
+  })
 })
 
 describe('buildVariantMatrix, colour fallback and stock', () => {

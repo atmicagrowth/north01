@@ -493,3 +493,71 @@ describe('the merge is a function of its inputs and nothing else', () => {
     expect(merged.lines[0]).toEqual({ ...customerLines[0], combined: false })
   })
 })
+
+describe('what Phase 27’s first sweep corrected', () => {
+  it('reports a merged line of zero as dropped only when something actually stopped it', () => {
+    /*
+     * **A false statement about inventory, produced by a default.**
+     *
+     * `clampQuantity` answers `{ clampedBy: null, quantity: 0 }` for a request of **zero** against
+     * a variant with plenty of stock — nothing clamped it, there was simply nothing to grant. The
+     * merge's fallback was `clamped.clampedBy ?? 'soldOut'`, so that row was reported to the
+     * customer as sold out when it was not.
+     *
+     * Nothing was dropped, because nothing was asked for. There is no `ClampReason` for "you asked
+     * for none" and inventing one would widen a union three other call sites switch on, so the row
+     * is simply not reported.
+     */
+    const result = mergeCartLines(
+      [line(1, 0)],
+      [],
+      catalogue([[1, stocked({ inventoryQuantity: 50 })]]),
+      POLICY,
+    )
+
+    expect(result.lines).toEqual([])
+    expect(result.dropped).toEqual([])
+    expect(result.reduced).toEqual([])
+  })
+
+  it('still reports a genuinely sold-out variant as sold out', () => {
+    /* The control for the test above: the reason is right when there is one. */
+    const result = mergeCartLines(
+      [line(1, 2)],
+      [],
+      catalogue([[1, stocked({ inventoryQuantity: 0 })]]),
+      POLICY,
+    )
+
+    expect(result.lines).toEqual([])
+    expect(result.dropped).toEqual([{ reason: 'soldOut', requested: 2, resolved: 0, variantId: 1 }])
+  })
+
+  it('marks a line combined only when it was in both bags, which is what the field says', () => {
+    /*
+     * `combined` was `sources > 1`, counted over the concatenated `[...customer, ...guest]`, so a
+     * variant appearing **twice inside one bag** came back `combined: true` — contradicting its own
+     * documentation. A bag holds one row per variant by design, but nothing in this pure function
+     * enforces that and the caller passes rows read from the database.
+     */
+    const duplicatedInOneBag = mergeCartLines(
+      [line(1, 1), line(1, 1)],
+      [],
+      catalogue([[1, stocked({ inventoryQuantity: 50 })]]),
+      POLICY,
+    )
+
+    expect(duplicatedInOneBag.lines).toHaveLength(1)
+    expect(duplicatedInOneBag.lines[0]?.quantity).toBe(2)
+    expect(duplicatedInOneBag.lines[0]?.combined).toBe(false)
+
+    const inBothBags = mergeCartLines(
+      [line(1, 1)],
+      [line(1, 1)],
+      catalogue([[1, stocked({ inventoryQuantity: 50 })]]),
+      POLICY,
+    )
+
+    expect(inBothBags.lines[0]?.combined).toBe(true)
+  })
+})

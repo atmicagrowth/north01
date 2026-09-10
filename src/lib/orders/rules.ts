@@ -60,7 +60,19 @@ const ALLOWED_FULFILLMENT_TRANSITIONS: Record<FulfillmentStatus, readonly Fulfil
 }
 
 export function canFulfillmentTransition(from: FulfillmentStatus, to: FulfillmentStatus): boolean {
-  return ALLOWED_FULFILLMENT_TRANSITIONS[from].includes(to)
+  /**
+   * **`?? []` — Phase 27's first sweep.**
+   *
+   * This was a bare `ALLOWED_FULFILLMENT_TRANSITIONS[from].includes(to)`, which **throws a
+   * TypeError** on a `from` the table does not contain. The type says that cannot happen, and the
+   * type is not what reaches this function: `planFulfillmentChange` is handed a status read from
+   * the database, and a column that gains an option in a migration before this table does is a
+   * crash rather than a refusal.
+   *
+   * A status nobody has taught this machine about can go **nowhere**, which is the safe answer and
+   * the one the caller already knows how to render — `unreachable`.
+   */
+  return (ALLOWED_FULFILLMENT_TRANSITIONS[from] ?? []).includes(to)
 }
 
 /** The states from which nothing further can happen. Exported so a UI can stop offering actions. */
@@ -80,8 +92,17 @@ export type FulfillmentRefusal =
   'notPaid' | 'terminal' | 'trackingRequired' | 'unchanged' | 'unreachable'
 
 export const FULFILLMENT_COPY: Record<FulfillmentRefusal, string> = {
+  /*
+   * **Phase 27's first sweep: this said something untrue about a refunded order.**
+   *
+   * The gate is `payment !== 'paid'`, which a refunded order fails — it *was* paid and the money
+   * went back. The old copy read *"this order has not been paid for"*, which is false, and it told
+   * an operator to cancel an order that is already finished with. The refusal is correct; the
+   * sentence describing it was not.
+   */
   notPaid:
-    'This order has not been paid for, so it cannot be picked or dispatched. Cancel it instead.',
+    'This order is not currently paid for, so it cannot be picked or dispatched. An unpaid order ' +
+    'can be cancelled; a refunded one is already settled.',
   terminal: 'This order is finished. Delivered and cancelled orders do not change again.',
   trackingRequired: 'Add the carrier and the tracking number before marking this order shipped.',
   unchanged: 'That is the status it already has.',

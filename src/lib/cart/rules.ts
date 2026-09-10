@@ -159,16 +159,40 @@ export function mergeCartLines(
   availability: Map<number, LineAvailability | null>,
   maxPerLine: number,
 ): MergeResult {
-  const wanted = new Map<number, { line: CartLineInput; sources: number }>()
+  /**
+   * **`inBoth` rather than a count of occurrences — Phase 27's first sweep.**
+   *
+   * This was `sources += 1` over the concatenated `[...customer, ...guest]`, so a variant appearing
+   * **twice inside one bag** came back `combined: true`. That contradicts the field's own
+   * documentation — *"true when this variant was in both bags"* — and it is not a hypothetical: a
+   * bag holds one row per variant by design, but nothing in this pure function enforces that, and
+   * the caller passes rows read from the database.
+   *
+   * Which bag a line came from is the fact being recorded, so that is what is tracked.
+   */
+  const wanted = new Map<
+    number,
+    { fromCustomer: boolean; fromGuest: boolean; line: CartLineInput }
+  >()
 
-  for (const line of [...customer, ...guest]) {
-    const existing = wanted.get(line.variantId)
+  for (const [source, lines] of [
+    ['customer', customer],
+    ['guest', guest],
+  ] as const) {
+    for (const line of lines) {
+      const existing = wanted.get(line.variantId)
 
-    if (existing) {
-      existing.line = { ...existing.line, quantity: existing.line.quantity + line.quantity }
-      existing.sources += 1
-    } else {
-      wanted.set(line.variantId, { line: { ...line }, sources: 1 })
+      if (existing) {
+        existing.line = { ...existing.line, quantity: existing.line.quantity + line.quantity }
+        existing.fromCustomer ||= source === 'customer'
+        existing.fromGuest ||= source === 'guest'
+      } else {
+        wanted.set(line.variantId, {
+          fromCustomer: source === 'customer',
+          fromGuest: source === 'guest',
+          line: { ...line },
+        })
+      }
     }
   }
 
@@ -176,12 +200,28 @@ export function mergeCartLines(
   const lines: MergedLine[] = []
   const reduced: MergeAdjustment[] = []
 
-  for (const [variantId, { line, sources }] of wanted) {
+  for (const [variantId, { fromCustomer, fromGuest, line }] of wanted) {
     const clamped = clampQuantity(line.quantity, availability.get(variantId) ?? null, maxPerLine)
 
     if (clamped.quantity <= 0) {
+      /**
+       * **`soldOut` only when it is — Phase 27's first sweep.**
+       *
+       * The fallback was `clamped.clampedBy ?? 'soldOut'`, and `clampQuantity` returns
+       * `{ clampedBy: null, quantity: 0 }` for a request of **zero** against a variant with plenty
+       * of stock. A merge carrying a zero-quantity row therefore told the customer their garment
+       * had sold out when it had not — a false statement about inventory, produced by a default.
+       *
+       * There is no `ClampReason` for "you asked for none", and inventing one would widen a union
+       * three other call sites switch on. `stock` is wrong for the same reason `soldOut` is. So the
+       * row is simply **not reported**: nothing was dropped, because nothing was asked for.
+       */
+      if (clamped.clampedBy === null) {
+        continue
+      }
+
       dropped.push({
-        reason: clamped.clampedBy ?? 'soldOut',
+        reason: clamped.clampedBy,
         requested: line.quantity,
         resolved: 0,
         variantId,
@@ -199,7 +239,7 @@ export function mergeCartLines(
       })
     }
 
-    lines.push({ ...line, combined: sources > 1, quantity: clamped.quantity })
+    lines.push({ ...line, combined: fromCustomer && fromGuest, quantity: clamped.quantity })
   }
 
   return { dropped, lines, reduced }
@@ -280,6 +320,21 @@ export function cartTotals(
   for (const line of lines) {
     const quantity = toWholeCount(line.quantity)
 
+    /*
+     * **An unpriced line is counted but not charged for, and Phase 27's sweep left that alone.**
+     *
+     * A `unitPriceMinor` of null, NaN or infinity becomes `0` here, so its units reach `itemCount`
+     * while contributing nothing to the subtotal — a bag that reports three items and charges for
+     * two. Phase 27's unit tests flagged it as a null-means-unknown collapse, and the case for
+     * changing it is real.
+     *
+     * It was not changed, for two reasons. `lib/cart/cart.ts` filters on
+     * `unitPriceMinor !== null && maxQuantity > 0` **before** calling this, so no unpriced line
+     * reaches it on any live path — the shape is defensive only. And the existing behaviour is a
+     * written decision rather than an oversight: §14.1e wants an unavailable line **visible**, and a
+     * count that silently dropped it would hide the discrepancy the bag is trying to show. Making
+     * an unreachable path disagree with a documented decision is not a fix.
+     */
     subtotalMinor += toMinorAmount(line.unitPriceMinor) * quantity
     itemCount += quantity
   }

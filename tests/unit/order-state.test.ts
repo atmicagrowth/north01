@@ -191,13 +191,36 @@ describe('the fulfilment machine (plan §18.1b)', () => {
     }
   })
 
-  it('has no notion of a paid order on the fulfilment axis, so it cannot answer for one', () => {
-    // The fulfilment machine and the payment machine are separate columns (DEV-03). Handed a
-    // payment word it does not know, the machine must not answer `true`: a silent `true` would be
-    // an unknown status granted a transition nobody ever gave it.
+  it('refuses a status it has never been taught, rather than throwing on it', () => {
+    /*
+     * The fulfilment machine and the payment machine are separate columns (DEV-03), so a payment
+     * word is exactly the kind of thing that can arrive here by mistake.
+     *
+     * **This used to throw**, and Phase 27's first sweep changed it. The type says an unknown
+     * status cannot reach this function, and the type is not what reaches it: `planFulfillmentChange`
+     * is handed a status read from the **database**, so a column that gains an option in a migration
+     * before this table does was a crash rather than a refusal. `false` is both the safe answer and
+     * the one the caller already renders — `unreachable`.
+     *
+     * The other direction was always `false` and still is: a destination nobody gave it is not
+     * silently granted.
+     */
     const notAFulfilmentStatus = 'paid' as unknown as FulfillmentStatus
-    expect(() => canFulfillmentTransition(notAFulfilmentStatus, 'shipped')).toThrow(TypeError)
+
+    expect(canFulfillmentTransition(notAFulfilmentStatus, 'shipped')).toBe(false)
     expect(canFulfillmentTransition('processing', notAFulfilmentStatus)).toBe(false)
+
+    /* And the caller turns that into its own vocabulary rather than propagating an exception. */
+    expect(
+      planFulfillmentChange({
+        carrier: 'DPD',
+        from: notAFulfilmentStatus,
+        now: new Date('2026-01-01T00:00:00.000Z'),
+        payment: 'paid',
+        to: 'shipped',
+        trackingNumber: 'TRACK-1',
+      }),
+    ).toEqual({ ok: false, reason: 'unreachable' })
   })
 })
 
