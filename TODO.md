@@ -47,16 +47,43 @@ all.
 cannot touch the live schema and the five harnesses refuse themselves. Do not set that variable to a
 production database.
 
-### What to send
+### What to send — and it is not the production string
 
-In the Neon console: your project → **Connect** (top right) → **Branch: development** → copy.
+**The string supplied on 2026-09-09 was production, twice.** Endpoint
+`ep-delicate-waterfall-axjoiwvz` is the branch the deployed shop reads and writes. It already works,
+it is already in `.env`, and sending it again changes nothing — because the problem is not that the
+harnesses lack a password. It is that they must not point at a database with real customers in it.
+
+Running them against production would create and delete **customers, orders, reviews, products and
+collections in the live shop**. That is what decision D-10 exists to prevent, and it is why they
+refuse themselves rather than trusting anyone to remember.
+
+### What is needed instead: a Neon branch, which takes about thirty seconds
+
+Neon branches are copy-on-write, so this costs almost nothing and is instant:
+
+1. Neon console → your project → **Branches** → **Create branch**
+2. Name it `development`. Parent: `production`. Include data: **yes** — a branch with the real
+   catalogue in it is what makes the harnesses meaningful.
+3. Once it exists: **Connect** (top right) → set **Branch** to `development` → **Connection pooling
+   OFF** (local work wants the direct endpoint) → copy.
+
+It will look like this — a **different** endpoint id from the production one above:
 
 ```
-postgresql://neondb_owner:<new-password>@ep-winter-bird-ax9ouwid.c-4.us-east-2.aws.neon.tech/neondb?sslmode=verify-full
+postgresql://neondb_owner:<password>@ep-<something-else>.c-4.us-east-2.aws.neon.tech/neondb?sslmode=verify-full
 ```
 
-Use the **direct**, non-pooled endpoint locally, and `sslmode=verify-full` — `docs/ENVIRONMENT.md`
-requires both. Paste it in chat and the five harnesses get run against it.
+**Check the endpoint id differs from `ep-delicate-waterfall-axjoiwvz` before sending it.** If it does
+not, the branch selector was still on production.
+
+### What happens once it arrives
+
+- `.env` repointed at it, with `DATABASE_PUSH_TARGET` set to the same database so D-10 is satisfied
+- the five blocked harnesses run — 199 checks, `verify:access` first, because Phase 26 changed
+  `customers.create` and could not re-run it
+- Playwright's browsers installed, and the **57 E2E tests run for the first time**
+- anything they find gets fixed
 
 ### Rotate the role
 
