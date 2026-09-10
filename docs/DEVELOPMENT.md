@@ -111,8 +111,16 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm verify:orders` | The Phase 18 order system — §18.1b's fulfilment machine over all 25 ordered pairs, §18.1c's tracking conditions and its authorization (anonymous, customer and staff attempts against the live access layer), §18.1d's snapshots proved by renaming and repricing the product and then by trying to retype the line, DEV-03's derived display status over all 35 combinations, and the `charge.refunded` path resolved by payment intent. Local database only |
 | `pnpm reindex` | Rebuild the Algolia catalogue index from Postgres. Needed after a CLI write (`pnpm seed`, a migration backfill), after a category slug change, or to recover a drifted index. Atomic — `replaceAllObjects` moves a fresh index over the live one, so there is no window in which the shop looks empty. Writes only to the index `appEnv` names, so a laptop cannot touch production |
 | `pnpm verify:access` | The Phase 7 access-control matrix, run against the live rules — cross-customer reads, role escalation, ownership forcing, the disabled account, the password policy. Creates and removes its own fixtures; local database only. Phase 27 lifts these assertions into Vitest |
-| `pnpm test` | Vitest unit/component tests *(pending — Phase 27)* |
-| `pnpm test:e2e` | Playwright *(pending — Phase 27)* |
+| `pnpm verify:seo` | The Phase 24 SEO rules — canonical URLs, the metadata ladder, the sitemap exclusions, and §24.1b's four prohibitions on product structured data. **Opens no database connection** |
+| `pnpm verify:analytics` | The Phase 25 taxonomy and the two things that fail silently forever: the GA4 reshaping (minor units to decimals, zero-based indices to one-based) and the Sentry redaction. **No database** |
+| `pnpm verify:security` | The Phase 26 rules — every branch of Turnstile verification with an injected verifier, the open-redirect validator, the upload allowlist, the REST create gate, and the secret scanner's own patterns. **No database, no network** |
+| `pnpm scan:secrets` | §26.1d. Walks `git ls-files` for credential shapes. Exits non-zero on a finding, and never quotes the value it found |
+| `pnpm test` | Vitest, watch mode |
+| `pnpm test:run` | Vitest once — **this is the CI command**. Both projects |
+| `pnpm test:unit` | Only the `unit` project: pure business logic, Node environment, no DOM |
+| `pnpm test:components` | Only the `components` project: React Testing Library in jsdom |
+| `pnpm test:e2e` | Playwright. **Refuses to start a server unless `E2E_START_SERVER=1`** — see below |
+| `pnpm test:e2e:ui` | Playwright's UI mode, for writing and debugging a flow |
 
 **Run `pnpm generate:types` after any change to a collection, global, or field.** The generated types are
 committed and the build assumes they are current.
@@ -369,14 +377,61 @@ Accepted: JPEG, PNG, WebP, AVIF, MP4, WebM. **Not** SVG (a script-execution cont
 bytes at offset 0 only, so `GIF89a` followed by an executable is detected as an image). 25 MB, 12,000
 pixels on a side. `pnpm verify:media` proves each of those refusals against a real hostile file.
 
-## Browser and accessibility checks
+## Tests
 
-Playwright and axe-core are **Phase 27** dependencies and are not in `package.json`. Until then, run
-them from a scratch directory against the dev server rather than installing them here.
+Three layers, and they answer three different questions.
 
-Start the server on an explicit port and **confirm what it is serving before trusting it** — two
-unrelated projects occupy `:3000` and `:3001` on the original development machine, and an early
-screenshot pass once captured a different application entirely:
+| Layer | Command | Question |
+|---|---|---|
+| Unit | `pnpm test:unit` | Does this rule hold for every input, including the nasty ones? |
+| Component | `pnpm test:components` | Does this control behave — and stay accessible — in every state a customer can reach? |
+| End-to-end | `pnpm test:e2e` | Does the whole journey work in a browser? |
+
+The eleven `verify:*` harnesses are a fourth thing and are **not** replaced by any of these: they
+assert decisions against the live Payload access layer and the real database. Vitest cannot reach
+either. Four of them — `verify:seo`, `verify:analytics`, `verify:security`, `scan:secrets` — open no
+connection at all and therefore run in CI.
+
+### The E2E suite has never been executed
+
+There is no development database. The only reachable one is **production**, and an E2E suite writes:
+it creates customers, adds to bags and opens Stripe Checkout sessions. Decision **D-10** exists to
+stop a writing harness reaching production, and this is the most destructive harness in the
+repository.
+
+So `playwright.config.ts` starts no server unless you say so explicitly:
+
+```bash
+# Only against a database you are willing to ruin.
+DATABASE_URL='postgresql://…/a-disposable-database' E2E_START_SERVER=1 pnpm test:e2e
+```
+
+Against an already-running server, point at it instead:
+
+```bash
+E2E_BASE_URL=http://localhost:3000 pnpm test:e2e
+```
+
+Browsers are not installed by `pnpm install`. Once, per machine:
+
+```bash
+pnpm exec playwright install --with-deps chromium
+```
+
+### Accessibility
+
+`tests/e2e/accessibility.spec.ts` runs axe over the six routes §27.1e names, at `wcag2a`, `wcag2aa`,
+`wcag21a` and `wcag21aa`, and asserts **zero** violations.
+
+**That does not make the shop accessible**, and the plan says so outright: automated tools cannot see
+focus order, cannot tell whether a live region announced at the right moment, and cannot judge
+whether alternative text says something useful. The manual pass is still required — the spec file
+ends with the specific list for this application, and `docs/ARCHITECTURE.md` records what the Phase 3
+pass found.
+
+When running a manual pass, start the server on an explicit port and **confirm what it is serving
+before trusting it** — two unrelated projects occupy `:3000` and `:3001` on the original development
+machine, and an early screenshot pass once captured a different application entirely:
 
 ```bash
 PORT=3210 pnpm dev

@@ -1,0 +1,141 @@
+# Plan §27.1f — the pull-request pipeline.
+#
+#   Install -> Typecheck -> Lint -> Unit tests -> Build -> E2E where environment permits
+#
+# The order is the plan's, and it is the right one: the cheapest check that can fail the build runs
+# first. A type error should cost fifteen seconds, not a five-minute Next build.
+#
+# **The pure harnesses run here too.** `verify:seo`, `verify:analytics`, `verify:security` and
+# `scan:secrets` open no database connection, so unlike the other eleven `verify:*` scripts they can
+# run on a pull request with no secrets at all. That is not an accident of how they were written —
+# see their docblocks — and it is what makes them worth having in CI.
+#
+# **The build needs a database.** Prerendering reads the catalogue and the site globals through
+# Payload, so the build step is skipped rather than failed when `DATABASE_URL` is not configured.
+# A skipped step that says why is honest; a green step that silently did nothing is not.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Turbopack and Payload both benefit, and CI runners are memory-poor.
+  NODE_OPTIONS: --max-old-space-size=4096
+
+jobs:
+  verify:
+    name: Typecheck, lint, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Read from packageManager in package.json rather than pinned twice.
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # ---- Install ----
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # ---- Typecheck ----
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # ---- Lint ----
+      # --max-warnings 0. A warning nobody has to fix is a warning nobody reads.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      # ---- Unit tests ----
+      - name: Unit and component tests
+        run: pnpm test:run
+
+      # These need no database, no network and no credentials. See the note at the top.
+      - name: Pure verification harnesses
+        run: |
+          pnpm verify:seo
+          pnpm verify:analytics
+          pnpm verify:security
+
+      - name: Secret scan
+        run: pnpm scan:secrets
+
+      # ---- Build ----
+      - name: Build
+        if: ${{ env.DATABASE_URL != '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PAYLOAD_SECRET: ${{ secrets.PAYLOAD_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: pnpm build
+
+      - name: Build skipped
+        if: ${{ env.DATABASE_URL == '' }}
+        run: |
+          echo "::notice title=Build skipped::DATABASE_URL is not configured for this repository."
+          echo "Prerendering reads the catalogue through Payload, so the build cannot run without it."
+          echo "See TODO.md section 1."
+
+  e2e:
+    name: E2E (where environment permits)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: verify
+
+    # §27.1f's "where environment permits", made explicit. E2E writes to the database it points at,
+    # so it runs only when a repository variable names one it is allowed to ruin. It must never be
+    # pointed at production - decision D-10 says so about every other harness in this project.
+    if: ${{ vars.E2E_DATABASE_IS_DISPOSABLE == 'true' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E
+        env:
+          DATABASE_URL: ${{ secrets.E2E_DATABASE_URL }}
+          E2E_START_SERVER: '1'
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY_TEST }}
+          PAYLOAD_SECRET: ${{ secrets.PAYLOAD_SECRET }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_TEST }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET_TEST }}
+        run: pnpm test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

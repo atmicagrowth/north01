@@ -80,9 +80,14 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
 | `posthog-js` | 1.418.10 | **Phase 25 — installed.** Dynamically imported, and only when `NEXT_PUBLIC_POSTHOG_KEY` is set — see `components/analytics/analytics.tsx` |
 | `@sentry/nextjs` | 10.70.0 | **Phase 25 — installed.** `withSentryConfig` wraps `withPayload`, outermost. Its `@sentry/cli` postinstall is **denied** in `pnpm-workspace.yaml`: source-map upload is off, so the binary would be fetched and never run |
 | `@vercel/speed-insights` | 2.0.0 | **Phase 25 — installed.** Rendered in production only, per §25.1e's *"enable after the application is stable enough"*. A second gate lives in the Vercel dashboard — see `TODO.md` |
-| `vitest` | 4.1.11 | Phase 27 |
-| `@playwright/test` | 1.62.1 | Phase 27 |
-| `@axe-core/playwright` | 4.13.0 | Phase 27 |
+| `vitest` | 4.1.11 | **Phase 27 — installed.** Two projects: `unit` in Node, `components` in jsdom. A "pure" module that reaches for `window` therefore fails rather than passing by accident |
+| `@vitejs/plugin-react` | 6.1.1 | **Phase 27 — installed.** Vitest is Vite; JSX in a component test needs a transform, and this is the one Vite ships |
+| `@testing-library/react` | 16.3.3 | **Phase 27 — installed.** Named by the corpus (`01_…_Tech_Stack`, §27.1b) but never version-pinned by it; 16.3.3 is the current release supporting React 19 |
+| `@testing-library/user-event` | 14.6.7 | **Phase 27 — installed.** `fireEvent` dispatches one event; a real click is several. Behaviour tests use this one |
+| `@testing-library/jest-dom` | 7.0.1 | **Phase 27 — installed.** The `/vitest` entry point, not the Jest one |
+| `jsdom` | 30.0.1 | **Phase 27 — installed.** Chosen over `happy-dom` because Radix's primitives exercise the corners — pointer capture, focus management — and jsdom is the implementation those are tested against upstream |
+| `@playwright/test` | 1.62.1 | **Phase 27 — installed.** Chromium plus one mobile project. **The specs have never been executed** — there is no development database and D-10 forbids pointing a writing harness at production. See `TODO.md` §1 |
+| `@axe-core/playwright` | 4.13.0 | **Phase 27 — installed.** §27.1e's automated pass, on six routes. The plan is explicit that it does not replace a manual keyboard review |
 | `prettier` | 3.9.6 | Phase 2 |
 
 ---
@@ -246,9 +251,10 @@ carries `wght 400–900` **and** `opsz 6–96`. If these files are ever re-fetch
 
 ### Verification tooling is borrowed, not installed
 
-Playwright 1.62.1 and axe-core 4.13.0 are **Phase 27** dependencies. Phase 3's browser and
-accessibility pass ran them from the scratchpad directory against the dev server, so `package.json` is
-unchanged by it.
+Playwright 1.62.1 and axe-core 4.13.0 were **Phase 27** dependencies. Phase 3's browser and
+accessibility pass ran them from the scratchpad directory against the dev server, so `package.json`
+was unchanged by it. **Phase 27 installed them properly**, at the same pins, and the suite in
+`tests/e2e/` is where that pass now lives permanently.
 
 ---
 

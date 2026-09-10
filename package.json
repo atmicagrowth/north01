@@ -54,7 +54,13 @@
     "verify:seo": "payload run scripts/verify-seo.ts",
     "verify:analytics": "payload run scripts/verify-analytics.ts",
     "scan:secrets": "payload run scripts/scan-secrets.ts",
-    "verify:security": "payload run scripts/verify-security.ts"
+    "verify:security": "payload run scripts/verify-security.ts",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:components": "vitest run --project components",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",
@@ -83,15 +89,23 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "4.3.3",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/node": "22.20.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "^6.1.1",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.2",
+    "jsdom": "^30.0.1",
     "prettier": "3.9.6",
     "react-email": "6.9.2",
     "tailwindcss": "4.3.3",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
   }
 }
