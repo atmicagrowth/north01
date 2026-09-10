@@ -6,7 +6,17 @@
 #                    its postinstall fetches the platform-native binary.
 #   unrs-resolver  - the module resolver behind eslint-plugin-import-x, which
 #                    eslint-config-next depends on; same native-binary postinstall.
+#
+# Denied, and each denial is a decision rather than an omission:
+#   @sentry/cli    - Phase 25. Its postinstall downloads a ~20 MB platform binary whose only job is
+#                    uploading source maps at build time. This project does not upload them:
+#                    SENTRY_AUTH_TOKEN is deliberately absent (see docs/ENVIRONMENT.md), so the
+#                    binary would be fetched on every install, in CI too, and never run.
+#                    Turning source-map upload on means flipping this to true in the same change.
+#   core-js        - reached through @sentry/cli. Its postinstall prints a funding message.
 allowBuilds:
+  '@sentry/cli': false
+  core-js: false
   esbuild: true
   unrs-resolver: true
 

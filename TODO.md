@@ -1,57 +1,57 @@
 # TODO — things only the project owner can do
 
-## 1. Send a new Neon connection string — BLOCKING
+## 1. Send a **development** Neon connection string
 
-**Status: blocking every gate and every deployment as of 2026-09-09.**
+**Status as of 2026-09-09: production works, development does not.**
 
-The password for the Postgres role `neondb_owner` stopped working part-way through Phase 19's first
-sweep. Almost certainly the rotation recommended after the old password appeared in a chat transcript
-and had to be treated as exposed.
+The string supplied on 2026-09-09 authenticates against the **production** endpoint
+`ep-delicate-waterfall-axjoiwvz`, and everything that needs a database now works with it — `pnpm
+build` prerenders, `/sitemap.xml` is generated from real data, and Phases 24 and 25 were gated in
+full.
+
+The **development** endpoint `ep-winter-bird-ax9ouwid` still refuses the same password:
 
 ```
 CONNECT FAILED: password authentication failed for user 'neondb_owner'  (SQLSTATE 28P01)
 ```
 
-### What this blocks
+### What is still blocked
 
-| Blocked | Why |
+Five harnesses, and only these five. They **create and delete documents**, so decision **D-10**
+refuses to run them unless `DATABASE_PUSH_TARGET` names the database `DATABASE_URL` reaches — which
+is the guard working exactly as intended, because the only reachable database is production.
+
+| Harness | Checks |
 | --- | --- |
-| `pnpm build` | Prerendering reads the catalogue and the site globals through Payload |
-| Every `pnpm verify:*` harness | All fourteen open a Payload instance |
-| `pnpm migrate:create` and any new schema | The generator diffs against a live database |
-| Deploying to Vercel | The build runs `payload migrate` first |
+| `pnpm verify:email` | 85 |
+| `pnpm verify:account` | 40 |
+| `pnpm verify:reviews` | 30 |
+| `pnpm verify:lookbook` | 20 |
+| `pnpm verify:editorial` | 24 |
 
-`pnpm typecheck` and `pnpm lint` still pass and are the only gate available until this is fixed, so
-commits made in the meantime say so explicitly rather than implying a full gate.
+`pnpm verify:seo` (94) and `pnpm verify:analytics` (89) are unaffected: they open no connection at
+all.
+
+`.env` is currently pointed at **production with `DATABASE_PUSH_TARGET` empty**, so Drizzle push
+cannot touch the live schema and the five harnesses refuse themselves. Do not set that variable to a
+production database.
 
 ### What to send
 
-**Two strings**, one per Neon branch. In the Neon console: your project → **Connect** (top right) →
-set **Branch**, turn **Connection pooling** on, and copy.
-
-1. **`development`** — endpoint `ep-winter-bird-ax9ouwid`. This is the one that unblocks local work.
-2. **`production`** — endpoint `ep-delicate-waterfall-axjoiwvz`. Needed to update the Vercel
-   environment variable, or the next deploy fails the same way.
-
-They will look like:
+In the Neon console: your project → **Connect** (top right) → **Branch: development** → copy.
 
 ```
-postgresql://neondb_owner:<new-password>@ep-winter-bird-ax9ouwid-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require
+postgresql://neondb_owner:<new-password>@ep-winter-bird-ax9ouwid.c-4.us-east-2.aws.neon.tech/neondb?sslmode=verify-full
 ```
 
-Paste them in chat and they get handled from there:
+Use the **direct**, non-pooled endpoint locally, and `sslmode=verify-full` — `docs/ENVIRONMENT.md`
+requires both. Paste it in chat and the five harnesses get run against it.
 
-- `.env` repointed at the development branch (using the **direct**, non-pooled endpoint locally, and
-  `sslmode=verify-full`, which is what `docs/ENVIRONMENT.md` requires)
-- `DATABASE_URL` updated in Vercel with the pooled production string
-- the full gate re-run over everything committed since the credential died — Phase 19, its first
-  sweep, and Phase 20
-- a deploy, to confirm the `phase_19_email` migration applies cleanly to production
+### Rotate the role
 
-### If the password cannot be recovered
-
-Neon → **Roles** → `neondb_owner` → **Reset password**. That issues a new one and invalidates the old
-one everywhere, which is the desired end state anyway given the exposure.
+The password has appeared in a chat transcript twice and should be treated as exposed. Neon →
+**Roles** → `neondb_owner` → **Reset password**, then update both this and the Vercel
+`DATABASE_URL`.
 
 ---
 
@@ -105,3 +105,35 @@ mistake.
 
 Export the garment shots larger and the placement map in `scripts/import-brand-media.ts` is the one
 file to change.
+
+---
+
+## 6. Analytics and error reporting — Phase 25 is built and is measuring nothing
+
+Every integration is behind a key check, so with none of these set the SDKs are **never loaded** —
+`posthog-js` is not even fetched. That is the intended local state, not a broken one.
+
+| Variable | Where it comes from | What it turns on |
+| --- | --- | --- |
+| `NEXT_PUBLIC_POSTHOG_KEY` + `NEXT_PUBLIC_POSTHOG_HOST` | PostHog → Project settings | §25.1b behavioural analytics |
+| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | GA4 → Admin → Data streams (`G-…`) | §25.1c ecommerce events |
+| `NEXT_PUBLIC_SENTRY_DSN` | Sentry → Project → Client keys | §25.1d error reporting, browser and server |
+
+### Two things a variable cannot do
+
+1. **Vercel Speed Insights must be enabled in the dashboard** — Vercel → your project → **Speed
+   Insights** → Enable. The component is mounted and renders in production only (§25.1e), and it
+   reports nothing at all until that toggle is on. Do not look for data before flipping it.
+
+2. **Production stack traces will be minified.** Source-map upload needs `SENTRY_AUTH_TOKEN` and is
+   deliberately off: `pnpm-workspace.yaml` denies `@sentry/cli`'s postinstall so its ~20 MB binary is
+   never fetched, in CI either. Turning it on is three coordinated changes — the token, the
+   `allowBuilds` entry, and `sourcemaps` in `next.config.mjs` — and it belongs to whoever owns the
+   Sentry organisation.
+
+### Verify before trusting a number
+
+The Phase 25 prompt asks for it in as many words: *"verify events in local/preview environments
+before enabling production measurement."* That has **not** been done — no account exists to do it
+against. The taxonomy and the GA4 reshaping are covered by `pnpm verify:analytics` (89 checks); what
+is unverified is that events arrive, which only a network tab against a real property can show.

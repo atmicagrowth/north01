@@ -107,7 +107,18 @@ export function ProductCard({
    * which needs no `stopPropagation`, because the click never reaches the link in the first place.
    */
   return (
-    <div className="group relative" data-slot="product-card" data-state={card.state}>
+    /*
+      `data-item-id` and `data-item-name` are §25.1a's `select_item`, and they are **attributes
+      rather than a handler** on purpose. `TrackList` delegates from the grid wrapper, so this stays
+      a Server Component — see `components/analytics/trackers.tsx` for why that is worth arranging.
+    */
+    <div
+      className="group relative"
+      data-item-id={card.id}
+      data-item-name={card.name}
+      data-slot="product-card"
+      data-state={card.state}
+    >
       <Link href={card.href} variant="unstyled" className="block focus-visible:outline-offset-4">
         <div className="relative">
           <MediaImage
@@ -196,6 +207,7 @@ export function ProductCard({
       {showWishlist ? (
         <WishlistButton
           className="absolute right-1 top-1 bg-canvas/85 backdrop-blur-[2px]"
+          itemName={card.name}
           productId={card.id}
           savedForCustomer={savedForCustomer}
           signedIn={signedIn}

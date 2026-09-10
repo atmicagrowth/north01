@@ -36,7 +36,17 @@ export type ConfirmationLine = {
   id: number
   lineTotalMinor: number
   productName: string
+  /**
+   * The product this line was raised from, or `null` when it has since been deleted.
+   *
+   * `OrderItems` stores the name and the SKU precisely so an order survives that deletion — see its
+   * docblock. This is the relationship, kept for §25.1a's `purchase`, whose `item_id` has to be an
+   * id rather than a name; `null` is reported as absent rather than substituted with the name,
+   * because a name in an id field is a row that silently never joins to anything.
+   */
+  productId: null | number
   quantity: number
+  unitPriceMinor: number
   variantLabel: string
 }
 
@@ -100,8 +110,10 @@ export async function readOrderForConfirmation(
     lines: items.map((item) => ({
       id: item.id,
       lineTotalMinor: item.lineTotalMinor,
+      productId: relatedId(item.product),
       productName: item.productName,
       quantity: item.quantity,
+      unitPriceMinor: item.unitPriceMinor,
       variantLabel: item.variantLabel,
     })),
     locale: settings.locale,

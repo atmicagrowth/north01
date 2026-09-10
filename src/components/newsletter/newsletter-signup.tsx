@@ -2,6 +2,9 @@
 
 import { useActionState } from 'react'
 
+import { useActionResult } from '@/components/analytics/use-action-result'
+import { trackEvent } from '@/lib/analytics/track'
+
 import { Field } from '@/components/auth/field'
 import { FormStatus } from '@/components/auth/form-status'
 import { Button } from '@/components/ui/button'
@@ -42,6 +45,20 @@ import { initialNewsletterFormState } from '@/lib/newsletter/form-state'
  */
 export function NewsletterSignup() {
   const [state, action, pending] = useActionState(subscribe, initialNewsletterFormState)
+
+  /*
+   * **§25.1a's `newsletter_signup`, on a successful subscribe.** Not on submit: the action
+   * validates the address and can refuse, and a rejected email is not a signup.
+   *
+   * `source` is `'footer'` because that is where this renders — `SiteFooter` mounts it on every
+   * route. If a second placement ever appears it gets its own value rather than sharing this one;
+   * a signup event that cannot say where it came from cannot answer the question it exists for.
+   */
+  useActionResult(state, (result) => {
+    if (result.status === 'success') {
+      trackEvent('newsletter_signup', { source: 'footer' })
+    }
+  })
 
   return (
     <div>

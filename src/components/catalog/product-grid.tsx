@@ -1,4 +1,6 @@
+import { TrackList } from '@/components/analytics/trackers'
 import { ProductCard, ProductCardSkeleton } from '@/components/catalog/product-card'
+import { cardsToAnalyticsItems } from '@/lib/analytics/items'
 import { Link } from '@/components/ui/link'
 import { CATALOG_PAGE_SIZE, catalogHref, type CatalogParams } from '@/lib/catalog/query'
 import { SEARCH_COPY, unavailableCopy } from '@/lib/catalog/search'
@@ -35,10 +37,20 @@ import { cn } from '@/lib/cn'
 export function ProductGrid({
   cards,
   eager = false,
+  list,
   savedIds,
   signedIn = false,
 }: {
   cards: ProductCardModel[]
+  /**
+   * **Plan §25.1a's `view_item_list` and `select_item`, named by the surface that rendered them.**
+   *
+   * Optional, and deliberately not defaulted. A list id is an *answer* — "the shop grid", "this
+   * collection", "you may also like" — and a default would file every grid in the shop under one
+   * label, which is the same as not measuring lists at all. A call site with nothing meaningful to
+   * say passes nothing and reports nothing.
+   */
+  list?: { id: string; name: string }
   /**
    * The product ids already on the signed-in customer's list, read **once for the page** rather than
    * once per card. A grid of twenty-four cards must not become twenty-four queries.
@@ -52,7 +64,7 @@ export function ProductGrid({
    */
   eager?: boolean
 }) {
-  return (
+  const grid = (
     <ul
       className="grid grid-cols-2 gap-x-m gap-y-l lg:grid-cols-3 xl:grid-cols-4"
       data-slot="product-grid"
@@ -69,6 +81,20 @@ export function ProductGrid({
         </li>
       ))}
     </ul>
+  )
+
+  /*
+   * The tracker wraps the grid rather than living inside it, and renders `display: contents`, so
+   * this component's markup and layout are identical with and without a `list`. That is the
+   * property worth having: instrumentation that changes the DOM is instrumentation that eventually
+   * gets blamed for a visual bug.
+   */
+  return list ? (
+    <TrackList items={cardsToAnalyticsItems(cards)} listId={list.id} listName={list.name}>
+      {grid}
+    </TrackList>
+  ) : (
+    grid
   )
 }
 
@@ -181,7 +207,7 @@ export function CatalogEmpty({
       {curated.length > 0 ? (
         <div className="mt-l w-full">
           <p className="mb-l font-sans text-meta uppercase text-foreground-muted">Worth a look</p>
-          <ProductGrid cards={curated} />
+          <ProductGrid cards={curated} list={{ id: 'curated', name: 'Curated' }} />
         </div>
       ) : null}
     </div>
@@ -269,7 +295,7 @@ export function CatalogUnavailable({
       {curated.length > 0 ? (
         <div className="mt-l w-full">
           <p className="mb-l font-sans text-meta uppercase text-foreground-muted">Worth a look</p>
-          <ProductGrid cards={curated} />
+          <ProductGrid cards={curated} list={{ id: 'curated', name: 'Curated' }} />
         </div>
       ) : null}
     </div>

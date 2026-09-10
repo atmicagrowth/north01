@@ -3,6 +3,7 @@
 import { useId, useState, type ReactNode } from 'react'
 
 import { useUrlState } from '@/components/url-state'
+import { trackEvent } from '@/lib/analytics/track'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -79,6 +80,13 @@ export function SortControl({ value }: { value: CatalogSort }) {
         id={id}
         value={value}
         onChange={(event) => {
+          /*
+           * §25.1a's `sort_changed`. Reported on the change rather than after the results arrive:
+           * the URL is the authority for sort order in this shop, and writing it is the act — the
+           * grid that follows is a consequence, not a confirmation.
+           */
+          trackEvent('sort_changed', { sort: event.target.value })
+
           void setFilters({ page: null, sort: event.target.value as CatalogSort })
         }}
         className={cn(
@@ -271,6 +279,16 @@ export function FilterPanel({
       const next = checked ? [...current, value] : current.filter((entry) => entry !== value)
 
       /*
+       * §25.1a's `filter_applied`, and only when one **is** applied. Unticking a box is not a
+       * filter being applied, and reporting it as one would make the event mean "a filter control
+       * was touched" — which no report can act on. There is no `filter_removed` in §25.1a, so the
+       * removal is deliberately silent rather than mislabelled.
+       */
+      if (checked) {
+        trackEvent('filter_applied', { filter: key, value })
+      }
+
+      /*
        * An empty array is written as `null` so the serializer drops the key. Leaving `?color=` in the
        * URL is a filter that looks applied, reads as applied to anything parsing the URL, and narrows
        * nothing.
@@ -317,6 +335,10 @@ export function FilterPanel({
             id="availability-in-stock"
             checked={filters.availability === 'in-stock'}
             onCheckedChange={(checked) => {
+              if (checked === true) {
+                trackEvent('filter_applied', { filter: 'availability', value: 'in-stock' })
+              }
+
               void setFilters({ availability: checked === true ? 'in-stock' : null, page: null })
             }}
           />

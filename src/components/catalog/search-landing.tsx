@@ -84,7 +84,7 @@ export function SearchLanding({
         {curated.length > 0 ? (
           <div className="mt-xl">
             <SectionHeading className="mb-l">Worth a look</SectionHeading>
-            <ProductGrid cards={curated} />
+            <ProductGrid cards={curated} list={{ id: 'search_curated', name: 'Search landing' }} />
           </div>
         ) : null}
       </PageContainer>

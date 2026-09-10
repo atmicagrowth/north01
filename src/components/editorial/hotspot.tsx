@@ -5,13 +5,16 @@ import { useActionState, useState, useTransition } from 'react'
 
 import type { LookProduct } from '@/lib/lookbook/rules'
 
+import { useActionResult } from '@/components/analytics/use-action-result'
 import { Button } from '@/components/ui/button'
+import { trackEvent } from '@/lib/analytics/track'
 import { Link } from '@/components/ui/link'
 import { CART_ACTION_IDLE } from '@/lib/cart/action-state'
 import { addToBagAction } from '@/lib/cart/actions'
 import { cn } from '@/lib/cn'
 import { previewLookProductAction } from '@/lib/lookbook/actions'
 import { LOOK_COPY, resolvesToOneVariant } from '@/lib/lookbook/rules'
+import { DEFAULT_CURRENCY } from '@/payload/fields/money'
 
 /**
  * **§22.1c's hotspot, upgraded from a link into a preview.**
@@ -77,7 +80,22 @@ export function Hotspot({
   const [loading, startLoading] = useTransition()
 
   const onOpenChange = (open: boolean) => {
-    if (!open || preview !== null) {
+    if (!open) {
+      return
+    }
+
+    /*
+     * **§25.1a's `shop_the_look_opened`, on every open** — including re-opens, which is why it sits
+     * above the `preview !== null` guard below. That guard exists to avoid re-fetching a preview
+     * already in hand; re-using a cached preview is still a customer opening a hotspot, and
+     * counting it once per page would under-report the interaction §22 exists to measure.
+     *
+     * The look is identified by its product, because a hotspot has no id of its own — it is a
+     * coordinate on an image, and the product is the only stable thing about it.
+     */
+    trackEvent('shop_the_look_opened', { lookId: String(hotspot.product.id) })
+
+    if (preview !== null) {
       return
     }
 
@@ -189,7 +207,13 @@ function HotspotPreview({
         it. One purchasable variant is not a choice, so it is added directly. More than one IS a
         choice, and the preview refuses to make it — it sends the customer to the page that asks.
       */}
-      {product && only ? <AddOneVariant label={only.label} variantId={only.id} /> : null}
+      {product && only ? (
+        <AddOneVariant
+          label={only.label}
+          product={{ id: product.id, name: product.name }}
+          variantId={only.id}
+        />
+      ) : null}
 
       {product && !only && product.purchasable.length > 1 ? (
         <Button asChild className="w-full" size="sm" variant="secondary">
@@ -228,8 +252,34 @@ function HotspotPreview({
  * somewhere to be read. Phase 14 built that action to answer with a sentence rather than a total,
  * and the sentence is worth as much here as it is on a product page.
  */
-function AddOneVariant({ label, variantId }: { label: string; variantId: number }) {
+function AddOneVariant({
+  label,
+  product,
+  variantId,
+}: {
+  label: string
+  /** For §25.1a's `shop_the_look_add_item`. */
+  product: { id: number; name: string }
+  variantId: number
+}) {
   const [state, action, pending] = useActionState(addToBagAction, CART_ACTION_IDLE)
+
+  /*
+   * §25.1a distinguishes `shop_the_look_add_item` from `add_to_cart`, so **both** are sent: the
+   * first says which surface converted, the second keeps the ecommerce funnel whole. Reporting only
+   * the editorial one would make every look-driven add invisible to the cart funnel, and reporting
+   * only the cart one would make §22 unmeasurable — which is the reason §25.1a names it separately.
+   */
+  useActionResult(state, (result) => {
+    if (!result.ok) {
+      return
+    }
+
+    const items = [{ itemId: String(product.id), itemName: product.name, quantity: 1 }]
+
+    trackEvent('shop_the_look_add_item', { items, lookId: String(product.id) })
+    trackEvent('add_to_cart', { currency: DEFAULT_CURRENCY, items, valueMinor: null })
+  })
 
   return (
     <form action={action} className="flex flex-col gap-1">

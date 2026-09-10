@@ -3,6 +3,10 @@
 import { Minus, Plus, X } from 'lucide-react'
 import { useActionState } from 'react'
 
+import { useActionResult } from '@/components/analytics/use-action-result'
+import { trackEvent } from '@/lib/analytics/track'
+import { variantLabel } from '@/lib/analytics/items'
+
 import { MediaImage } from '@/components/media/media-image'
 import { IconButton } from '@/components/ui/icon-button'
 import { Link } from '@/components/ui/link'
@@ -38,7 +42,16 @@ import { cn } from '@/lib/cn'
  * `CartItems.ts` stores no price precisely so that §14.1e's *"product price changed"* is visible
  * rather than frozen. The number beside a line is today's number, every time the page renders.
  */
-export function CartLineRow({ compact = false, line }: { compact?: boolean; line: CartLineView }) {
+export function CartLineRow({
+  compact = false,
+  currency,
+  line,
+}: {
+  compact?: boolean
+  /** The bag's currency, for §25.1a's `remove_from_cart`. It lives on the bag, not on the line. */
+  currency: string
+  line: CartLineView
+}) {
   const buyable = line.maxQuantity > 0 && line.unitPriceMinor !== null
 
   /*
@@ -95,7 +108,7 @@ export function CartLineRow({ compact = false, line }: { compact?: boolean; line
             </p>
           </div>
 
-          <RemoveButton lineId={line.id} productName={line.productName} />
+          <RemoveButton currency={currency} line={line} />
         </div>
 
         <div className="flex items-center justify-between gap-s">
@@ -203,14 +216,44 @@ function Stepper({
   )
 }
 
-function RemoveButton({ lineId, productName }: { lineId: number; productName: string }) {
-  const [, action] = useActionState(removeLineAction, CART_ACTION_IDLE)
+function RemoveButton({ currency, line }: { currency: string; line: CartLineView }) {
+  const [state, action] = useActionState(removeLineAction, CART_ACTION_IDLE)
+
+  /*
+   * **§25.1a's `remove_from_cart`, on the server's answer.** `removeLineAction` can refuse — a line
+   * that belongs to another session, a bag that was already emptied in another tab — and a removal
+   * that did not happen is not one to report.
+   *
+   * The quantity is `effectiveQuantity`, the number the bag was actually charging for, rather than
+   * the stored `quantity` the row may still be showing. Removing a line removes what the customer
+   * would have paid for; see `CartLineView` for why the two can differ.
+   */
+  useActionResult(state, (result) => {
+    if (!result.ok) {
+      return
+    }
+
+    trackEvent('remove_from_cart', {
+      currency,
+      items: [
+        {
+          itemId: String(line.productId),
+          itemName: line.productName,
+          priceMinor: line.unitPriceMinor,
+          quantity: line.effectiveQuantity,
+          variant: variantLabel(line.color, line.size),
+        },
+      ],
+      valueMinor:
+        line.unitPriceMinor === null ? null : line.unitPriceMinor * line.effectiveQuantity,
+    })
+  })
 
   return (
     <form action={action}>
-      <input name="lineId" type="hidden" value={lineId} />
+      <input name="lineId" type="hidden" value={line.id} />
 
-      <IconButton label={`Remove ${productName}`} size="sm" type="submit" variant="ghost">
+      <IconButton label={`Remove ${line.productName}`} size="sm" type="submit" variant="ghost">
         <X aria-hidden />
       </IconButton>
     </form>

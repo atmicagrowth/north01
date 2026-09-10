@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 
+import { Analytics } from '@/components/analytics/analytics'
+import { SpeedInsights } from '@/components/analytics/speed-insights'
 import { SiteFooter } from '@/components/layout/site-footer'
 import { SiteHeader } from '@/components/layout/site-header'
 import { NewsletterSignup } from '@/components/newsletter/newsletter-signup'
@@ -107,6 +109,20 @@ export default async function FrontendLayout({ children }: { children: ReactNode
             **DEV-68** for why this cannot happen inside `login()` the way the cart's merge does.
           */}
           <WishlistSync signedIn={customer !== null} />
+
+          {/*
+            **Plan §25 — analytics and observability, mounted once.**
+
+            Here rather than in a page because §25.1a's taxonomy is emitted from every surface in the
+            shop, and a provider that is not above all of them is a provider some events do not
+            reach. Both render `null` when their integration is unconfigured, so a local checkout
+            loads neither SDK — see `analytics.tsx`.
+
+            Sentry is not here: it initialises from `instrumentation-client.ts`, which Next runs
+            before hydration, so it is already watching by the time this tree exists.
+          */}
+          <Analytics />
+          <SpeedInsights />
         </ShellOverlayProvider>
       </body>
     </html>

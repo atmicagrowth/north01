@@ -2,6 +2,8 @@ import type { Metadata } from 'next'
 
 import { redirect } from 'next/navigation'
 
+import { TrackOnMount } from '@/components/analytics/trackers'
+import { variantLabel } from '@/lib/analytics/items'
 import { CartSummary } from '@/components/cart/cart-summary'
 import { CheckoutForm } from '@/components/checkout/checkout-form'
 import { PageContainer } from '@/components/layout/page-container'
@@ -65,6 +67,31 @@ export default async function CheckoutPage() {
 
   return (
     <>
+      {/*
+        **§25.1a's `begin_checkout`.** Reaching this page **is** the beginning of checkout, which is
+        why it is a mount rather than a click: the customer arrives here from the bag, the drawer or
+        a direct link, and all three are the same event.
+
+        The value is the bag's `totalMinor` — the sum of what is *known*. Shipping and tax are
+        quoted without a destination at this point, so they are deliberately not sent: a shipping
+        figure that has not been quoted against an address is a guess, and §25.1a's payloads treat
+        unknown as absent rather than as zero.
+      */}
+      <TrackOnMount
+        event="begin_checkout"
+        payload={{
+          currency: cart.currency,
+          items: cart.lines.map((line) => ({
+            itemId: String(line.productId),
+            itemName: line.productName,
+            priceMinor: line.unitPriceMinor,
+            quantity: line.effectiveQuantity,
+            variant: variantLabel(line.color, line.size),
+          })),
+          valueMinor: cart.totals.totalMinor,
+        }}
+      />
+
       <Section spacing="tight">
         <PageContainer>
           <PageTitle eyebrow="Checkout">Checkout</PageTitle>

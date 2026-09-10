@@ -81,7 +81,7 @@ export default async function CartPage() {
 
                 <ul className="divide-y divide-border border-y border-border">
                   {lines.map((line) => (
-                    <CartLineRow key={line.id} line={line} />
+                    <CartLineRow currency={cart.currency} key={line.id} line={line} />
                   ))}
                 </ul>
               </div>

@@ -281,6 +281,13 @@ async function CatalogResults({
           <ProductGrid
             cards={result.products}
             /*
+             * **§25.1a's list identity, and it is the route rather than the component.** `/shop`,
+             * `/shop/outerwear` and `/search` all render this component, and reporting all three as
+             * "catalog" would make the one number a list report exists to give — which surfaces
+             * convert — unanswerable. `basePath` is exactly the distinction.
+             */
+            list={{ id: basePath, name: routeQuery === null ? basePath : 'search results' }}
+            /*
              * The LCP candidate is the first card of the first page of an **unfiltered listing** —
              * which includes `/shop/<category>`, because standing in a category is not filtering and
              * that page is just as likely to be the one a customer lands on first. A filtered or

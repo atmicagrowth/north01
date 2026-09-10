@@ -72,7 +72,10 @@ export function JournalArticlePage({ article }: { article: JournalView }) {
         <Section divider="top" spacing="tight">
           <PageContainer>
             <SectionHeading className="mb-l">In this story</SectionHeading>
-            <ProductGrid cards={article.relatedProducts} />
+            <ProductGrid
+              cards={article.relatedProducts}
+              list={{ id: 'journal_related', name: 'Journal related products' }}
+            />
           </PageContainer>
         </Section>
       ) : null}

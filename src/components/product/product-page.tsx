@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { TrackList, TrackOnMount } from '@/components/analytics/trackers'
 import { AddToBag } from '@/components/cart/add-to-bag'
 import { RecentlyViewed, RecordProductView } from '@/components/recently-viewed/recently-viewed'
 import { WishlistControl } from '@/components/wishlist/wishlist-button'
@@ -11,6 +12,7 @@ import { ProductGallery } from '@/components/product/product-gallery'
 import { VariantSelector } from '@/components/product/variant-selector'
 import { Badge } from '@/components/ui/badge'
 import { Link } from '@/components/ui/link'
+import { cardsToAnalyticsItems, variantLabel } from '@/lib/analytics/items'
 import { PRODUCT_IMAGE_SIZES } from '@/lib/product/sizes'
 import { clampQuantity } from '@/lib/cart/rules'
 import { inventoryMessage, priceRangeForColor } from '@/lib/product/variants'
@@ -203,6 +205,19 @@ export function ProductPage({
                 implementations of the same policy.
               */}
               <AddToBag
+                item={{
+                  itemId: String(product.id),
+                  itemName: product.name,
+                  /*
+                   * The **selected** variant's price, in minor units, or `null` when no size is
+                   * chosen yet. `events.ts` is explicit that `null` is unknown rather than free —
+                   * and a customer who has not chosen a size has genuinely not chosen a price,
+                   * because this shop's sizes may differ in it.
+                   */
+                  priceMinor: matrix.selected?.priceMinor ?? null,
+                  variant: variantLabel(matrix.selectedColor, matrix.selectedSize),
+                }}
+                currency={settings.currency}
                 disabledReason={
                   matrix.selectedSize === null
                     ? 'Choose a size.'
@@ -222,6 +237,7 @@ export function ProductPage({
                 the quieter of the two intentions, and guide §06 allows one strong fill per page.
               */}
               <WishlistControl
+                itemName={product.name}
                 productId={product.id}
                 savedForCustomer={savedForCustomer}
                 signedIn={signedIn}
@@ -244,6 +260,30 @@ export function ProductPage({
       */}
       <RecordProductView productId={product.id} />
 
+      {/*
+        **§25.1a's `view_item`.** Mounted beside the device-local view record it mirrors, because
+        the two say the same thing to two different audiences — one to this browser's recently-viewed
+        rail, one to the analytics property.
+
+        The price is the **default** variant's, not the selected one: this fires once on arrival,
+        and re-firing it on every size change would report one visit as six views. A size change is
+        not a new product view, and §25.1a has no event for it.
+      */}
+      <TrackOnMount
+        event="view_item"
+        payload={{
+          currency: settings.currency,
+          items: [
+            {
+              itemId: String(product.id),
+              itemName: product.name,
+              priceMinor: matrix.selected?.priceMinor ?? null,
+              variant: variantLabel(matrix.selectedColor, matrix.selectedSize),
+            },
+          ],
+        }}
+      />
+
       {/* §13.1f. Above recently-viewed and recommendations: it is about *this* product. */}
       {reviews}
 
@@ -254,13 +294,19 @@ export function ProductPage({
           <PageContainer>
             <SectionHeading className="mb-l">You may also like</SectionHeading>
 
-            <ul className="grid grid-cols-2 gap-x-m gap-y-l lg:grid-cols-4">
-              {recommendations.map((card) => (
-                <li key={card.id}>
-                  <ProductCard card={card} sizes={PRODUCT_IMAGE_SIZES.recommendation} />
-                </li>
-              ))}
-            </ul>
+            <TrackList
+              items={cardsToAnalyticsItems(recommendations)}
+              listId="pdp_recommended"
+              listName="You may also like"
+            >
+              <ul className="grid grid-cols-2 gap-x-m gap-y-l lg:grid-cols-4">
+                {recommendations.map((card) => (
+                  <li key={card.id}>
+                    <ProductCard card={card} sizes={PRODUCT_IMAGE_SIZES.recommendation} />
+                  </li>
+                ))}
+              </ul>
+            </TrackList>
           </PageContainer>
         </Section>
       ) : null}

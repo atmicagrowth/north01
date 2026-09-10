@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 
+import { TrackPurchase } from '@/components/analytics/track-purchase'
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
@@ -85,6 +86,31 @@ export default async function CheckoutSuccessPage({
 
   return (
     <>
+      {/*
+        **§25.1a's `purchase`, gated on the webhook rather than on arrival.** `paid` is the same
+        boolean the heading uses, which is the point: the page and the analytics property cannot
+        disagree about whether money changed hands. See `track-purchase.tsx` for the deduplication,
+        which matters more here than anywhere else in the taxonomy.
+      */}
+      <TrackPurchase
+        currency={order.currency}
+        items={order.lines.map((line) => ({
+          /*
+           * The **product** id, not the order-line id. A line id is unique per order, so using it
+           * would make every purchase look like a first-ever sale of a product nobody has bought
+           * before. A deleted product reports its name with no id rather than a fabricated one.
+           */
+          itemId: line.productId === null ? line.productName : String(line.productId),
+          itemName: line.productName,
+          priceMinor: line.unitPriceMinor,
+          quantity: line.quantity,
+          variant: line.variantLabel,
+        }))}
+        paid={paid}
+        transactionId={order.orderNumber}
+        valueMinor={order.totalMinor}
+      />
+
       <Section spacing="tight">
         <PageContainer>
           <PageTitle eyebrow={paid ? 'Order confirmed' : 'Order received'}>

@@ -2,6 +2,10 @@
 
 import { useActionState, useId, useState } from 'react'
 
+import { useActionResult } from '@/components/analytics/use-action-result'
+import { trackEvent } from '@/lib/analytics/track'
+import type { AnalyticsItem } from '@/lib/analytics/events'
+
 import { Button } from '@/components/ui/button'
 import { CART_ACTION_IDLE } from '@/lib/cart/action-state'
 import { addToBagAction } from '@/lib/cart/actions'
@@ -45,12 +49,18 @@ import { cn } from '@/lib/cn'
  * chose twice, visible and removable in the bag.
  */
 export function AddToBag({
+  currency,
   disabledReason,
+  item,
   maxQuantity,
   variantId,
 }: {
+  /** For §25.1a's `add_to_cart`. The bag's currency, which is the shop's. */
+  currency: string
   /** Why this cannot be added, or `null` when it can. */
   disabledReason: null | string
+  /** What was added, for the analytics event. Not used for anything the customer sees. */
+  item: AnalyticsItem
   /** The live bound: stock, capped by policy. `0` when nothing can be added. */
   maxQuantity: number
   /** `null` until a size is chosen — §13.1c never picks one on the customer's behalf. */
@@ -70,6 +80,31 @@ export function AddToBag({
    * reconcile props is a second copy of a value that already exists.
    */
   const quantity = Math.min(Math.max(1, requested), ceiling)
+
+  /*
+   * **§25.1a's `add_to_cart`, reported when the server said yes.**
+   *
+   * Not on click and not on submit. `addToBagAction` re-derives the price, re-checks live stock and
+   * clamps the quantity, and it can refuse — a size that sold out between render and click is the
+   * ordinary case, not the exotic one. An event fired on the click would report an add that never
+   * happened, and the resulting funnel would show a cart-abandonment problem this shop does not
+   * have.
+   *
+   * The quantity sent is the one that was **requested**, which is the honest thing this component
+   * knows: the server's clamp is not reported back to it. Where the two differ the add was partial,
+   * and that is a discrepancy worth having rather than a number invented to hide it.
+   */
+  useActionResult(state, (result) => {
+    if (!result.ok) {
+      return
+    }
+
+    trackEvent('add_to_cart', {
+      currency,
+      items: [{ ...item, quantity }],
+      valueMinor: typeof item.priceMinor === 'number' ? item.priceMinor * quantity : null,
+    })
+  })
 
   const blocked = variantId === null || maxQuantity <= 0
 

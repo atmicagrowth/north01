@@ -1,3 +1,4 @@
+import { withSentryConfig } from '@sentry/nextjs'
 import { withPayload } from '@payloadcms/next/withPayload'
 
 /** @type {import('next').NextConfig} */
@@ -25,4 +26,31 @@ const nextConfig = {
 
 // Payload must wrap the Next config: it injects the aliases and server-external packages
 // the CMS needs in order to run inside the same Next.js deployable.
-export default withPayload(nextConfig, { devBundleServerPackages: false })
+const withPayloadConfig = withPayload(nextConfig, { devBundleServerPackages: false })
+
+/**
+ * Sentry wraps the result — plan §25.1d, Phase 25.
+ *
+ * **Order matters and it is Sentry outermost.** Payload's wrapper injects module aliases and the
+ * server-external package list the CMS cannot run without; Sentry's adds build-time instrumentation
+ * on top of a finished config. Wrapping the other way round would hand Payload a config Sentry had
+ * already rewritten, which is not the input it validates against.
+ *
+ * **Source maps are not uploaded**, and that is a decision rather than an omission. Upload needs
+ * `SENTRY_AUTH_TOKEN`, which this project deliberately does not set — `pnpm-workspace.yaml` denies
+ * `@sentry/cli`'s postinstall for the same reason, so the ~20 MB binary is never fetched in CI
+ * either. The consequence is stated plainly so nobody is surprised by it: **production stack traces
+ * will be minified.** Turning it on is three coordinated changes — the token, the `allowBuilds`
+ * entry, and `sourcemaps` below — and it belongs to whoever owns the Sentry organisation.
+ *
+ * `telemetry: false` stops the build reporting itself to Sentry, which is unrelated to error
+ * reporting and is not something a build should do without being asked.
+ */
+export default withSentryConfig(withPayloadConfig, {
+  disableLogger: true,
+  silent: true,
+  sourcemaps: { disable: true },
+  telemetry: false,
+  tunnelRoute: false,
+  widenClientFileUpload: false,
+})

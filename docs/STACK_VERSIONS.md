@@ -77,9 +77,9 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
 | `resend` + `react-email` + `@react-email/components` | 6.22.0 / 6.9.2 / 1.0.12 | Phase 19 |
 | `cloudinary` | 2.10.1 | **Phase 8 — installed.** Server-only, imported by exactly one file (`payload/storage/cloudinary.ts`). Delivery URLs are built without it — see D-26 |
 | `@payloadcms/plugin-cloud-storage` | 3.88.0 | **Phase 8 — installed.** Exact peer on `payload@3.88.0`; its only new transitive deps are `range-parser` and `find-node-modules` |
-| `posthog-js` | 1.418.10 | Phase 25 |
-| `@sentry/nextjs` | 10.70.0 | Phase 25 |
-| `@vercel/speed-insights` | 2.0.0 | Phase 25 |
+| `posthog-js` | 1.418.10 | **Phase 25 — installed.** Dynamically imported, and only when `NEXT_PUBLIC_POSTHOG_KEY` is set — see `components/analytics/analytics.tsx` |
+| `@sentry/nextjs` | 10.70.0 | **Phase 25 — installed.** `withSentryConfig` wraps `withPayload`, outermost. Its `@sentry/cli` postinstall is **denied** in `pnpm-workspace.yaml`: source-map upload is off, so the binary would be fetched and never run |
+| `@vercel/speed-insights` | 2.0.0 | **Phase 25 — installed.** Rendered in production only, per §25.1e's *"enable after the application is stable enough"*. A second gate lives in the Vercel dashboard — see `TODO.md` |
 | `vitest` | 4.1.11 | Phase 27 |
 | `@playwright/test` | 1.62.1 | Phase 27 |
 | `@axe-core/playwright` | 4.13.0 | Phase 27 |

@@ -17,6 +17,7 @@ import { Link } from '@/components/ui/link'
 import type { CartView } from '@/lib/cart/cart'
 import { cn } from '@/lib/cn'
 import { CART_COPY } from '@/lib/cart/rules'
+import { DEFAULT_CURRENCY } from '@/payload/fields/money'
 import type { ShellNavItem } from '@/lib/navigation/resolve'
 
 /**
@@ -56,6 +57,9 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
    */
   const browse = items[0] ?? null
   const lines = cart?.lines ?? []
+
+  /* The bag's own currency where there is a bag, and the shop's default where there is not. */
+  const currency = cart?.currency ?? DEFAULT_CURRENCY
 
   return (
     <Drawer open={isOpen('cart')} onOpenChange={(next) => setOpen('cart', next)}>
@@ -151,7 +155,7 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
 
             <ul className="divide-y divide-border">
               {lines.map((line) => (
-                <CartLineRow compact key={line.id} line={line} />
+                <CartLineRow compact currency={currency} key={line.id} line={line} />
               ))}
             </ul>
           </div>

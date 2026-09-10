@@ -89,7 +89,10 @@ export function CollectionPage({ collection }: { collection: CollectionView }) {
         <Section divider="top" spacing="tight">
           <PageContainer>
             <SectionHeading className="mb-l">Featured</SectionHeading>
-            <ProductGrid cards={collection.featured} />
+            <ProductGrid
+              cards={collection.featured}
+              list={{ id: 'collection_featured', name: 'Collection featured' }}
+            />
           </PageContainer>
         </Section>
       ) : null}
@@ -99,7 +102,10 @@ export function CollectionPage({ collection }: { collection: CollectionView }) {
           <SectionHeading className="mb-l">Everything in {collection.title}</SectionHeading>
 
           {collection.products.length > 0 ? (
-            <ProductGrid cards={collection.products} />
+            <ProductGrid
+              cards={collection.products}
+              list={{ id: 'collection', name: 'Collection' }}
+            />
           ) : (
             /*
               The prompt's "empty product relationships". A collection with nothing published in it is

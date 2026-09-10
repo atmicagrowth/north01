@@ -3,7 +3,10 @@
 import { Heart } from 'lucide-react'
 import { useActionState, useSyncExternalStore } from 'react'
 
+import { useActionResult } from '@/components/analytics/use-action-result'
 import { IconButton } from '@/components/ui/icon-button'
+import { trackEvent } from '@/lib/analytics/track'
+import type { AnalyticsItem } from '@/lib/analytics/events'
 import { createLocalList } from '@/components/local-list'
 import { WISHLIST_ACTION_IDLE } from '@/lib/wishlist/action-state'
 import { removeFromWishlistAction, saveToWishlistAction } from '@/lib/wishlist/actions'
@@ -53,11 +56,14 @@ const guestList = createLocalList(GUEST_WISHLIST_KEY, readGuestWishlist)
 
 export function WishlistButton({
   className,
+  itemName,
   productId,
   savedForCustomer,
   signedIn,
 }: {
   className?: string
+  /** For §25.1a's wishlist events. An id alone answers nothing anybody would ask of the report. */
+  itemName?: string
   productId: number
   /** Whether this product is on the signed-in customer's list, resolved on the server. */
   savedForCustomer: boolean
@@ -92,7 +98,35 @@ export function WishlistButton({
         : (removeState.notice !== null ? removeState.saved : saveState.saved) || savedForCustomer
     : guestIds.includes(productId)
 
+  const item: AnalyticsItem = { itemId: String(productId), itemName: itemName ?? String(productId) }
+
+  /*
+   * **The signed-in path reports what the server did, not what was clicked** — the same rule
+   * `AddToBag` follows. `saved` is derived from the action's own answer, so it is already the state
+   * *after* the write, and a refused write leaves it unchanged.
+   *
+   * Both actions are watched, because either can be the one that ran.
+   */
+  useActionResult(saveState, (result) => {
+    if (result.ok && result.saved) {
+      trackEvent('add_to_wishlist', { items: [item] })
+    }
+  })
+
+  useActionResult(removeState, (result) => {
+    if (result.ok && !result.saved) {
+      trackEvent('remove_from_wishlist', { items: [item] })
+    }
+  })
+
   const onGuestToggle = () => {
+    /*
+     * A guest's list is device-local, so there is no server to wait for and no way for this to
+     * fail — the write is the outcome. Firing here is the same rule applied to a different
+     * authority, not an exception to it.
+     */
+    trackEvent(saved ? 'remove_from_wishlist' : 'add_to_wishlist', { items: [item] })
+
     guestList.set(
       saved
         ? removeFromGuestWishlist(guestIds, productId)
@@ -138,10 +172,12 @@ export function WishlistButton({
  * is being saved.
  */
 export function WishlistControl({
+  itemName,
   productId,
   savedForCustomer,
   signedIn,
 }: {
+  itemName?: string
   productId: number
   savedForCustomer: boolean
   signedIn: boolean
@@ -158,6 +194,7 @@ export function WishlistControl({
     <div className="flex flex-col gap-xs">
       <div className="flex items-center gap-s">
         <WishlistButton
+          itemName={itemName}
           productId={productId}
           savedForCustomer={savedForCustomer}
           signedIn={signedIn}

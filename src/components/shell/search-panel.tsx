@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 
 import { MediaImage } from '@/components/media/media-image'
+import { trackEvent } from '@/lib/analytics/track'
 import { useShellOverlay } from '@/components/shell/overlay-context'
 import { cn } from '@/lib/cn'
 import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
@@ -320,6 +321,18 @@ export function SearchPanel() {
       }
 
       writeRecent(pushRecentSearch(recent, normalised))
+
+      /*
+       * **§25.1a's `search_submitted`, on the normalised term.** Reporting the raw input would fill
+       * the report with `"  Jacket "`, `"jacket"` and `"JACKET"` as three searches — the same
+       * spelling problem `canonicaliseParams` solves for the URL, and the same answer: normalise
+       * once and measure the thing the shop actually searched for.
+       *
+       * The result count is not sent. It is not known here — the results are the next page's — and
+       * the alternative, firing this after the grid renders, would miss every search that navigated
+       * away or failed. An event that describes intent belongs at the moment of the intent.
+       */
+      trackEvent('search_submitted', { term: normalised })
 
       go(`${SEARCH_PATH}?q=${encodeURIComponent(normalised)}`)
     },

@@ -51,7 +51,8 @@
     "verify:lookbook": "payload run scripts/verify-lookbook.ts",
     "verify:editorial": "payload run scripts/verify-editorial.ts",
     "verify:orders": "payload run scripts/verify-orders.ts",
-    "verify:seo": "payload run scripts/verify-seo.ts"
+    "verify:seo": "payload run scripts/verify-seo.ts",
+    "verify:analytics": "payload run scripts/verify-analytics.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",
@@ -59,6 +60,8 @@
     "@payloadcms/plugin-cloud-storage": "3.88.0",
     "@payloadcms/richtext-lexical": "3.88.0",
     "@react-email/components": "1.0.12",
+    "@sentry/nextjs": "10.70.0",
+    "@vercel/speed-insights": "2.0.0",
     "algoliasearch": "5.57.0",
     "class-variance-authority": "0.7.1",
     "cloudinary": "2.10.1",
@@ -68,6 +71,7 @@
     "next": "16.3.2",
     "nuqs": "2.10.1",
     "payload": "3.88.0",
+    "posthog-js": "1.418.10",
     "radix-ui": "1.6.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",

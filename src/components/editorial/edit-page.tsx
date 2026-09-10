@@ -68,7 +68,7 @@ export function EditPage({ edit }: { edit: EditView }) {
               </p>
             ) : null}
 
-            <ProductGrid cards={group.products} />
+            <ProductGrid cards={group.products} list={{ id: 'edit', name: 'Edit' }} />
           </PageContainer>
         </Section>
       ))}

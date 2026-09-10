@@ -6932,6 +6932,243 @@ description, and `??` walked straight past the full one. And `routes.ts` promise
   documents, so D-10 holds them until a **development** connection string exists. See `TODO.md`.
 - **A browser pass** over the six Phase 23 routes and the Phase 22 hotspots.
 
+## 1.30 Phase 25 — analytics and observability
+
+Plan §25.1a–§25.1e. **Three dependencies, installed at their pinned versions** — `posthog-js`
+1.418.10, `@sentry/nextjs` 10.70.0, `@vercel/speed-insights` 2.0.0 — and **no migration**. GA4 has no
+package: it is a `gtag` script tag.
+
+### 1.30.1 The taxonomy came first, and it is a type
+
+The prompt is explicit about the order — *"define a clean ecommerce/event taxonomy first, then
+instrument the core flows"* — and §25.1a asks for *"a single internal naming convention"*.
+
+`AnalyticsEvent` is a union of exactly the seventeen §25.1a names, and `trackEvent` takes it. **A
+typo is a compile error**, not a column in a dashboard nobody notices is empty — which is the failure
+mode of string-keyed analytics and the reason it is worth a type. `AnalyticsPayloads` maps each event
+to what it carries, so `purchase` cannot be sent without a value.
+
+**The internal names are the GA4 names**, for the ten that overlap. §25.1a's ecommerce list is GA4's
+recommended vocabulary word for word, and a translation table between an internal name and a vendor
+name is somewhere for the two to drift — invisibly, because the events still arrive, under the wrong
+label. The seven discovery events are custom, under the same names, and none collides with a GA4
+reserved name.
+
+### 1.30.2 Money crosses the vendor boundary exactly once
+
+Everything in this project holds money in integer minor units, and §25.1c wants GA4 decimals. The
+division happens in **one** function, `toGa4Params`, at the boundary where the format demands it —
+the same rule `money.ts` follows for display and `toMajorUnits` follows for structured data.
+
+A `price` field that is sometimes cents and sometimes dollars reports revenue a **hundred times too
+high**, and it is not recoverable: the wrong numbers are already in the property. So the conversion
+is a pure function with fifteen assertions on it, including the two that matter most — a zero value
+is a real zero, and an **unknown** value is absent rather than zero. GA4 treats those differently in
+a revenue report, and this project already has the rule written down: `null` means unknown, `0` means
+none.
+
+`index` is one-based in GA4 and zero-based everywhere here. Converted in the same place, once.
+
+### 1.30.3 Instrumenting Server Components without converting them
+
+`ProductCard` is the most-rendered component in the shop and it is a Server Component. Adding an
+`onClick` to report `select_item` would convert it **and everything it renders** into client
+components, which is a large regression bought with an analytics event — the homepage's whole
+performance argument is that it ships almost no client JavaScript.
+
+So `ProductCard` gained two **attributes**, `data-item-id` and `data-item-name`, and `TrackList`
+delegates from the grid wrapper: one listener for forty cards, and the card stays a server component.
+It renders `display: contents`, so the wrapper can sit around a CSS grid without becoming a box —
+instrumentation that changes the DOM eventually gets blamed for a visual bug.
+
+The listener is in the **capture** phase. A card's own click handling — the cart drawer closing
+itself, a hotspot preventing default — can stop propagation first, and a `select_item` that
+disappears whenever the surrounding UI does something is worse than none.
+
+### 1.30.4 An event is emitted where it is *true*, not where it was clicked
+
+This is the single rule behind every call site, and it is what makes the funnel worth reading.
+
+`addToBagAction` re-derives the price, re-checks live stock and clamps the quantity — **it can
+refuse**, and a size that sold out between render and click is the ordinary case. An `add_to_cart`
+fired on the click would report an add that never happened, and the resulting report would show a
+cart-abandonment problem this shop does not have.
+
+So `useActionResult` watches the `useActionState` result and fires only on success. Its guard is
+**reference identity**: every action invocation returns a new object, so two identical successes are
+two events and a re-render is none. The initial state is skipped, because a form that has not been
+submitted has produced no result.
+
+The guest wishlist is the deliberate exception: a device-local list has no server to wait for, so the
+write **is** the outcome and the event fires at the click. Same rule, different authority.
+
+### 1.30.5 `purchase` is the one event that must never be sent twice
+
+Every other event describes something a customer did, and twice is two events. A purchase is a fact
+about an order, and reporting it twice **doubles reported revenue**.
+
+Three conditions, and only the third is obvious:
+
+1. **The order is paid** — §17.1g, and `AGENTS.md`: *"only a signature-verified Stripe webhook marks
+   an order paid. Reaching the success page is not payment."* A customer lands on the success page
+   the instant Stripe redirects, routinely **before** the webhook arrives. The page says *Order
+   received* and nothing is sent. On refresh, once the webhook has landed, it says *Order confirmed*
+   and the event fires. An order that is never paid is never reported.
+2. **Not already sent on this device** — `sessionStorage`, keyed on the order number, because the
+   success URL is refreshable, bookmarkable and shareable. Session scope rather than local: a repeat
+   purchase gets a new order number, so `localStorage` would be storing keys forever against a
+   collision that cannot happen.
+3. **Not already sent in this component** — a ref, for Strict Mode's development remount.
+
+Storage can throw (private mode, blocked site data). It is wrapped, and a throw means the event
+**is** sent: an occasional double-count is a smaller error than silently dropping revenue. That is
+the one place in the file where the trade goes that way, and it is stated rather than assumed.
+
+### 1.30.6 §25.1d is enforced on the way out, on two independent grounds
+
+An error report is the one payload in a system that is **assembled by accident**. Nobody chooses what
+goes into a stack trace, a breadcrumb or a captured request body — the runtime does, from whatever
+was in scope. Redaction therefore cannot be a habit at call sites; it has to run over the finished
+event.
+
+`redact.ts` walks anything and scrubs on two grounds, because either alone leaks:
+
+- **By key** — anything named like a secret. Catches a value whose *format* is unremarkable: a
+  password, a session id, an address line.
+- **By value** — anything shaped like a secret. Catches one in a place nobody thought to name: a
+  Stripe key interpolated into a message, a connection string in a `cause`, a token inside a URL.
+
+Order inside the value patterns is load-bearing. A Postgres URL contains an `@`, so the email pattern
+would otherwise eat part of it and leave the host **and the password** behind — a partial redaction
+that reads as a successful one. The whole-URL pattern runs first.
+
+Three things `redact` alone would not do, and `redactEvent` does:
+
+- **Cookies and headers are dropped, not scrubbed.** A redacted-but-present `payload-token` still
+  tells a reader which requests were authenticated, and there is nothing in a cookie jar worth
+  keeping.
+- **The user is reduced to an id.** *"Raw personal data where not necessary"*; an id answers *"one
+  customer or a thousand?"*, which is the only question a report needs.
+- **The URL keeps its route and loses its token.** Which route failed is the useful half.
+
+It never returns `null`. §25.1d asks for redaction, not silence, and dropping errors to be safe would
+trade a privacy problem for a reliability one.
+
+### 1.30.7 Two of the seventeen events are not emitted, and both are recorded rather than faked
+
+- **`add_payment_info`** — §25.1a already hedges it: *"where applicable"*. It is not applicable here.
+  Stripe Checkout is **hosted**, and §17 keeps it that way deliberately: this application never sees
+  a card, a wallet or a payment-method selection, so there is no moment at which payment information
+  is added. Firing it at redirect would report the customer *leaving* for Stripe as them entering
+  their details, which is a different thing and often a different outcome. **DEV-73.**
+- **`quick_view_opened`** — there is no quick view. `product-tile.tsx` mentions §11.1c's *"quick
+  view, quick add and a wishlist"* in a docblock; only the wishlist was built, and no phase since has
+  asked for the other two. The event stays in the taxonomy because §25.1a lists it and because the
+  taxonomy is the deliverable, but nothing emits it. **DEV-74.**
+
+Leaving both in the union and emitting neither is the honest shape: the vocabulary is complete and
+the instrumentation says what is true.
+
+### 1.30.8 What Sentry is wired into, and what it is deliberately not
+
+Four entry points, because Next has four kinds of failure and no single hook sees them all:
+
+| Failure | Caught by |
+|---|---|
+| Unhandled browser exception | `instrumentation-client.ts` |
+| Server exception, integration failure | `sentry.server.config.ts`, from `register()` |
+| **Server Component render error** | `onRequestError` in `instrumentation.ts` |
+| Root layout / hydration failure | `app/global-error.tsx` |
+
+The third is the one that is easy to miss: an exception thrown while rendering a Server Component
+does not reach a client boundary as an exception — React sends a digest and Next renders an error
+page — so without `onRequestError` the report says only that a page failed.
+
+`global-error.tsx` renders its own `<html>` with **inline styles**, because the stylesheet is loaded
+by the layout that just failed. It renders `error.digest` and **not** `error.message`: §4.1b already
+forbids putting a server-produced message in a public response, and an error boundary is a public
+response. The digest is meaningless to a stranger and is the exact key an operator greps for.
+
+Its "Home" link is a real `<a>` with the Next lint rule suppressed and the reason written out: a soft
+navigation would re-enter the router and mount the tree that just failed.
+
+**Traces are off** (`tracesSampleRate: 0`). §25.1d asks for errors; §25.1e defers performance
+measurement until there are real users. Turning tracing on before then buys a p75 built from a sample
+of one.
+
+### 1.30.9 §25.1e is a schedule, and it is honoured as one
+
+*"Enable after the application is stable enough to generate meaningful real-user data."* The package
+is installed — it is on the Phase 25 list — and the component renders in **production only**. On a
+preview or a laptop it returns `null` and the beacon is never requested.
+
+There is a second gate no code can control: Speed Insights reports nothing until it is enabled for
+the project in the Vercel dashboard. `TODO.md` §6 carries it, so nobody goes looking for data that
+was never being collected.
+
+### 1.30.10 `@sentry/cli`'s postinstall is denied, and that has a visible consequence
+
+pnpm 11 asked; the answer is **false**, in `pnpm-workspace.yaml` beside the two allowed builds. Its
+postinstall downloads a ~20 MB platform binary whose only job is uploading source maps, and this
+project does not upload them: `SENTRY_AUTH_TOKEN` is deliberately unset, so the binary would be
+fetched on every install — in CI too — and never run.
+
+The consequence is stated plainly rather than discovered later: **production stack traces will be
+minified.** Turning it on is three coordinated changes — the token, the `allowBuilds` entry, and
+`sourcemaps` in `next.config.mjs` — and it belongs to whoever owns the Sentry organisation.
+
+`withSentryConfig` wraps `withPayload`, **outermost**. Payload's wrapper injects the aliases and
+server-external packages the CMS cannot run without; Sentry's adds build instrumentation on top of a
+finished config.
+
+### 1.30.11 Two small model changes the events needed, and why they were the right ones
+
+- **`ConfirmationLine.productId` and `unitPriceMinor`.** GA4's `item_id` must be an **id**, and the
+  confirmation view carried only the stored name. Using the order-line id would make every purchase
+  look like a first-ever sale of a product nobody has bought before. A deleted product reports its
+  name with no id rather than a fabricated one — `OrderItems` stores the name precisely so an order
+  survives that deletion.
+- **`ProductCard` has no price, and none was invented.** It carries `priceLabel` — `"From $95.00"` —
+  because a card renders a label and a range is a real state. Parsing that back into a number would
+  invent precision the model does not have: a floor is not a price. So `select_item` and
+  `view_item_list` omit `priceMinor`, which `events.ts` defines as *unknown*, and the events that
+  genuinely know a price are built from the variant or the order line.
+
+### 1.30.12 What was verified, and how
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck` | passes |
+| `pnpm lint --max-warnings 0` | passes |
+| `pnpm build` | passes, with the Sentry wrapper in the config |
+| `pnpm verify:analytics` | **89/89** |
+| `pnpm verify:seo` | 94/94, unchanged |
+
+The second harness in this project that **touches no database**, for the same reason as the first:
+what §25 decides is pure. It asserts the two things that fail *silently, in production, forever, with
+nothing in the application misbehaving* — the GA4 reshaping and the Sentry redaction.
+
+What it cannot assert is the phase prompt's own instruction: *"verify events in local/preview
+environments before enabling production measurement."* That needs a network tab and a real property,
+and no account exists. **It has not been done**, and `TODO.md` §6 says so rather than implying
+otherwise.
+
+`react-hooks/refs` rejected the "latest ref" pattern written during render — correctly: a ref written
+during render is a value React cannot see. All four occurrences moved into an effect declared before
+the effect that reads them.
+
+### 1.30.13 What is now owed
+
+- **Verify events against a real PostHog and GA4 property**, per the phase prompt. `TODO.md` §6.
+- **Enable Speed Insights in the Vercel dashboard**, per §25.1e's own condition.
+- **`add_payment_info` and `quick_view_opened`** stay unemitted until there is something true to
+  emit — DEV-73 and DEV-74.
+- **Consent.** Nothing here asks for permission before loading a vendor, and no section of the corpus
+  requires it. A shop selling into the EU or California needs a banner and a gate in front of
+  `Analytics`; the integration boundary is already the one place that would change. Recorded as gap
+  **G-17**.
+- **The five harnesses** D-10 still holds until a development connection string exists.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -8827,4 +9064,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 22 — shop the look | 2026-09-09 | Notes **§1.27**. **No dependency, no migration, and no new component library** — `radix-ui@1.6.7` already ships `@radix-ui/react-popover`. §22 is unusually thin: no route, no test list, no acceptance gate. What it names is §22.1d's six numbered steps and a prohibition repeated twice — *"do not guess sizes silently"*, *"never silently guess unavailable or missing variants"* — and that prohibition is the phase. Phase 6 had already built §22.1a's fields (four coordinates as **percentages**, so *"do not hard-code hotspot coordinates in React"* was satisfied before this phase began) and Phase 10 had already shipped the marker, having named its own successor: *"a marker that opened an empty dialog would be §0.1.17's fake control."* **The naive upgrade would have broken the clause the plan did not have to state** (**DEV-72**): turning the marker into a button satisfies three of §22.1c's four clauses and breaks *"allow full PDP navigation"* — and breaks something §22.1c never mentions, because Phase 10's marker works with **no JavaScript**. So the trigger is still the anchor, wrapped in `Popover.Trigger asChild` with its default prevented: with JS the preview opens, without it the anchor navigates, and the preview **offers** the product page rather than replacing it. A **Popover, not a Dialog** — a preview is anchored to what opened it and does not deserve a focus trap, a scrim or a scroll lock; and the shell's `overlay-context` is deliberately not reused, because it exists for overlays with **no trigger in their own subtree** and would also enter a mutual-exclusion machine that closes the bag. Radix supplies the ARIA Phase 9 once got wrong by hand. **The preview is fetched when opened**, not when rendered: four blocks × eight markers would be thirty-two stock queries paid by everyone for a section most visitors never touch — and it means availability is resolved as it is *now*. §22.1d's step 3 is enforced by a **type**: products needing a size come back in a bucket carrying no variant to add, so a caller cannot guess by accident. One purchasable variant is not a guess (it is the single available thing); picking medium out of three in stock is. Step 6's report **separates the two reasons** — *"needs a size"* is a ten-second fix and *"not available"* is a dead end, and *"2 items skipped"* is neither. The count reported is what actually landed, since `addToCart` re-checks live stock. **`/lookbook` still 404s** and that is deliberate: §22 names no route, the page is Phase 23's, and building it here would be building a later phase early. New harness `pnpm verify:lookbook` — 20 checks asserting the prohibition, because §22 sets no tests of its own. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass on hotspot alignment, where `reserveBox`'s unguarded 16:9 fallback for a media record with no stored dimensions is the one path that could silently drift every marker. |
 | Phase 23 — editorial, collections, journal | 2026-09-09 | Notes **§1.28**. **No dependency and no migration** — the fourth phase running — and six new routes: `/collections/[slug]`, `/edits/[slug]`, `/lookbook`, `/lookbook/[slug]`, `/journal`, `/journal/[slug]`. **Two blocks had been authorable for seventeen phases and rendered nothing**: `gallery` and `pullQuote` have been on `collections.body` and `edits.body` since Phase 6 with no resolver case and no component anywhere, so an editor could compose one, publish, and find the section absent — §0.1.17's rule inverted, a CMS field that silently discards work. Invisible until now because no route rendered a body. **Two block resolvers now exist on purpose**: `home/resolve.ts`'s is module-private and typed to the Homepage union, and widening it would make the homepage's exhaustive `never` default reject two blocks the homepage can never receive. **A collection page is not a filterable grid** — DEV-09 ruled that out, and reusing `CatalogPage` would also have been a live defect: `requiresSearchIndex()` sends any collection query to Algolia, because membership is a Payload `join` with no column, so the page would have rendered **nothing at all** whenever the search service was down while every other listing survived. Reading the ordered id list through Postgres keeps it working with no search service and keeps the curator's order. **Featured products without a new field**: `Collections.products` is ordered and its own description says *"dragging a row is the curation"* — the front of a curated list is what featured means, resolved from the same cards as the grid so the two cannot disagree. **Products are never read through the relationship at depth**: `publishedOnly` checks `status` and explicitly not `publishedAt`, and knows nothing about `derived.priceFromMinor`, so a depth-populated grid would have shown scheduled drops and withdrawn garments. **The navigation has been broken since Phase 9 and is not any more** — `/lookbook` and `documentHref`'s `/lookbook/<slug>` both 404'd; building either alone would have left the other broken. §23.1c's *"avoid creating an editorial dead end"* is designed against rather than avoided: three exits per article, each resolved through the published rules so a withdrawn product is not offered rather than offered as a 404, and a fallback exit when an editor filled in none of them. New harness `pnpm verify:editorial` — 24 checks covering the four failure cases the prompt names by title. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass over six routes that have never rendered, `/collections` and `/edits` indexes, `generateMetadata` (Phase 24), and the contact form (**G-08**), which is still the missing caller for Phase 19's contact template. |
 | Phase 24 — search engine optimization | 2026-09-09 | Notes **§1.29**. **No dependency and no migration** — the fifth phase running. **Three site-wide CMS fields and a nine-collection field group had been authorable since Phase 6 and read by nothing**: `defaultSeoTitle`, `defaultSeoDescription`, `defaultOgImage` and `seoField()`'s title/description/image. `SiteSettings.ts` and `seo.ts` both named Phase 24 as the phase that would read them; both promises are kept, and the precedence — document override, then page content, then site default, then built-in — is stated once in `pageMetadata`. An **emptied override is not an override**: a cleared field means *derive it*, never *publish an empty tag*. **§24.1b is enforced by shape, not by a check**: offers are built only from variants that are active, in stock and priced, so a sold-out size cannot set the price; nothing buyable emits `OutOfStock` **with no price at all**, because a price nobody can pay is the forbidden claim; a product with no variants emits no `offers` key; and `aggregateRating` appears only when a real approved review exists — no key, not a zero, not five stars from nobody. **`getProduct`'s memoisation did not apply to its second caller**: React's `cache` compares arguments with `Object.is`, so two callers passing `{ color: null, size: null }` both ran the queries — memoisation that silently does not apply is worse than none. Split into `getProductRecord(slug)`, keyed by a string, with the variant matrix built on top. **The canonical never comes from the request** (Phase 7's host-header argument) and never carries a query — `/shop`'s nine parameters and `/product/x?size=m` are one page each. **The homepage exported no metadata at all**, to dodge the *"NORTH / 01 · NORTH / 01"* title template — which cost the front page its canonical and its OG card; `absoluteTitle` is the answer, and the layout's metadata now reads the site name from the CMS. **`robots.txt` needs three rules per prefix**: `/account/` misses `/account`, `/account` blocks `/accounts-payable`, and an RFC 9309 matched path includes the query string, so neither touches `/search?q=` — the exclusion's whole point. One shared constant with the sitemap, because the two disagreeing is the classic SEO defect. **JSON-LD is escaped**: a raw-text element ends at the first literal `</script`, and every value in it comes from the database. New harness `pnpm verify:seo` — **90/90, and the first in this project that touches no database**, so no D-10 guard: everything §24 decides is a pure function. `pnpm build` passed — the first since Phase 18 — and `robots.txt` and `sitemap.xml` were read back out of the build output (35 URLs from real data) rather than assumed. Two stale docblock claims corrected: the homepage has **not** been statically prerendered since Phase 9 (the layout awaits `cookies()`), and four routes' *"SEO is Phase 24"* notes now say what was decided. Owed: `/collections` and `/edits` indexes, `generateStaticParams` (Phase 30), `priceValidUntil` and `shippingDetails` (neither claimable today), a browser pass, and the five harnesses D-10 still holds until a **development** connection string exists. |
+| Phase 25 — analytics and observability | 2026-09-09 | Notes **§1.30**. **Three dependencies installed at their pins** (`posthog-js` 1.418.10, `@sentry/nextjs` 10.70.0, `@vercel/speed-insights` 2.0.0); GA4 is a script tag; no migration. **The taxonomy is a type**: `AnalyticsEvent` is a union of exactly §25.1a's seventeen names and `trackEvent` takes it, so a typo is a compile error rather than an empty dashboard column — and the internal names *are* the GA4 names for the ten that overlap, because a translation table is somewhere for the two to drift invisibly. **Money crosses the vendor boundary once**, in `toGa4Params`: a price field that is sometimes cents and sometimes dollars reports revenue a hundred times too high and is not recoverable, so the conversion is pure and asserted — including that a zero value is a real zero and an unknown value is absent. **Server Components stayed server components**: `ProductCard` gained two data attributes and `TrackList` delegates from the grid wrapper in the capture phase, rather than an `onClick` converting the most-rendered component in the shop and everything it renders. **Every event is emitted where it is true, not where it was clicked** — `addToBagAction` can refuse, and an `add_to_cart` on the click would report adds that never happened; `useActionResult` fires on the action's result, guarded by reference identity. **`purchase` is gated on the webhook**, not on arrival (§17.1g), and deduped in `sessionStorage` by order number, because the success URL is refreshable and a double-count doubles reported revenue. **§25.1d is enforced on the way out**, on two independent grounds — by key and by value — with cookies and headers dropped rather than scrubbed, the user reduced to an id, and the URL keeping its route while losing its token; the whole-URL pattern runs before the email pattern, or a Postgres URL is left with its host and password intact. **Two of the seventeen events are deliberately not emitted**: `add_payment_info` (**DEV-73** — Stripe Checkout is hosted, this application never sees payment details, and firing it at redirect would report leaving for Stripe as entering a card) and `quick_view_opened` (**DEV-74** — no quick view exists). Sentry is wired into four entry points because Next has four kinds of failure; `global-error.tsx` renders `error.digest` and never `error.message`, per §4.1b. **`@sentry/cli`'s postinstall is denied** in `pnpm-workspace.yaml` — source-map upload is off, so **production stack traces will be minified**, stated rather than discovered. §25.1e honoured as the schedule it is: Speed Insights renders in production only, and a second gate lives in the Vercel dashboard. New harness `pnpm verify:analytics` — **89/89**, the second in this project that touches no database. What it cannot cover is the prompt's own *"verify events in local/preview"*: no account exists, and `TODO.md` §6 says so. New gap **G-17**: no consent gate in front of any vendor. |
 > **Append this table, and the sections above it, at the end of every phase.**

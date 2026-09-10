@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { trackEvent } from '@/lib/analytics/track'
 import { addLookToBagAction } from '@/lib/lookbook/actions'
 import { LOOK_COPY } from '@/lib/lookbook/rules'
 
@@ -45,6 +46,26 @@ export function AddEntireLook({ productIds }: { productIds: number[] }) {
         onClick={() =>
           start(async () => {
             const result = await addLookToBagAction(productIds)
+
+            /*
+             * **§25.1a's `shop_the_look_add_item`, once per look and only for what was added.**
+             * `addLookToBagAction` adds what it can and reports how many — a look whose jacket is
+             * sold out adds two of three. `result.added` is that number, and reporting
+             * `productIds.length` instead would claim adds the bag does not contain.
+             *
+             * The items are the ids, with no names: this component is given ids and nothing else,
+             * and inventing names from them would need a read the button does not do.
+             */
+            if (result.ok && result.added > 0) {
+              trackEvent('shop_the_look_add_item', {
+                items: productIds.slice(0, result.added).map((id) => ({
+                  itemId: String(id),
+                  itemName: String(id),
+                  quantity: 1,
+                })),
+                lookId: productIds.join('-'),
+              })
+            }
 
             setNotice(result.notice)
           })
