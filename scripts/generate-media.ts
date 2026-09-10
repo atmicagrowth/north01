@@ -542,6 +542,9 @@ mkdirSync(staging, { recursive: true })
 
 const made: string[] = []
 
+/** Products left alone because they already carry art — reported at the end. */
+const skipped: string[] = []
+
 async function upload(
   name: string,
   bytes: Buffer,
@@ -689,6 +692,18 @@ try {
 
   for (const [colour, { hex, ids }] of byColour) {
     const slug = colour.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+
+    /* Same rule as everywhere else here: a colour whose variants already carry a swatch is left. */
+    const alreadyDressed = variants.docs.filter(
+      (variant) => ids.includes(variant.id) && variant.image != null,
+    )
+
+    if (alreadyDressed.length === ids.length) {
+      skipped.push(`swatch/${slug}`)
+
+      continue
+    }
+
     const id = await upload(
       `swatch-${slug}`,
       fabric({ hex, height: 1000, macro: true, seed: `swatch-${slug}`, width: 800 }),
@@ -719,6 +734,31 @@ try {
 
   for (const product of products.docs) {
     const slug = String(product.slug)
+
+    /**
+     * **Skip a product that already has art — Phase 29.**
+     *
+     * `upload` always *creates* a media row, so this loop was not idempotent: a second run against
+     * the same catalogue made a second copy of every image, pointed each gallery at the new pair,
+     * and left the old pair orphaned in the database and in Cloudinary. That was invisible while the
+     * script only ever ran once on an empty library.
+     *
+     * Phase 29 adds eighteen products to a catalogue whose original ten already have galleries, so
+     * "run it again for the new ones" became the ordinary case — and `--clean` is emphatically not
+     * the answer, because the Cloudinary objects are shared with production's database (see the
+     * warning at the top of this file).
+     *
+     * A product with an image is left exactly as it is, including one an editor has since replaced
+     * with real photography. To deliberately regenerate one, empty its gallery in the admin first.
+     */
+    const existingGallery = (product as { gallery?: { image?: unknown }[] }).gallery ?? []
+
+    if (existingGallery.some((row) => row?.image != null)) {
+      skipped.push(slug)
+
+      continue
+    }
+
     const mine = variants.docs.filter((v) => {
       const owner = typeof v.product === 'number' ? v.product : (v.product as { id: number })?.id
 
@@ -779,6 +819,13 @@ try {
       const data: Record<string, number> = {}
 
       for (const field of target.fields) {
+        /* Same rule as the product gallery above: what already has art is left alone. */
+        if ((doc as unknown as Record<string, unknown>)[field] != null) {
+          skipped.push(`${target.collection}/${slug}.${field}`)
+
+          continue
+        }
+
         data[field] = await upload(
           `${target.collection}-${slug}${target.fields.length > 1 ? `-${field}` : ''}`,
           editorial({
@@ -791,12 +838,14 @@ try {
         )
       }
 
-      await payload.update({
-        collection: target.collection,
-        data: data as never,
-        id: doc.id,
-        overrideAccess: true,
-      })
+      if (Object.keys(data).length > 0) {
+        await payload.update({
+          collection: target.collection,
+          data: data as never,
+          id: doc.id,
+          overrideAccess: true,
+        })
+      }
     }
   }
 
@@ -811,6 +860,12 @@ try {
 
   for (const campaign of campaigns.docs) {
     const slug = String(campaign.slug)
+
+    if (campaign.hero != null && campaign.mobileHero != null) {
+      skipped.push(`campaign/${slug}`)
+
+      continue
+    }
 
     const hero = await upload(
       `campaign-${slug}`,
@@ -836,24 +891,43 @@ try {
 
   /* ---- One sharing image for everything that has none of its own ---- */
 
-  const og = await upload(
-    'north01-open-graph',
-    editorial({ height: 630, seed: 'north01-open-graph', width: 1200 }),
-    'NORTH / 01',
-    'editorial',
-  )
-
   const settings = await payload.findGlobal({ slug: 'site-settings', overrideAccess: true })
+
+  const og =
+    settings.defaultOgImage == null
+      ? await upload(
+          'north01-open-graph',
+          editorial({ height: 630, seed: 'north01-open-graph', width: 1200 }),
+          'NORTH / 01',
+          'editorial',
+        )
+      : null
+
+  if (og === null) {
+    skipped.push('site-settings/defaultOgImage')
+  }
 
   await payload.updateGlobal({
     slug: 'site-settings',
-    data: { ...settings, defaultOgImage: og } as never,
+    data: { ...settings, ...(og === null ? {} : { defaultOgImage: og }) } as never,
     overrideAccess: true,
   })
 
   const total = made.length
 
-  process.stdout.write(`${made.join('\n')}\n\n${total} asset(s) generated and attached.\n`)
+  /*
+   * What was skipped is reported as loudly as what was made. A run that says "0 assets generated"
+   * and nothing else looks like a failure; one that says which products it left alone, and why, is
+   * the same fact told usefully.
+   */
+  const skippedLine =
+    skipped.length === 0
+      ? ''
+      : `\n${skipped.length} product(s) already carried art and were left alone: ${skipped.join(', ')}\n`
+
+  process.stdout.write(
+    `${made.join('\n')}\n\n${total} asset(s) generated and attached.\n${skippedLine}`,
+  )
 } finally {
   rmSync(staging, { force: true, recursive: true })
   await payload.destroy()
