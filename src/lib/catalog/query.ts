@@ -878,9 +878,23 @@ export function catalogWhere(query: CatalogQuery, now: string): Where {
  * So the nulls-first hazard that governs the price sorts does not arise for `newest`.
  */
 export const CATALOG_SORT_FIELDS: Record<CatalogSort, string[]> = {
+  /**
+   * **`sortOrder` before `slug` on every sort — Phase 29.**
+   *
+   * `slug` alone was a total order here and could never agree with the index, because Algolia's
+   * `customRanking` sorts on numeric and boolean attributes and a slug is neither. Two products at
+   * the same price therefore came back in one order from Postgres and another from Algolia, and
+   * `verify:catalog` — which asserts the two engines agree *in order* — caught it the moment Phase
+   * 29's twenty-eight products produced four price ties. Ten products with ten distinct prices had
+   * hidden it for twenty-seven phases.
+   *
+   * `sortOrder` is distinct per product and is on both sides, so the two orders are now the same
+   * order. `slug` stays as a last resort: it costs nothing, and it is the only thing left if a
+   * future import ever writes two products with the same `sortOrder`.
+   */
   featured: ['sortOrder', '-publishedAt', 'slug'],
-  newest: ['-publishedAt', 'slug'],
+  newest: ['-publishedAt', 'sortOrder', 'slug'],
   'best-sellers': ['-isBestSeller', 'sortOrder', 'slug'],
-  'price-asc': ['derived.priceFromMinor', 'slug'],
-  'price-desc': ['-derived.priceFromMinor', 'slug'],
+  'price-asc': ['derived.priceFromMinor', 'sortOrder', 'slug'],
+  'price-desc': ['-derived.priceFromMinor', 'sortOrder', 'slug'],
 }

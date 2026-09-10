@@ -555,7 +555,23 @@ check(
   'utilities: wishlist routes to the account segment (C-09)',
   utilityNav.wishlist.href === '/account/wishlist',
 )
-check('utilities: the legal row is two links, and is not CMS content', legalNav.length === 2)
+/*
+ * **The legal row is EMPTY, and that is the assertion now — Phase 28's first sweep.**
+ *
+ * This read `legalNav.length === 2`. Those two entries pointed at `/legal/privacy` and
+ * `/legal/terms`, and Phase 28's audit found that neither route exists: the footer shipped two 404s
+ * on every page of the shop. They were removed rather than built, because a privacy policy and a set
+ * of terms are legal text somebody has to write and be accountable for — generating plausible
+ * privacy copy would be worse than the broken link, since it is a false statement about what this
+ * shop does with personal data on the page a regulator reads first. Recorded as gap **G-19**.
+ *
+ * The assertion is inverted rather than deleted, so that restoring the links is a deliberate act
+ * that has to come here and say so — with routes behind them.
+ */
+check(
+  'utilities: the legal row is empty until the pages exist (G-19), and is not CMS content',
+  legalNav.length === 0,
+)
 
 /* -------------------------------------------------------------------------------------------------
  * G — against the real database

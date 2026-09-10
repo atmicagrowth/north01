@@ -1357,6 +1357,19 @@ try {
     ] as const) {
       const { query } = normaliseCatalogQuery(params(overrides), vocabularyForLive)
 
+      /**
+       * **The fixtures are excluded in the QUERY, not after it — Phase 29 fixed this.**
+       *
+       * This used to fetch a page from each engine and then filter its own fixture rows out of the
+       * Postgres side afterwards. The index never held them (they are draft, scheduled or withdrawn),
+       * so the two sides were only ever comparable while a page had room to spare: with ten real
+       * products and two fixtures, both pages returned the same ten.
+       *
+       * Phase 29 took the catalogue to twenty-eight. A page of twenty-four then came back **full**,
+       * two of its slots spent on fixtures, and post-filtering left twenty-two against the index's
+       * twenty-four — a mismatch reported as the two engines disagreeing when they did not. A harness
+       * that cries wolf about the thing it exists to watch is worse than one that is silent.
+       */
       const [fromPostgres, fromIndex] = await Promise.all([
         payload.find({
           collection: 'products',
@@ -1364,12 +1377,17 @@ try {
           limit: CATALOG_PAGE_SIZE,
           page: 1,
           sort: CATALOG_SORT_FIELDS[query.sort],
-          where: catalogWhere(query, new Date().toISOString()),
+          where: {
+            and: [
+              catalogWhere(query, new Date().toISOString()),
+              ...(fixtureIds.size > 0 ? [{ id: { not_in: [...fixtureIds] } }] : []),
+            ],
+          },
         }),
         searchProductIds(client, indexBase, query, CATALOG_PAGE_SIZE),
       ])
 
-      const postgresIds = fromPostgres.docs.map((doc) => doc.id).filter((id) => !fixtureIds.has(id))
+      const postgresIds = fromPostgres.docs.map((doc) => doc.id)
 
       check(
         `H: both engines return the same products for ${label}`,

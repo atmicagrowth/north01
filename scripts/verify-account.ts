@@ -226,6 +226,20 @@ async function makeCustomer(tag: string) {
   return customer
 }
 
+/**
+ * **A product with a variant, because a product without one is not purchasable.**
+ *
+ * This harness was written in Phase 20 and D-10 held it unrun until Phase 29, so its fixture was
+ * never checked against the rule it depends on. It created a bare published product and expected the
+ * wishlist to accept it; every wishlist read goes through `publishedProductWhere`, which requires
+ * `derived.priceFromMinor` — the summary `syncProductDerived` writes from the variants — so a
+ * product with no variants is **not listable**, and `saveToWishlist` correctly answered
+ * `unavailable`. Nine checks failed against behaviour that was right.
+ *
+ * The variant is what makes the fixture a product a customer could actually save. Phase 28's
+ * `refuseUnsellablePublish` states the same rule from the authoring side; this states it from the
+ * fixture side, and they now agree.
+ */
 async function makeProduct(index: string, published = true) {
   const product = await payload.create({
     collection: 'products',
@@ -240,7 +254,32 @@ async function makeProduct(index: string, published = true) {
 
   created.push({ collection: 'products', id: product.id })
 
-  return product
+  const variant = await payload.create({
+    collection: 'product-variants',
+    data: {
+      active: true,
+      color: 'Bone',
+      colorFamily: 'bone',
+      colorHex: '#F1EEE8',
+      inventoryQuantity: 5,
+      priceMinor: 9_500,
+      product: product.id,
+      size: 'M',
+      sizeSortOrder: 30,
+      sku: `ACC-${suffix}-${index}`,
+    } as never,
+    overrideAccess: true,
+  })
+
+  created.push({ collection: 'product-variants', id: variant.id })
+
+  /* `syncProductDerived` writes the summary on the variant's save; re-read so callers see it. */
+  return payload.findByID({
+    collection: 'products',
+    depth: 0,
+    id: product.id,
+    overrideAccess: true,
+  })
 }
 
 try {

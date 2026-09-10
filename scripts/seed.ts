@@ -1381,7 +1381,27 @@ try {
   })
 
   payload.logger.info('Globals: site-settings, navigation, homepage')
-  payload.logger.info('Seed complete.')
+  /**
+   * **The search index is NOT updated by this script, and saying so is the whole point of this
+   * line.** Phase 29.
+   *
+   * `syncSearchIndex` is on `products.hooks.afterChange` and fires on every write here — and then
+   * does nothing, because it resolves its credentials through `@/lib/env.server`, whose `server-only`
+   * import cannot resolve outside Next's bundler. The hook logs that at **debug** and returns, which
+   * is correct: it is the expected state for the CLI and a warning per product would be noise.
+   *
+   * The consequence only became visible in Phase 29, when this script started writing eighteen
+   * products instead of updating ten. `verify:catalog` asserts that the Postgres and Algolia engines
+   * return the same products in the same order, and it failed eight checks — the index held ten
+   * products and the database held twenty-eight. Not a defect; a step nobody was told to take.
+   *
+   * So it is told, at the end, where somebody will see it.
+   */
+  payload.logger.info(
+    'Seed complete. The search index was NOT updated — `syncSearchIndex` is a no-op under the ' +
+      'Payload CLI, by design. Run `pnpm reindex` so search and the shop filters match the ' +
+      'catalogue, or `verify:catalog` will report the two engines disagreeing.',
+  )
 } finally {
   await payload.destroy()
 }

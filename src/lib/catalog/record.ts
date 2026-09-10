@@ -453,10 +453,29 @@ export const CATALOG_SHARED_SETTINGS = SHARED
 
 /** Per-replica ranking. The attributes are already in every record; only the order differs. */
 export const CATALOG_REPLICA_CUSTOM_RANKING: Record<string, string[]> = {
+  /**
+   * **Every replica ends on `asc(sortOrder)`, and three of them did not — Phase 29.**
+   *
+   * Postgres breaks a price tie on `slug` (`CATALOG_SORT_FIELDS` in `query.ts`); these replicas broke
+   * it on nothing at all, leaving two products at the same price in whatever order Algolia's internal
+   * ranking happened to give. `verify:catalog` asserts the two engines return the same products **in
+   * the same order**, and it passed for twenty-seven phases because the ten seeded products had ten
+   * distinct prices. Phase 29 took the catalogue to twenty-eight and produced **four price ties**,
+   * and the assertion failed the moment it had something to catch.
+   *
+   * `sortOrder` is the tiebreak rather than `slug` because Algolia's `customRanking` orders on
+   * numeric and boolean attributes; a string attribute is not a meaningful sort key there. It is the
+   * merchandiser's own ordering, it is already on the record, and it is distinct per product — so it
+   * is a **total** order on both sides, which is the property the assertion is really about.
+   *
+   * The tiebreak is ascending even under `price_desc`. It is a stable secondary key, not part of the
+   * direction the customer chose: reversing it would make "most expensive first" also mean "reverse
+   * merchandising order" among equals, which nobody asked for.
+   */
   best_sellers: ['desc(isBestSeller)', 'asc(sortOrder)'],
-  newest: ['desc(publishedAtMs)'],
-  price_asc: ['asc(priceFromMinor)'],
-  price_desc: ['desc(priceFromMinor)'],
+  newest: ['desc(publishedAtMs)', 'asc(sortOrder)'],
+  price_asc: ['asc(priceFromMinor)', 'asc(sortOrder)'],
+  price_desc: ['desc(priceFromMinor)', 'asc(sortOrder)'],
 }
 
 /* -------------------------------------------------------------------------------------------------
