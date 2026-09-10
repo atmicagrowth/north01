@@ -7157,7 +7157,78 @@ otherwise.
 during render is a value React cannot see. All four occurrences moved into an effect declared before
 the effect that reads them.
 
-### 1.30.13 What is now owed
+### 1.30.13 Sweep 1 — a comment that claimed a protection the code disabled
+
+**`analytics.tsx` set `mask_all_text: false` under a comment reading *"§25.1d's redaction rule
+applies to PostHog too"*.** Three things wrong with one line: it is a **session-recording** option,
+it was set to the value that *disables* masking, and the file it pointed at (`sentry.config.ts`) does
+not exist. The comment described a protection the code was switching off.
+
+What it was claiming is now what the code does — `autocapture: false` and
+`disable_session_recording: true`, explicitly. Autocapture is a §25.1a problem as much as a §25.1d
+one: it invents event names from the DOM and fills the project with `$autocapture` events beside the
+seventeen somebody named, so the taxonomy stops being the answer to *"what do we measure"*. And this
+shop has a checkout, an address book and a settings form; capturing element text across them is
+exactly the *"raw personal data where not necessary"* §25.1d forbids.
+
+**The redaction key matcher tested the whole key as a substring.** Measured against this project's
+own field names:
+
+| key | matched | why |
+|---|---|---|
+| `shipping` | **yes** | `shi`**`pp`**`in`**`g`** contains `pin` |
+| `author` | **yes** | a journal byline contains `auth` |
+| `company` | **yes** | contains `pan` |
+
+Every one is a field an operator needs in order to read a report, and losing them protects nothing.
+The docblock called the trade *"nearly free"*; it was the substring doing the damage rather than the
+breadth. The key is now split into camelCase and underscore **segments**, each matched whole, with a
+short prefix list where a prefix genuinely names the family. `stripeSecretKey`, `STRIPE_SECRET_KEY`,
+`payment_method` and `sessionToken` all still match; `shippingMinor` does not.
+
+**`redactString` truncated before replacing.** A secret straddling the 2 000-character boundary was
+left as a fragment too short to match its own pattern — a partial credential kept by the step meant
+to bound the payload. Replace, then truncate.
+
+**The browser and the server reported different Sentry environments for the same deployment.** The
+server resolves `preview` from `VERCEL_ENV`; the browser had only `NODE_ENV`, which is `production`
+for *every* built deployment. A preview's client errors were landing in the production environment
+beside real ones, while that same deployment's server errors landed in `preview`. `publicAppEnv()`
+reads `NEXT_PUBLIC_VERCEL_ENV`, which Vercel exposes under the same setting `appEnv` already depends
+on — no new variable for anyone to set, and the mapping is deliberately identical.
+
+Two smaller ones: `beforeBreadcrumb` scrubbed `data` while claiming the buffer was clean and left
+`message` alone, and `TrackList` would never report a list that rendered empty and filled later.
+
+### 1.30.14 Sweep 2 — the error text was in the field nobody scrubbed
+
+**`redactEvent` scrubbed `event.message` and not `event.exception`.** That is the wrong half.
+`message` is set for `captureMessage` and a few synthetic events; **everything thrown** — every
+`new Error(...)`, every rejection, every Stripe or Postgres failure — arrives as
+`exception.values[].value`. So `Error: Invalid API Key provided: sk_live_…` went out untouched,
+which is the single most likely way a real credential reaches an error report, and §25.1d exists to
+stop precisely that. It is walked with `redact` rather than picked apart, because the frames beneath
+it can carry local variables and the shape belongs to the SDK.
+
+**The edge runtime had no Sentry client at all.** `register()` returned immediately for anything that
+was not Node — right for the environment module, wrong for Sentry. `src/proxy.ts` is middleware, it
+runs on the edge, and it guards `/account`: a failure there redirects a signed-in customer to a login
+page they do not need, or lets an unauthenticated request through. Those failures were reaching
+`onRequestError` in a runtime with no initialised client, which is a **silent no-op** — the shape
+this project keeps finding. `sentry.edge.config.ts` reads the *public* environment tier, because
+`instrumentation.ts` already refuses to load `env.server` outside Node and it is right to: a DSN is
+public by design and the secrets are not.
+
+**`shop_the_look_add_item` named products that may not have been added.** `addLookToBagAction`
+returned a *count*, and the event reported the first `added` ids of the requested list — correct only
+when the skipped product happens to be last. A look whose jacket needs a size choice and whose scarf
+goes straight in would have reported the **jacket**. The action now returns `addedProductIds`, in the
+order they went in, and the event reports those.
+
+`pnpm verify:analytics` is **115/115** after both sweeps, up from 89: the added checks are
+regressions for the key matcher in both directions, the truncation boundary, and the exception field.
+
+### 1.30.15 What is now owed
 
 - **Verify events against a real PostHog and GA4 property**, per the phase prompt. `TODO.md` §6.
 - **Enable Speed Insights in the Vercel dashboard**, per §25.1e's own condition.

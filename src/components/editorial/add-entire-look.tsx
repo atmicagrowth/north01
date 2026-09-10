@@ -49,16 +49,19 @@ export function AddEntireLook({ productIds }: { productIds: number[] }) {
 
             /*
              * **§25.1a's `shop_the_look_add_item`, once per look and only for what was added.**
-             * `addLookToBagAction` adds what it can and reports how many — a look whose jacket is
-             * sold out adds two of three. `result.added` is that number, and reporting
-             * `productIds.length` instead would claim adds the bag does not contain.
+             * `addLookToBagAction` adds what it can — a look whose jacket needs a size choice adds
+             * two of three — and it now returns **which** ids went in rather than only how many.
              *
-             * The items are the ids, with no names: this component is given ids and nothing else,
-             * and inventing names from them would need a read the button does not do.
+             * That distinction was a real defect: reporting the first `added` ids of the requested
+             * list is only right when the skipped product happens to be last. A look whose jacket
+             * needs a choice and whose scarf goes straight in would have reported the jacket.
+             *
+             * The items carry no names: this component is given ids and nothing else, and inventing
+             * names from them would need a read the button does not do.
              */
-            if (result.ok && result.added > 0) {
+            if (result.ok && result.addedProductIds.length > 0) {
               trackEvent('shop_the_look_add_item', {
-                items: productIds.slice(0, result.added).map((id) => ({
+                items: result.addedProductIds.map((id) => ({
                   itemId: String(id),
                   itemName: String(id),
                   quantity: 1,

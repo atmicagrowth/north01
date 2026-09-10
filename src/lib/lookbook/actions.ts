@@ -43,6 +43,15 @@ export async function previewLookProductAction(productId: number): Promise<LookP
 
 export type LookAdditionResult = {
   added: number
+  /**
+   * **Which products actually went in.** Phase 25 needs it and Phase 22 did not have it.
+   *
+   * `added` is a count, and a count cannot say *which*. `shop_the_look_add_item` first reported the
+   * first `added` ids of the requested list, which is wrong whenever the skipped product is not
+   * last: a look whose jacket needs a size choice and whose scarf goes straight in would have
+   * reported the jacket. This is the real answer, in the order they were added.
+   */
+  addedProductIds: number[]
   notice: null | string
   ok: boolean
 }
@@ -73,7 +82,7 @@ export async function addLookToBagAction(productIds: number[]): Promise<LookAddi
     : []
 
   if (ids.length === 0) {
-    return { added: 0, notice: null, ok: false }
+    return { added: 0, addedProductIds: [], notice: null, ok: false }
   }
 
   const [payload, settings, customer] = await Promise.all([
@@ -85,15 +94,17 @@ export async function addLookToBagAction(productIds: number[]): Promise<LookAddi
   const products = await readLookProducts(payload, ids, settings)
   const plan = planLookAddition(products)
 
-  let added = 0
+  const addedProductIds: number[] = []
 
   for (const entry of plan.toAdd) {
     const result = await addToCart(customer?.id ?? null, entry.variant.id, 1).catch(() => null)
 
     if (result?.ok) {
-      added += 1
+      addedProductIds.push(entry.product.id)
     }
   }
+
+  const added = addedProductIds.length
 
   if (added > 0) {
     /*
@@ -103,5 +114,5 @@ export async function addLookToBagAction(productIds: number[]): Promise<LookAddi
     revalidatePath('/', 'layout')
   }
 
-  return { added, notice: lookNotice(plan, added), ok: true }
+  return { added, addedProductIds, notice: lookNotice(plan, added), ok: true }
 }

@@ -448,6 +448,32 @@ const has = (haystack: unknown, needle: string) => JSON.stringify(haystack).incl
     redactEvent({ message: 'anything' }) !== null,
   )
 
+  /*
+   * The regression this block exists for: a thrown error's text lives in `exception`, not in
+   * `message`, and the first version scrubbed only the latter. Every `new Error(...)` in the
+   * application arrives through this field.
+   */
+  const thrown = redactEvent({
+    exception: {
+      values: [
+        {
+          type: 'Error',
+          value: 'Invalid API Key provided: sk_live_51QQabcdefghijkl',
+        },
+      ],
+    },
+  })
+
+  check(
+    'H: **a thrown error’s message is scrubbed** — it is in `exception`, not `message`',
+    !has(thrown.exception, 'sk_live'),
+  )
+
+  check(
+    'H: …and the exception keeps its type, which is the useful half',
+    has(thrown.exception, 'Error'),
+  )
+
   check(
     'H: a URL that is not a URL is still scrubbed as a string',
     redactUrl('not a url sk_live_abcd1234').includes(REDACTED),

@@ -250,6 +250,19 @@ export function redact(value: unknown, depth = 0): unknown {
 export type ScrubbableEvent = {
   breadcrumbs?: unknown
   contexts?: unknown
+  /**
+   * **Where a thrown error's text actually is**, and the field the first version missed.
+   *
+   * `event.message` is set for `captureMessage` and for a few synthetic events. Everything thrown —
+   * every `new Error(...)`, every rejection, every Stripe or Postgres failure — arrives as
+   * `exception.values[].value` instead. Scrubbing `message` alone therefore covered the rarer half:
+   * `Error: Invalid API Key provided: sk_live_…` went out untouched, which is the single most
+   * likely way a real credential reaches an error report.
+   *
+   * It is walked with `redact` rather than picked apart, because the frames beneath it can carry
+   * local variables too, and the shape is the SDK's rather than ours.
+   */
+  exception?: unknown
   extra?: unknown
   message?: unknown
   request?: { cookies?: unknown; data?: unknown; headers?: unknown; url?: unknown }
@@ -281,6 +294,7 @@ export function redactEvent<T extends ScrubbableEvent>(event: T): T {
     ...event,
     ...(event.breadcrumbs === undefined ? {} : { breadcrumbs: redact(event.breadcrumbs) }),
     ...(event.contexts === undefined ? {} : { contexts: redact(event.contexts) }),
+    ...(event.exception === undefined ? {} : { exception: redact(event.exception) }),
     ...(event.extra === undefined ? {} : { extra: redact(event.extra) }),
     ...(typeof event.message === 'string' ? { message: redactString(event.message) } : {}),
     ...(request

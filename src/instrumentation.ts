@@ -24,21 +24,39 @@
  * comes from `payload.config.ts` and nowhere else — do not move the validation here.
  */
 export async function register(): Promise<void> {
-  // `register()` is invoked for the edge runtime too. The environment module is server-side
-  // Node code, and the secrets it validates are not present in — and must not be shipped to —
-  // an edge bundle, so this deliberately runs in one runtime only.
+  /*
+   * **Plan §25.1d, and the edge runtime gets it too — Phase 25's second sweep.**
+   *
+   * `register()` is invoked once per runtime, and this hook used to return immediately for anything
+   * that was not Node. That was right for the environment module below and wrong for Sentry:
+   * `src/proxy.ts` is middleware, it runs on the edge, and it guards `/account`. Its failures were
+   * reaching `onRequestError` in a runtime with **no initialised client**, which is a silent no-op.
+   *
+   * The edge config reads the *public* environment tier rather than `env.server`, for the reason
+   * given below — see `sentry.edge.config.ts`.
+   */
+  if (process.env.NEXT_RUNTIME === 'edge') {
+    const { initSentryEdge } = await import('./sentry.edge.config')
+
+    initSentryEdge()
+
+    return
+  }
+
+  // The environment module is server-side Node code, and the secrets it validates are not present
+  // in — and must not be shipped to — any other runtime, so the rest of this runs in one only.
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
 
   /*
-   * Plan §25.1d — the server-side Sentry init, Phase 25.
+   * The server-side Sentry init.
    *
    * **Before the environment report, on purpose.** `reportEnvironment()` cannot throw today, but
    * the module it imports validates on evaluation and can; initialising the error reporter first is
    * what makes a bad environment a captured event rather than a line in a log nobody is watching.
    * It is also the failure this hook exists to make loud, so it is the one worth reporting.
    *
-   * Dynamically imported so `@sentry/nextjs` stays out of the edge compilation entirely, exactly as
-   * the environment module does — and so a deployment with no DSN pays nothing for it.
+   * Dynamically imported so `@sentry/nextjs` is loaded per runtime rather than pulled into every
+   * compilation — and so a deployment with no DSN pays nothing for it.
    */
   const { initSentryServer } = await import('./sentry.server.config')
 
