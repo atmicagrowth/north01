@@ -78,6 +78,42 @@ async function resolveIndexWriter(): Promise<IndexWriter | null> {
 }
 
 async function sync(payload: Payload, productId: number, req?: PayloadRequest): Promise<void> {
+  /**
+   * **The index is written from the application, never from a CLI script.**
+   *
+   * That was true by accident until Phase 29 and is true on purpose now. `@/lib/env.server` imports
+   * `server-only`, which no loader outside Next could resolve, so this hook threw under `pnpm seed`
+   * and every harness and the `catch` below swallowed it — the behaviour was right and the mechanism
+   * was a module-resolution failure.
+   *
+   * Phase 29 added a `tsconfig` path for `server-only` so that `verify:lookbook` and
+   * `verify:editorial` could load the storefront read layer at all. That made the credentials
+   * resolvable under the CLI, and the accident stopped happening: `verify:catalog` immediately
+   * reported its own fixture products showing up in the index — which is exactly what its
+   * *"a CLI write does not reach the index"* check exists to catch, and it caught it.
+   *
+   * Keeping the old behaviour is the right answer, and it is now stated rather than inherited:
+   *
+   * - **Harness fixtures must not reach a shared index.** Every `verify:*` script creates draft,
+   *   scheduled and withdrawn products to prove they are excluded, then deletes them. Publishing
+   *   those to Algolia — even for the seconds they exist — puts them in front of anything else
+   *   pointed at that index.
+   * - **A CLI write is a bulk write.** `pnpm seed` touches every product; a per-document round trip
+   *   to Algolia inside each one is slow and leaves the index half-built if the script stops.
+   *   `pnpm reindex` replaces the whole index atomically, which is what a bulk change wants.
+   *
+   * `NEXT_RUNTIME` is the test because Next sets it (`nodejs` or `edge`) and nothing else does —
+   * the same signal `instrumentation.ts` uses to tell the two runtimes apart.
+   */
+  if (!process.env.NEXT_RUNTIME) {
+    payload.logger.debug(
+      { productId },
+      'Search index not updated — a CLI write does not sync. `pnpm reindex` rebuilds it.',
+    )
+
+    return
+  }
+
   try {
     const writer = await resolveIndexWriter()
 

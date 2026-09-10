@@ -601,12 +601,40 @@ try {
   // ------------------------------------------------------------- collections
   //
   // Structure §2's four, with Essentials among them rather than in Edit — DEV-01.
+  /**
+   * **Every product belongs to at least one collection — §29.1c, and Phase 29's sweep found it was
+   * not true.**
+   *
+   * The clause is one line in a list: *"Every product should have… collection assignment."* The
+   * eighteen products Phase 29 added had none, because a product module cannot know what a
+   * merchandiser would file it under and the four lists here were written against a catalogue of ten.
+   * Eighteen of twenty-eight products were reachable only from the shop grid: absent from
+   * `/collections/*`, from the homepage's collection feature, and from the collection facet in the
+   * filter panel — which is the surface §11.1d's *"filter by collection"* is about.
+   *
+   * The order within each list is the curation. `Collections.ts` says so — *"dragging a row is the
+   * curation"* — so these are ordered as a merchandiser would show them, strongest first, not
+   * alphabetically and not in the order the products happened to be written.
+   *
+   * A product may sit in more than one, which is why `wool-overshirt` is in Current Season and
+   * Limited: a collection is a point of view, not a folder.
+   */
   const collectionSpecs = [
     {
       slug: 'current-season',
       title: 'Current Season',
       description: 'The pieces the season was built around.',
-      products: ['field-jacket', 'wool-overshirt', 'merino-crew', 'pleated-trouser'],
+      products: [
+        'field-jacket',
+        'quilted-liner',
+        'wool-overshirt',
+        'flannel-shirt',
+        'merino-crew',
+        'loopback-crew',
+        'pleated-trouser',
+        'wide-leg-chino',
+        'watch-cap',
+      ],
     },
     {
       slug: 'essentials',
@@ -614,23 +642,37 @@ try {
       description: 'The ten things that make everything else work.',
       products: [
         'cotton-tee',
+        'heavy-tee',
+        'ribbed-tee',
         'oxford-shirt',
+        'camp-collar-shirt',
         'merino-crew',
         'selvedge-denim',
+        'drawstring-pant',
         'heavyweight-hoodie',
+        'zip-hoodie',
       ],
     },
     {
       slug: 'limited',
       title: 'Limited',
       description: 'Made once, in a quantity we can count.',
-      products: ['wool-overshirt', 'cashmere-scarf'],
+      products: ['wool-overshirt', 'unstructured-blazer', 'weekend-holdall', 'cashmere-scarf'],
     },
     {
       slug: 'archive',
       title: 'Archive',
       description: 'Past seasons, while they last.',
-      products: ['card-holder', 'cotton-tee'],
+      products: [
+        'card-holder',
+        'cotton-tee',
+        'french-terry-hoodie',
+        'ripstop-short',
+        'loopback-short',
+        'six-panel-cap',
+        'musette',
+        'bridle-belt',
+      ],
     },
   ]
 

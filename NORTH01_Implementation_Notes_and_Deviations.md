@@ -7907,6 +7907,173 @@ denial is told apart from an update that failed for some other reason. 79 → 87
   exists now and they are free to run — `verify:access` first, because Phase 26 changed
   `customers.create` and could not re-verify it.
 
+## 1.34 Phase 29 — content seeding and demo data
+
+Plan §29.1a–§29.1d. **No dependency and no migration.** Ten products became **twenty-eight**, across
+all ten categories §29.1b names, and the seed writes customers, orders and reviews for the first time.
+
+**Every harness in the project ran, and passed: 1,819 checks across twenty-two of them**, plus 813
+Vitest tests. That had never been true before — the development branch arrived in this phase.
+
+### 1.34.1 The seed now writes records of things people did, having refused to for twenty-three phases
+
+`seed.ts`'s own docblock said it created no customers, orders or reviews, and gave a good reason:
+*"a commerce demo whose order list is fiction is worse than one whose order list is empty."*
+
+§29 is the phase that argument was written against. The prompt asks for content *"sufficient to
+demonstrate every feature"*, and four features **cannot be demonstrated empty**: the review block, the
+moderation queue, the account order history, and the admin's order list. An empty table does not show
+a reviewer that reviews work — it shows them a page with nothing on it.
+
+The docblock now makes the argument rather than contradicting it, and four things keep it honest:
+
+- Every seeded person is on **`@example.test`**, a reserved TLD that cannot receive mail. Not
+  decoration: Phase 19's queue will happily try to email a seeded customer.
+- **`verifiedPurchase` is set only where the customer genuinely has a paid order for that product** —
+  the same question `hasPaidOrderFor` asks. A fabricated badge is precisely the lie §21.1a exists to
+  prevent, and it would be invisible.
+- Ratings and states vary: nine approved, one pending, one rejected, across nine products, including
+  a two-star with a specific criticism. A wall of five stars demonstrates nothing.
+- Passwords live in `docs/DEMO_ACCOUNTS.md`, **git-ignored** — §29.1d's *"never commit real
+  credentials"*.
+
+Six orders span every fulfilment state the machine has, so the admin's order list demonstrates the
+machine rather than repeating one row.
+
+### 1.34.2 §29.1c's real test is "authored rather than generated from a template"
+
+That clause is the whole difficulty of the phase, and it is not satisfiable by a loop. Concretely,
+across the eighteen new products: colour counts run **1 to 4**, size runs **3 to 5** in **two
+vocabularies** (XS–XL and waist 30–36), descriptions **1 to 4 paragraphs**, materials **1 to 5**
+lines, care **1 to 3**. Two of seven tops carry a compare-at price rather than all of them, because a
+sale on everything is a sale on nothing. Stock is set so all three of §11.1b's card states are
+reachable, and several products have **one size** at zero so the disabled option in the size selector
+is visible in the demo rather than only in a test.
+
+The data lives in five modules under `scripts/seed/` because it is long and the orchestration is not
+— and because five agents could then write it at once without contending for one 1,400-line file.
+Their `sortOrder` bands are disjoint **by agreement**: the original ten hold 10–100, tops 110–170,
+lower 175–200, accessories 210–250. The column is `required` but not unique, so a collision would not
+error; it would make the merchandised order arbitrary between the colliding rows, which surfaces
+months later as *"the shop looks shuffled"*.
+
+### 1.34.3 `generate:media` duplicated every asset on a second run, and the safe repair was not the obvious one
+
+The script uploaded unconditionally. A second run against the same catalogue therefore created a
+second copy of **all 78 assets**, repointed every field at the copy, and left the original orphaned.
+Invisible while it only ever ran once against an empty library — and this phase made *"run it again
+for the new products"* the ordinary case.
+
+**`--clean` is emphatically not the answer**, and this file's own docblock already said why: the
+Cloudinary public id is derived from the filename, so development and production address the **same
+objects**, and deleting a Payload upload document tells the storage adapter to delete the object
+behind it. A `--clean` against development would have taken production's images down.
+
+So the repair went the other way: every field was repointed at the **original** asset and only the new
+duplicates were deleted. The public ids production references were never touched. 78 rows before, 78
+after.
+
+Every loop is incremental now — product galleries, colour swatches, category and collection imagery,
+edits, journal, lookbook covers, campaign frames, the Open Graph image. A repeat run reports **0
+generated** and names what it skipped, because a run that says *"0 assets"* and nothing else looks
+like a failure.
+
+### 1.34.4 Sweep 1 — the development branch made twenty-two harnesses runnable at once, and four were wrong
+
+**`verify:lookbook` and `verify:editorial` could not start at all.** Both import the storefront read
+layer, which is `server-only`-guarded, and `server-only` is **not an installed package** — Next
+aliases the bare specifier inside its own bundler and that alias exists nowhere else. Phase 19
+measured the same `ERR_MODULE_NOT_FOUND` against `payload.config.ts`; Vitest needed an alias of its
+own in Phase 27; these two were the **third** instance, dormant because D-10 had held them since
+Phase 22.
+
+Fixed with a `tsconfig.json` `paths` entry pointing at an empty stub, which is what `tsx` resolves
+through. **That the Next build guard still bites was verified, not assumed**: a client component
+importing `@/lib/env.server` was added temporarily, and `pnpm build` refused it and named the import
+chain. The real `server-only` package is deliberately **not** installed — its `exports` map resolves
+to a throwing `index.js` under everything but the `react-server` condition, so installing it would
+make the CLI throw rather than resolve, which is the opposite of what is wanted.
+
+**`verify:catalog` found a real defect that twenty-seven phases could not.** Postgres breaks a price
+tie on `slug`; the Algolia replicas broke it on **nothing**, leaving two products at the same price in
+whatever order the index's internal ranking gave. The assertion that the two engines agree *in order*
+passed for ten products with ten distinct prices, and failed the moment twenty-eight produced **four
+ties**. Both engines now end on `asc(sortOrder)` — distinct per product, present on both sides, and
+therefore a **total** order, which is what the assertion was always about. `sortOrder` rather than
+`slug` because Algolia's `customRanking` orders on numeric and boolean attributes and a slug is
+neither. The tiebreak stays ascending under `price-desc`: it is a stable secondary key, not part of
+the direction the customer chose.
+
+**And the harness itself was wrong.** It fetched a page from each engine and filtered its own fixtures
+out of the Postgres side *afterwards*, which only worked while a page had room to spare. Twenty-eight
+products filled it, two slots went to fixtures, and it reported the engines disagreeing when they did
+not. A harness that cries wolf about the thing it exists to watch is worse than one that is silent.
+The fixtures are excluded in the query now.
+
+**`verify:account` failed nine checks against behaviour that was right.** Written in Phase 20 and
+never run, its fixture created a published product with **no variants** and expected the wishlist to
+accept it. `publishedProductWhere` requires `derived.priceFromMinor`, which comes from the variants,
+so `saveToWishlist` correctly answered `unavailable`. The fixture has a variant now — the same rule
+Phase 28's publish guard states from the authoring side.
+
+**`verify:shell` asserted the footer's legal row is two links.** Phase 28 emptied it because both were
+404s and recorded gap **G-19**. The assertion is **inverted rather than deleted**, so restoring the
+links is a deliberate act that has to come here and say so.
+
+### 1.34.5 The seed does not update the search index, and now says so
+
+`syncSearchIndex` is on `products.hooks.afterChange`, fires on every write the seed makes, and does
+nothing: it resolves credentials through `@/lib/env.server`, which cannot resolve under the CLI. The
+hook logs that at **debug** and returns, which is correct — it is the expected state for `pnpm seed`,
+and a warning per product would be noise on a healthy run.
+
+The consequence only became visible here, when the script started writing eighteen products instead of
+updating ten: `verify:catalog` failed eight checks because the index held ten products and the
+database held twenty-eight. Not a defect — a step nobody was told to take. The seed's closing line
+now tells them.
+
+### 1.34.6 Sweep 2 — eighteen of twenty-eight products belonged to no collection
+
+§29.1c lists it in one line: *"Every product should have… collection assignment."* The four collection
+lists were written against a catalogue of ten, and a product module cannot know what a merchandiser
+would file its garment under — so the eighteen new products were reachable **only from the shop
+grid**: absent from `/collections/*`, from the homepage's collection feature, and from the collection
+facet in the filter panel, which is the surface §11.1d's *"filter by collection"* is about.
+
+All twenty-eight now sit in at least one, ordered as a merchandiser would show them rather than
+alphabetically — `Collections.ts` is explicit that *"dragging a row is the curation"*. A product may
+sit in more than one, which is why `wool-overshirt` is in both Current Season and Limited: a
+collection is a point of view, not a folder.
+
+### 1.34.7 What was verified, and how
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck` | passes |
+| `pnpm lint --max-warnings 0` | passes |
+| `pnpm build` | passes |
+| `pnpm test:run` | **813** |
+| Twenty-two `verify:*` harnesses | **1,819 checks, all passing** |
+| `pnpm scan:secrets` | clean, 436 files |
+| Seed idempotency | **run twice, every count identical** |
+| `generate:media` idempotency | **run twice, 0 assets generated** |
+
+§29's own requirement — *"seed scripts are idempotent and do not duplicate data when run twice"* — is
+asserted by running them twice and comparing counts, rather than by reading the upserts and believing
+them.
+
+### 1.34.8 What is now owed
+
+- **The 57 Playwright tests.** They are the last thing D-10 was holding and they are now runnable:
+  `pnpm exec playwright install --with-deps chromium`, then `E2E_START_SERVER=1 pnpm test:e2e`
+  against the development branch.
+- **`/help/contact`** — gap **G-08**, owed since Phase 19 and now by three phases.
+- **`/legal/privacy` and `/legal/terms`** — gap **G-19**. Legal text somebody has to write.
+- **Real photography.** Every image in the demo is generated fabric and lit-ground art. It is
+  deliberate stand-in work and it deletes cleanly, but it is the most visible thing between this and
+  a shop that looks finished.
+- **`campaigns.collection` and `campaigns.products`**, still read by nothing (Phase 28).
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -9806,4 +9973,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 26 — security and bot protection | 2026-09-09 | Notes **§1.31**. **No dependency added**; one upgraded, and that is the phase's most consequential change: `next@16.3.2` carried **two CRITICAL unauthenticated RCE advisories** — Windows-hosted servers, and the Image Optimization API with AVIF — both fixed in `16.3.3`, which is still inside `@payloadcms/next@3.88.0`'s range. Overrides added for `fast-uri` (2 SSRF, 2 host confusion), `js-yaml` and `sharp`. **`pnpm audit` went from 9 findings (2 critical, 6 high, 1 moderate) to 1 moderate** — and that one, Payload's default `unlock` access letting any authenticated user clear anyone's lockout, **was already closed in config two phases ago**: `Customers.ts` is staff-only and `Users.ts` admin-only. Verified by reading them, not assumed; the first instinct was to add the rules, which would have been a duplicate key. The named upgrade `payload@3.88.1` is unavailable because every `@payloadcms/*` package pins an exact peer on 3.88.0. **§26.1a's own sentence is the design**: delete the widget and every guarded form starts **refusing**, because `verifyTurnstile` reads the configured state from the **server** environment rather than taking a flag from its caller — no argument a call site can pass and no field a client can omit turns a required verification into a skipped one. Wired into newsletter, review submission, registration and **login** (§26.1a's *"where abuse warrants it"*, answered by what the form is rather than by whether abuse has been seen yet), each **before** validation so a refusal costs no query and no field-by-field critique. **DEV-75**: unconfigured skips, an outage **refuses** — the one control in this project that fails closed, because the cost of degrading here is no bot protection on exactly the forms being hammered, by an attacker who can cause the outage they benefit from. One sentence for every failure; the reason logged, never shown. **§26.1b's one real finding was API depth**: Payload defaults `maxDepth` to 10 on a public REST surface, which is an amplification primitive — capped at 3, one above the project's deepest read. Everything else in §26.1b was verified rather than changed. **§26.1c**: no `dangerouslySetInnerHTML` renders CMS content anywhere (the only one is `JsonLd`, which escapes first); uploads are a six-entry allowlist with no SVG and no PDF; `isSameSitePath` refuses control characters so a `Location:` cannot ride a newline. **§26.1d** is a committed scan rather than a grep somebody ran: `pnpm scan:secrets`, whose first Resend pattern matched **English** (`Structure_Current_…`, `figure_mobile_image_idx`) and whose four real hits were the redaction harness's own fixtures — resolved by marking them `EXAMPLE` rather than allowlisting `scripts/`, which would be a hole exactly where a real key gets pasted while debugging. Clean across 388 files. New harness `pnpm verify:security` — **51/51**, the third that opens no connection. Owed: Turnstile keys (`TODO.md` §7), the contact form (**G-08**, now owed by two phases), a browser pass over four forms that have never rendered a widget, and `payload@3.88.1` when its peers catch up. |
 | Phase 27 — testing strategy | 2026-09-09 | Notes **§1.32**. **Eight dependencies at exact pins**, no migration. **813 Vitest tests across 18 files, all green; 57 Playwright tests across 5 files, none ever executed.** Two Vitest projects rather than one — `unit` in Node, `components` in jsdom — so a module claiming to be pure **fails** if it reaches for `window` instead of passing by accident, which is the one place that boundary was otherwise invisible. `server-only` is aliased to an empty module for the same reason the Payload CLI cannot resolve it. **The tests found five defects, and that is the phase's actual output**: `invalidSelection` never fired for the case feature matrix §7 names by title (`?color=Cream&size=M` where Black/M exists — the live region explaining it said nothing); a merged cart line of quantity zero was reported **sold out while fully in stock**, because `clampQuantity` returns `clampedBy: null` for a request of none and the merge defaulted it; `combined` counted occurrences rather than bags, contradicting its own field doc; `canFulfillmentTransition` **threw a TypeError** on a status read from the database that the table does not contain; and the search panel could **take the whole overlay down** — `CSS.escape('')` is `''`, so the selector became `'#'`, which `querySelector` throws on, reachable by arrowing to a late option and clearing recent searches in another tab. `FULFILLMENT_COPY.notPaid` also told an operator something untrue about a refunded order. **One reported defect was deliberately not fixed** and the reasoning put in the source: `cartTotals` counting unpriced units is unreachable (`cart.ts` filters first) and the behaviour is a written §14.1e decision — making an unreachable path disagree with a documented decision is not a fix. **The quantity control's own tests were wrong instructively**: three failed and **two passed for entirely the wrong reason**, because a controlled `type="number"` snaps back between keystrokes and `clear()` + `type('8')` produces 18. **The E2E suite cannot run** — it creates customers, bags and Stripe sessions, and the only reachable database is production (D-10), which §27.1f's own *"where environment permits"* anticipates. Flow 4 (quick view) is skipped because the feature does not exist (**DEV-74**); flow 7 signs its events offline rather than speaking to Stripe; flow 6 is the retained real test-mode path. All fifteen §27.1d cases are enumerated even where four can only be skipped, because a list with a hole in it is how a case gets forgotten. **The CI pipeline would have skipped its own build**: `if: env.DATABASE_URL != ''` cannot see that step's own `env:` block, so the condition read an empty string and the build never ran — a skipped step reporting success, invisible until somebody reads a log. New gap: five latent `Math.max(1, …)` traps, all currently unreachable, recorded rather than changed. |
 | Phase 28 — admin experience | 2026-09-09 | Notes **§1.33**. **No dependency and no migration** — `migrate:create` reports no schema changes, because everything here is admin metadata, field access, a hook or a validation; the one new field, `promotions.liveNow`, is `virtual`. **Two findings were bugs, not missing config.** `admin.readOnly` on `products.derived` was decorative — Payload's readOnly is a widget attribute and the value stays in the submit body — so the ordinary flow (open product → add sizes in the drawer → save) **wrote back the pre-variant copy of `derived`**, nulled `priceFromMinor` and withdrew the product from the shop on a save the editor thought was a no-op. And every money column on an order was freely editable by staff, in the panel and over REST, on a record with no version history: the closest thing to a fake refund this admin permitted was typing a smaller total. **§28.1d's one missing guardrail** was publishing a product with no active priced variant — the save succeeded, the sidebar said Published, and `publishedProductWhere` then hid it from the shop, search and the sitemap with no message anywhere, because the rule that hid it lives in a query an editor never sees. Now refused on the transition, reading the same column that query reads. Duplicate deliberately slips past it (verified against Payload's source: a duplicate saves immediately, so refusing leaves an error with no form to act on it), and a missing image is deliberately not malformed, because §8.1d answers one with a placeholder. The other four guardrails already existed and were **verified rather than assumed**, including that Postgres refuses negative stock (23514) and duplicate SKUs (23505) past validation entirely. **No `admin.components` were added at all** — the prompt forbids unnecessary dashboard complexity, and everything is description, access, validate, filterOptions or a hook. **Sweep 1: the footer pointed at eight routes and none of them existed** — every Help and legal link, on every page. Three are now real and their content had been in the CMS for phases (`/help/faq` renders a collection that rendered NOWHERE — Phase 23's defect again); the rest are removed rather than faked, and Privacy/Terms are refused on principle because inventing privacy copy is a false statement about personal data on the page a regulator reads first (gap **G-19**). Also: `seoField()`'s `publishedAt` description was true of products and false for the four editorial collections, and a moderator could rewrite a customer's review body and rating — §21.1b defines moderation as three states, not as authoring. **Sweep 2** verified the Duplicate escape against Payload's own source rather than a report, and found the hole in the **harness**: it proved the payment axis could not be typed and never touched the amounts Phase 28 had just locked. New harness `pnpm verify:admin` — **87/87**. |
+| Phase 29 — content seeding and demo data | 2026-09-10 | Notes **§1.34**. **No dependency and no migration.** Ten products became **twenty-eight** across all ten categories §29.1b names, and **every harness in the project ran and passed for the first time — 1,819 checks across twenty-two**, plus 813 Vitest tests. The seed writes customers, orders and reviews, reversing an argument it had made since Phase 6 (*"a commerce demo whose order list is fiction is worse than one whose order list is empty"*) — because four features cannot be demonstrated empty, and the docblock now makes that argument rather than contradicting it. Kept honest by `@example.test` addresses that cannot receive mail (Phase 19's queue would try), a `verifiedPurchase` badge set only where a paid order really exists, varied ratings including a pending and a rejected, and passwords in a git-ignored file. **`generate:media` duplicated all 78 assets on a second run** — and the obvious repair, `--clean`, would have taken **production's images down**, because development and production address the same Cloudinary objects; every field was repointed at the ORIGINAL instead and only the new copies deleted. Every loop is incremental now. **Sweep 1 ran twenty-two harnesses and four were wrong**: `verify:lookbook` and `verify:editorial` could not start at all (the third instance of the `server-only`-under-the-CLI trap, fixed with a tsconfig path whose safety was **verified** by making the build refuse a real leak); `verify:account` failed nine checks against correct behaviour, its Phase 20 fixture having never run; `verify:shell` asserted a footer row Phase 28 deliberately emptied. And **`verify:catalog` found a real defect twenty-seven phases could not**: Postgres broke a price tie on `slug` and the Algolia replicas broke it on nothing, which passed for ten products with ten distinct prices and failed the moment twenty-eight produced four ties — both engines now end on `asc(sortOrder)`, a total order on both sides. The harness itself was also wrong, filtering its fixtures out of one engine's page after fetching rather than in the query. **Sweep 2: eighteen of twenty-eight products belonged to no collection**, so they were reachable only from the shop grid — absent from `/collections/*`, the homepage feature and the collection filter facet. Idempotency is asserted by running both scripts twice and comparing counts, not by reading the upserts and believing them. |
 > **Append this table, and the sections above it, at the end of every phase.**
