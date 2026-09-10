@@ -29,6 +29,17 @@ is the guard working exactly as intended, because the only reachable database is
 | `pnpm verify:lookbook` | 20 |
 | `pnpm verify:editorial` | 24 |
 
+And, since Phase 27, the **whole Playwright suite** — 57 tests across five files. It creates
+customers, adds to bags and opens Stripe Checkout sessions, so it is the most destructive harness
+here. Once a disposable database exists:
+
+```bash
+pnpm exec playwright install --with-deps chromium   # once per machine
+DATABASE_URL='postgresql://…/disposable' E2E_START_SERVER=1 pnpm test:e2e
+```
+
+The 813 Vitest tests need none of this and run today (`pnpm test:run`).
+
 `pnpm verify:seo` (94) and `pnpm verify:analytics` (89) are unaffected: they open no connection at
 all.
 

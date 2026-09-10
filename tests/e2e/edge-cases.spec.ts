@@ -352,16 +352,28 @@ test.describe('§27.1d — the fifteen edge cases the plan enumerates', () => {
    * ------------------------------------------------------------------------------------------ */
 
   test('a webhook delivered twice finalises the order once', async () => {
+    /*
+     * **Enumerated here, driven elsewhere — and the reason matters.**
+     *
+     * The first version of this skip said a duplicate delivery could not be driven from a browser
+     * at all. That is not true, and `checkout.spec.ts` proves it one file over: flow 7 signs its own
+     * events offline with `stripe.webhooks.generateTestHeaderString` — the approach
+     * `scripts/verify-checkout.ts` established — and its *"the same event delivered twice is
+     * processed once"* test posts one event id twice against §17.1d's first idempotency barrier.
+     *
+     * So this case IS covered, and duplicating the setup here would be a second, weaker copy of it.
+     * The entry stays because §27.1d names fifteen cases and an enumeration with a hole in it is how
+     * a case gets forgotten; what changed is that the reason now points at the test that runs rather
+     * than claiming none can.
+     */
     test.skip(
       true,
-      "Needs Stripe's webhook signing secret. The route reads the raw body and calls " +
-        '`constructEvent`, so an unsigned POST is answered 400 and never reaches either idempotency ' +
-        'barrier — a browser-driven "duplicate" would therefore only assert that signature ' +
-        'verification works, which is a different rule. Producing two identically signed deliveries ' +
-        'of one event id needs the secret and a database, and D-10 forbids the second. ' +
-        '`pnpm verify:webhook` drives `applyStripeEvent` exactly as the route drives it against a ' +
-        'development database, and asserts the unique `stripe-events.eventId` insert, the ' +
-        'transaction, and that a redemption is counted once and not again on a duplicate event.',
+      'Covered by `checkout.spec.ts` §27.1c flow 7 — "the same event delivered twice is processed ' +
+        'once", which signs its events offline and needs only STRIPE_WEBHOOK_SECRET. Also covered ' +
+        'against a real database by `pnpm verify:webhook`, which asserts the unique ' +
+        '`stripe-events.eventId` insert, the transaction, and that a redemption is counted once and ' +
+        'not again on a duplicate event. Not repeated here, because a second weaker copy of a test ' +
+        'is worse than a pointer to the strong one.',
     )
   })
 

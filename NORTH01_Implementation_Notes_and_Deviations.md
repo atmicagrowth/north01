@@ -7523,6 +7523,196 @@ challenge.
 - **`POST /api/customers/login`** — gap **G-18**, above.
 - **The five database harnesses**, still held by D-10.
 
+## 1.32 Phase 27 — testing strategy
+
+Plan §27.1a–§27.1f. **Eight dependencies, all at exact pins** — `vitest` 4.1.11,
+`@vitejs/plugin-react` 6.1.1, `@testing-library/react` 16.3.3, `@testing-library/user-event` 14.6.7,
+`@testing-library/jest-dom` 7.0.1, `jsdom` 30.0.1, `@playwright/test` 1.62.1,
+`@axe-core/playwright` 4.13.0. No migration.
+
+**813 Vitest tests across 18 files, all green. 57 Playwright tests across 5 files, none of which has
+ever been executed.**
+
+### 1.32.1 Two Vitest projects, because one would have let a rule rot
+
+`unit` runs in **Node** and `components` in **jsdom**. A module claiming to be pure that reaches for
+`window` therefore **fails** rather than passing by accident — which matters in a project that spent
+twenty phases drawing exactly that boundary and enforcing it three other ways (the `server-only`
+guard, the ESLint fence on `env.core`, the `typeof window` backstop). A single jsdom project would
+have been the one place the boundary was invisible.
+
+`server-only` is aliased to an empty module. Next aliases that bare specifier **inside its own
+bundler**, which is why the Payload CLI cannot resolve it either — Phase 19 measured the
+`ERR_MODULE_NOT_FOUND` — and Vitest is a third loader with the same problem. The guard still means
+what it means in the two places that matter: a browser bundle and the CLI.
+
+### 1.32.2 The tests found five defects, and that is the phase's actual output
+
+Not one of them came from reading the code again. Each came from an assertion somebody had to think
+about hard enough to write down.
+
+**`invalidSelection` never fired for the case feature matrix §7 names by title.** It caught a colour
+or a size that exists nowhere on the product, and missed the ordinary version:
+`?color=Cream&size=M`, where Cream/M was never made but **Black/M was**. `sizes` is every size across
+the *whole product*, each entry carrying `missing` for the selected colour — so "M" was found, the
+flag stayed false, and the live region that exists to say *"that combination is not available —
+showing what we do have"* said nothing at all. The customer saw M apparently chosen, Add to bag
+disabled, and no explanation. The rule the two original clauses were approximating is *they asked for
+a specific combination and it does not exist*, and that is now the third clause.
+
+**A merged cart line of quantity zero was reported as SOLD OUT when the variant was fully in stock.**
+`clampQuantity` answers `{ clampedBy: null, quantity: 0 }` for a request of **zero** — nothing
+clamped it, there was nothing to grant — and the merge's `?? 'soldOut'` fallback turned that into a
+false statement about inventory. There is no `ClampReason` for *"you asked for none"* and inventing
+one would widen a union three call sites switch on, so the row is simply not reported: nothing was
+dropped, because nothing was asked for.
+
+**`combined` contradicted its own documentation.** It was `sources > 1` counted over the concatenated
+`[...customer, ...guest]`, so a variant appearing twice **inside one bag** came back `combined: true`
+— against a field doc reading *"true when this variant was in both bags"*. A bag holds one row per
+variant by design, and nothing in this pure function enforces that; the caller passes rows read from
+the database.
+
+**`canFulfillmentTransition` threw a `TypeError` where a refusal belonged.** The type says an unknown
+`from` cannot reach it; the type is not what reaches it, because `planFulfillmentChange` is handed a
+status read from the **database**. A column that gains an option in a migration before this table
+does was a crash rather than an `unreachable`.
+
+**The search panel could take the whole overlay down.** Its `scrollIntoView` effect built
+`` `#${CSS.escape(options[active]?.id ?? '')}` ``, and `CSS.escape('')` is `''` — so the selector
+became the single character `'#'`, which `querySelector` **throws** a `DOMException` on rather than
+returning null. The `?.` after it shows a null was what the author expected. Reachable rather than
+theoretical: the panel honours cross-tab writes to the recent-searches key, so arrowing to a late
+option and clearing the list in another tab leaves `active` past the end. Every other consumer of
+that stale index was already guarded; this was the exception.
+
+One more, corrected in the copy rather than the logic: **`FULFILLMENT_COPY.notPaid` told an operator
+something untrue about a refunded order.** The gate is `payment !== 'paid'`, which a refunded order
+fails — it *was* paid and the money went back — while the sentence read *"this order has not been
+paid for"* and advised cancelling an order that is already settled.
+
+### 1.32.3 One reported defect was deliberately not fixed
+
+`cartTotals` counts the units of an **unpriced** line while charging nothing for it, so a bag could
+report *"3 items"* above a total charging for two. It was flagged as a null-means-unknown collapse
+and the case is real.
+
+It was left alone, and the reasoning is now in the source rather than in a commit message.
+`lib/cart/cart.ts` filters on `unitPriceMinor !== null && maxQuantity > 0` **before** calling it, so
+no unpriced line reaches this function on any live path. And the behaviour is a **written §14.1e
+decision** rather than an oversight: an unavailable line should be *visible*, and a count that
+silently dropped it would hide the discrepancy the bag is trying to show.
+
+Making an unreachable path disagree with a documented decision is not a fix. Recording why is.
+
+### 1.32.4 §27.1b's tests assert behaviour and accessibility, never markup
+
+Query by **role and accessible name**, never by class, and no snapshot anywhere — the phase prompt
+says *"prioritize business-critical logic and user flows over superficial snapshot coverage"* and a
+snapshot is the fastest way to a suite that fails on every refactor and catches nothing.
+
+Each file asserts what its control **refuses** to do as much as what it does, which is where this
+project's rules live: the variant selector does not preselect a size, the quantity stepper's ceiling
+is derived and not stored, the checkout summary does not render an unquoted shipping cost as *Free*,
+the search panel is a real `<form method="get" action="/search">` that works before React arrives.
+
+### 1.32.5 The quantity control's tests were wrong in an instructive way
+
+Three failed and **two passed for entirely the wrong reason**, which is worse.
+
+The field is a **controlled** `type="number"`. `userEvent.clear()` fires a change carrying `''`, the
+component reads `Number('') === 0`, the floor turns it into `1`, and React re-renders showing "1"
+**before the next keystroke lands** — so `clear()` + `type('8')` produces **18**. That is a fact
+about a controlled value, not about the component.
+
+The two that passed did so because `type('9')` against a ceiling of 3 clamps to 3 whether the field
+held 9 or 19. A green test asserting nothing is the failure mode a test suite is supposed to prevent,
+and it appeared in the suite's own first hour. All of them now send the single change event a real
+select-all-and-type delivers, and the helper says why.
+
+### 1.32.6 §27.1c–§27.1e are written and have never run
+
+An E2E suite **writes**: it creates customers, adds to bags, and opens Stripe Checkout sessions. The
+only database this project can reach is **production**, and decision **D-10** exists to stop a
+writing harness reaching it. This is the most destructive harness in the repository.
+
+So `playwright.config.ts` starts no server unless `E2E_START_SERVER=1`, and §27.1f's own phrase —
+*"E2E tests where environment permits"* — is the plan acknowledging this case rather than a loophole
+being used as one.
+
+Correctness therefore came from **reading the application**: every selector is a `data-slot` or a
+role taken from `src/`, and user-facing copy is imported from `CART_COPY`, `SEARCH_COPY`,
+`LOOK_COPY`, `REVIEW_COPY` and `WISHLIST_COPY` rather than retyped. There is no `waitForTimeout`
+anywhere — web-first assertions and `waitForURL` only.
+
+**Flow 4, "quick view → add to cart", is skipped because the feature does not exist.** Only the
+wishlist third of §11.1c was ever built, and Phase 25 recorded `quick_view_opened` as an event
+nothing emits (**DEV-74**). Faking a quick view to make a flow green would have been the one thing
+worse than skipping it.
+
+Flow 7 never speaks to Stripe: it signs its own events offline with
+`stripe.webhooks.generateTestHeaderString`, the approach `scripts/verify-checkout.ts` established.
+Flow 6 is the *"at least one real Stripe test-mode integration path"* the prompt asks to retain, and
+it skips itself when the deployment answers 503 rather than assuming the harness's environment and
+the server's match.
+
+### 1.32.7 §27.1d's fifteen cases are enumerated even where they cannot be driven
+
+Four are unconditionally skipped, each naming exactly what would be needed: a product unpublished
+mid-test, a price changed mid-test, an expired promotion row, and a duplicate webhook. All four need
+a database write.
+
+The enumeration is kept anyway. Fifteen entries with four honest skips is a list somebody can act on
+when the environment arrives; fourteen entries is how a case gets forgotten.
+
+The rest are real tests, several driven with `page.route` — the image-failure case aborts image
+requests and asserts §8.1d's actual rule, that the reserved box comes from the **context** and not
+the asset, so the layout does not shift.
+
+### 1.32.8 §27.1e is automated and is explicitly not sufficient
+
+Axe over the six routes §27.1e names, at `wcag2a`, `wcag2aa`, `wcag21a` and `wcag21aa`, asserting
+**zero** violations, with no blanket `disableRules`.
+
+The `/checkout` scan carries a trap worth naming: the route redirects to `/cart` when the bag is
+empty, so a bare `page.goto('/checkout')` scans the **bag**, finds nothing, and reports green having
+never looked at checkout. The spec seeds a bag through the real UI first and asserts the URL
+afterwards.
+
+The file ends with the manual list, because the plan says outright that automated tools *"cannot
+cover all interaction and content problems"*: the cart-drawer and search-overlay focus traps, the
+variant selector's roving tabindex, the skip link, and the hotspot popovers.
+
+### 1.32.9 The CI pipeline would have skipped its own build
+
+§27.1f's order exactly: install → typecheck → lint → unit tests → build → E2E where permitted, with
+format-check and the four database-free harnesses added.
+
+The first version guarded the build with `if: env.DATABASE_URL != ''` while defining `DATABASE_URL`
+in that step's **own** `env:` block. A step's `if:` cannot see its own `env:` — the `env` context in
+a condition resolves against workflow- and job-level env only — so the condition read an empty
+string, `'' != ''` was false, and **the build would never have run**. A skipped step that reports
+success is the worst shape a pipeline can take, and it is invisible until somebody reads a log.
+Moved to job level, where the condition can see it.
+
+That the four harnesses run in CI **without any secret** was verified rather than assumed: `.env` was
+blanked and `pnpm verify:seo` still passed 94/94.
+
+### 1.32.10 What is now owed
+
+- **Run the E2E suite**, which needs a disposable database. It is the largest thing D-10 is holding,
+  and it is now holding most of a phase rather than a corner of one.
+- **Install Playwright's browsers** once per machine — `pnpm exec playwright install --with-deps
+  chromium`. `pnpm install` does not.
+- **The manual accessibility pass** listed at the end of `accessibility.spec.ts`.
+- **The five database harnesses**, still held by D-10, and `verify:access` first because Phase 26
+  changed `customers.create` and could not re-run it.
+- **The latent `Math.max(1, …)` traps.** Five places share the idiom `money.ts` itself documents as
+  *"reads like a clamp and is not one"* — `clampQuantity`'s policy, `productCardState`'s threshold,
+  the percentage branch of `calculateDiscount`, and two others. Every one is currently unreachable
+  because the settings reader rejects the values that would trigger them, so none was changed; they
+  are recorded here so the next phase that touches those numbers knows they exist.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -9420,4 +9610,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 24 — search engine optimization | 2026-09-09 | Notes **§1.29**. **No dependency and no migration** — the fifth phase running. **Three site-wide CMS fields and a nine-collection field group had been authorable since Phase 6 and read by nothing**: `defaultSeoTitle`, `defaultSeoDescription`, `defaultOgImage` and `seoField()`'s title/description/image. `SiteSettings.ts` and `seo.ts` both named Phase 24 as the phase that would read them; both promises are kept, and the precedence — document override, then page content, then site default, then built-in — is stated once in `pageMetadata`. An **emptied override is not an override**: a cleared field means *derive it*, never *publish an empty tag*. **§24.1b is enforced by shape, not by a check**: offers are built only from variants that are active, in stock and priced, so a sold-out size cannot set the price; nothing buyable emits `OutOfStock` **with no price at all**, because a price nobody can pay is the forbidden claim; a product with no variants emits no `offers` key; and `aggregateRating` appears only when a real approved review exists — no key, not a zero, not five stars from nobody. **`getProduct`'s memoisation did not apply to its second caller**: React's `cache` compares arguments with `Object.is`, so two callers passing `{ color: null, size: null }` both ran the queries — memoisation that silently does not apply is worse than none. Split into `getProductRecord(slug)`, keyed by a string, with the variant matrix built on top. **The canonical never comes from the request** (Phase 7's host-header argument) and never carries a query — `/shop`'s nine parameters and `/product/x?size=m` are one page each. **The homepage exported no metadata at all**, to dodge the *"NORTH / 01 · NORTH / 01"* title template — which cost the front page its canonical and its OG card; `absoluteTitle` is the answer, and the layout's metadata now reads the site name from the CMS. **`robots.txt` needs three rules per prefix**: `/account/` misses `/account`, `/account` blocks `/accounts-payable`, and an RFC 9309 matched path includes the query string, so neither touches `/search?q=` — the exclusion's whole point. One shared constant with the sitemap, because the two disagreeing is the classic SEO defect. **JSON-LD is escaped**: a raw-text element ends at the first literal `</script`, and every value in it comes from the database. New harness `pnpm verify:seo` — **90/90, and the first in this project that touches no database**, so no D-10 guard: everything §24 decides is a pure function. `pnpm build` passed — the first since Phase 18 — and `robots.txt` and `sitemap.xml` were read back out of the build output (35 URLs from real data) rather than assumed. Two stale docblock claims corrected: the homepage has **not** been statically prerendered since Phase 9 (the layout awaits `cookies()`), and four routes' *"SEO is Phase 24"* notes now say what was decided. Owed: `/collections` and `/edits` indexes, `generateStaticParams` (Phase 30), `priceValidUntil` and `shippingDetails` (neither claimable today), a browser pass, and the five harnesses D-10 still holds until a **development** connection string exists. |
 | Phase 25 — analytics and observability | 2026-09-09 | Notes **§1.30**. **Three dependencies installed at their pins** (`posthog-js` 1.418.10, `@sentry/nextjs` 10.70.0, `@vercel/speed-insights` 2.0.0); GA4 is a script tag; no migration. **The taxonomy is a type**: `AnalyticsEvent` is a union of exactly §25.1a's seventeen names and `trackEvent` takes it, so a typo is a compile error rather than an empty dashboard column — and the internal names *are* the GA4 names for the ten that overlap, because a translation table is somewhere for the two to drift invisibly. **Money crosses the vendor boundary once**, in `toGa4Params`: a price field that is sometimes cents and sometimes dollars reports revenue a hundred times too high and is not recoverable, so the conversion is pure and asserted — including that a zero value is a real zero and an unknown value is absent. **Server Components stayed server components**: `ProductCard` gained two data attributes and `TrackList` delegates from the grid wrapper in the capture phase, rather than an `onClick` converting the most-rendered component in the shop and everything it renders. **Every event is emitted where it is true, not where it was clicked** — `addToBagAction` can refuse, and an `add_to_cart` on the click would report adds that never happened; `useActionResult` fires on the action's result, guarded by reference identity. **`purchase` is gated on the webhook**, not on arrival (§17.1g), and deduped in `sessionStorage` by order number, because the success URL is refreshable and a double-count doubles reported revenue. **§25.1d is enforced on the way out**, on two independent grounds — by key and by value — with cookies and headers dropped rather than scrubbed, the user reduced to an id, and the URL keeping its route while losing its token; the whole-URL pattern runs before the email pattern, or a Postgres URL is left with its host and password intact. **Two of the seventeen events are deliberately not emitted**: `add_payment_info` (**DEV-73** — Stripe Checkout is hosted, this application never sees payment details, and firing it at redirect would report leaving for Stripe as entering a card) and `quick_view_opened` (**DEV-74** — no quick view exists). Sentry is wired into four entry points because Next has four kinds of failure; `global-error.tsx` renders `error.digest` and never `error.message`, per §4.1b. **`@sentry/cli`'s postinstall is denied** in `pnpm-workspace.yaml` — source-map upload is off, so **production stack traces will be minified**, stated rather than discovered. §25.1e honoured as the schedule it is: Speed Insights renders in production only, and a second gate lives in the Vercel dashboard. New harness `pnpm verify:analytics` — **89/89**, the second in this project that touches no database. What it cannot cover is the prompt's own *"verify events in local/preview"*: no account exists, and `TODO.md` §6 says so. New gap **G-17**: no consent gate in front of any vendor. |
 | Phase 26 — security and bot protection | 2026-09-09 | Notes **§1.31**. **No dependency added**; one upgraded, and that is the phase's most consequential change: `next@16.3.2` carried **two CRITICAL unauthenticated RCE advisories** — Windows-hosted servers, and the Image Optimization API with AVIF — both fixed in `16.3.3`, which is still inside `@payloadcms/next@3.88.0`'s range. Overrides added for `fast-uri` (2 SSRF, 2 host confusion), `js-yaml` and `sharp`. **`pnpm audit` went from 9 findings (2 critical, 6 high, 1 moderate) to 1 moderate** — and that one, Payload's default `unlock` access letting any authenticated user clear anyone's lockout, **was already closed in config two phases ago**: `Customers.ts` is staff-only and `Users.ts` admin-only. Verified by reading them, not assumed; the first instinct was to add the rules, which would have been a duplicate key. The named upgrade `payload@3.88.1` is unavailable because every `@payloadcms/*` package pins an exact peer on 3.88.0. **§26.1a's own sentence is the design**: delete the widget and every guarded form starts **refusing**, because `verifyTurnstile` reads the configured state from the **server** environment rather than taking a flag from its caller — no argument a call site can pass and no field a client can omit turns a required verification into a skipped one. Wired into newsletter, review submission, registration and **login** (§26.1a's *"where abuse warrants it"*, answered by what the form is rather than by whether abuse has been seen yet), each **before** validation so a refusal costs no query and no field-by-field critique. **DEV-75**: unconfigured skips, an outage **refuses** — the one control in this project that fails closed, because the cost of degrading here is no bot protection on exactly the forms being hammered, by an attacker who can cause the outage they benefit from. One sentence for every failure; the reason logged, never shown. **§26.1b's one real finding was API depth**: Payload defaults `maxDepth` to 10 on a public REST surface, which is an amplification primitive — capped at 3, one above the project's deepest read. Everything else in §26.1b was verified rather than changed. **§26.1c**: no `dangerouslySetInnerHTML` renders CMS content anywhere (the only one is `JsonLd`, which escapes first); uploads are a six-entry allowlist with no SVG and no PDF; `isSameSitePath` refuses control characters so a `Location:` cannot ride a newline. **§26.1d** is a committed scan rather than a grep somebody ran: `pnpm scan:secrets`, whose first Resend pattern matched **English** (`Structure_Current_…`, `figure_mobile_image_idx`) and whose four real hits were the redaction harness's own fixtures — resolved by marking them `EXAMPLE` rather than allowlisting `scripts/`, which would be a hole exactly where a real key gets pasted while debugging. Clean across 388 files. New harness `pnpm verify:security` — **51/51**, the third that opens no connection. Owed: Turnstile keys (`TODO.md` §7), the contact form (**G-08**, now owed by two phases), a browser pass over four forms that have never rendered a widget, and `payload@3.88.1` when its peers catch up. |
+| Phase 27 — testing strategy | 2026-09-09 | Notes **§1.32**. **Eight dependencies at exact pins**, no migration. **813 Vitest tests across 18 files, all green; 57 Playwright tests across 5 files, none ever executed.** Two Vitest projects rather than one — `unit` in Node, `components` in jsdom — so a module claiming to be pure **fails** if it reaches for `window` instead of passing by accident, which is the one place that boundary was otherwise invisible. `server-only` is aliased to an empty module for the same reason the Payload CLI cannot resolve it. **The tests found five defects, and that is the phase's actual output**: `invalidSelection` never fired for the case feature matrix §7 names by title (`?color=Cream&size=M` where Black/M exists — the live region explaining it said nothing); a merged cart line of quantity zero was reported **sold out while fully in stock**, because `clampQuantity` returns `clampedBy: null` for a request of none and the merge defaulted it; `combined` counted occurrences rather than bags, contradicting its own field doc; `canFulfillmentTransition` **threw a TypeError** on a status read from the database that the table does not contain; and the search panel could **take the whole overlay down** — `CSS.escape('')` is `''`, so the selector became `'#'`, which `querySelector` throws on, reachable by arrowing to a late option and clearing recent searches in another tab. `FULFILLMENT_COPY.notPaid` also told an operator something untrue about a refunded order. **One reported defect was deliberately not fixed** and the reasoning put in the source: `cartTotals` counting unpriced units is unreachable (`cart.ts` filters first) and the behaviour is a written §14.1e decision — making an unreachable path disagree with a documented decision is not a fix. **The quantity control's own tests were wrong instructively**: three failed and **two passed for entirely the wrong reason**, because a controlled `type="number"` snaps back between keystrokes and `clear()` + `type('8')` produces 18. **The E2E suite cannot run** — it creates customers, bags and Stripe sessions, and the only reachable database is production (D-10), which §27.1f's own *"where environment permits"* anticipates. Flow 4 (quick view) is skipped because the feature does not exist (**DEV-74**); flow 7 signs its events offline rather than speaking to Stripe; flow 6 is the retained real test-mode path. All fifteen §27.1d cases are enumerated even where four can only be skipped, because a list with a hole in it is how a case gets forgotten. **The CI pipeline would have skipped its own build**: `if: env.DATABASE_URL != ''` cannot see that step's own `env:` block, so the condition read an empty string and the build never ran — a skipped step reporting success, invisible until somebody reads a log. New gap: five latent `Math.max(1, …)` traps, all currently unreachable, recorded rather than changed. |
 > **Append this table, and the sections above it, at the end of every phase.**

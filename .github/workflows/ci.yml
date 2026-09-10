@@ -35,6 +35,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    # Job-level, and that placement is the whole point rather than a tidy-up.
+    #
+    # A step's `if:` cannot see that step's OWN `env:` block - the `env` context in a condition
+    # resolves against workflow- and job-level env only. The build step below was written with
+    # `if: env.DATABASE_URL != ''` while defining DATABASE_URL in its own `env:`, so the condition
+    # read an empty string, `'' != ''` was false, and THE BUILD NEVER RAN. A skipped step that
+    # reports success is the worst shape a pipeline can take, and it is invisible until somebody
+    # reads the log.
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PAYLOAD_SECRET: ${{ secrets.PAYLOAD_SECRET }}
+      SITE_URL: ${{ vars.SITE_URL }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -68,7 +81,9 @@ jobs:
       - name: Unit and component tests
         run: pnpm test:run
 
-      # These need no database, no network and no credentials. See the note at the top.
+      # These need no database, no network and no credentials - verified by blanking `.env` and
+      # running one: the Payload CLI loads the config, the environment module validates, and every
+      # variable these four read is optional. See the note at the top.
       - name: Pure verification harnesses
         run: |
           pnpm verify:seo
@@ -81,10 +96,6 @@ jobs:
       # ---- Build ----
       - name: Build
         if: ${{ env.DATABASE_URL != '' }}
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          PAYLOAD_SECRET: ${{ secrets.PAYLOAD_SECRET }}
-          SITE_URL: ${{ vars.SITE_URL }}
         run: pnpm build
 
       - name: Build skipped
