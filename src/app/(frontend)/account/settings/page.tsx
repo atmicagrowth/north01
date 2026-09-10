@@ -4,11 +4,9 @@ import { SignOutButton } from '@/components/auth/sign-out-button'
 import { PageTitle } from '@/components/layout/page-title'
 import { Link } from '@/components/ui/link'
 import { requireCustomer } from '@/lib/auth/session'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  robots: { follow: false, index: false },
-  title: 'Settings',
-}
+export const metadata: Metadata = privateMetadata('Settings')
 
 /**
  * **`/account/settings`** — plan §20.1d.

@@ -3,11 +3,9 @@ import type { Metadata } from 'next'
 import { SignOutButton } from '@/components/auth/sign-out-button'
 import { PageTitle } from '@/components/layout/page-title'
 import { requireCustomer } from '@/lib/auth/session'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  title: 'Your account',
-  robots: { index: false, follow: false },
-}
+export const metadata: Metadata = privateMetadata('Your account')
 
 /**
  * The account overview — **the protected route Phase 7 owes, and no more than that.**

@@ -4,11 +4,9 @@ import { FormNotice } from '@/components/auth/form-status'
 import { ResetPasswordForm } from '@/components/auth/reset-password-form'
 import { PageTitle } from '@/components/layout/page-title'
 import { Link } from '@/components/ui/link'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  title: 'Choose a new password',
-  robots: { index: false, follow: false },
-}
+export const metadata: Metadata = privateMetadata('Choose a new password')
 
 /**
  * Choose a new password, using the token from the reset email. Plan §7.1e.

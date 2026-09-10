@@ -1,3 +1,5 @@
+import type { Metadata } from 'next'
+
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
@@ -6,6 +8,9 @@ import { Link } from '@/components/ui/link'
 import { getCustomer } from '@/lib/auth/session'
 import { readOrderForConfirmation } from '@/lib/checkout/confirmation'
 import { formatMinorUnits } from '@/lib/money'
+import { privateMetadata } from '@/lib/seo/metadata'
+
+export const metadata: Metadata = privateMetadata('Order confirmed')
 
 /**
  * **Plan §17.1g — the success URL, which is not evidence of anything.**

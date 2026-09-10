@@ -6,16 +6,9 @@ import { LoginForm } from '@/components/auth/login-form'
 import { PageTitle } from '@/components/layout/page-title'
 import { Link } from '@/components/ui/link'
 import { getCustomer, safeReturnPath } from '@/lib/auth/session'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  title: 'Sign in',
-  /*
-   * Every authentication route is `noindex`. There is nothing here worth a search result, and a
-   * login form in an index is a free list of attack surface. Phase 24 owns the sitemap and will
-   * leave these out of it for the same reason.
-   */
-  robots: { index: false, follow: false },
-}
+export const metadata: Metadata = privateMetadata('Sign in')
 
 /**
  * Sign in. Plan §7.1e.

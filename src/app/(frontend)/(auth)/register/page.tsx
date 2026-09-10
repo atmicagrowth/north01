@@ -5,11 +5,9 @@ import { RegisterForm } from '@/components/auth/register-form'
 import { PageTitle } from '@/components/layout/page-title'
 import { Link } from '@/components/ui/link'
 import { getCustomer, safeReturnPath } from '@/lib/auth/session'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  title: 'Create an account',
-  robots: { index: false, follow: false },
-}
+export const metadata: Metadata = privateMetadata('Create an account')
 
 /**
  * Create an account. Plan §7.1e.

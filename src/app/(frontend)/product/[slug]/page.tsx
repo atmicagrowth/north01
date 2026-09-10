@@ -1,13 +1,22 @@
+import type { Metadata } from 'next'
+
 import { notFound } from 'next/navigation'
 
+import { JsonLd } from '@/components/seo/json-ld'
 import { ProductPage } from '@/components/product/product-page'
+import type { Media } from '@/payload-types'
+
 import { getCustomer } from '@/lib/auth/session'
 import { getPayloadClient } from '@/lib/payload'
 import { ProductReviews } from '@/components/reviews/product-reviews'
 import { readProductReviews, resolveEligibility } from '@/lib/reviews/read'
 import { readWishlistProductIds } from '@/lib/wishlist/read'
 import { loadProductParams } from '@/lib/product/params'
-import { getProduct } from '@/lib/product/product'
+import { getProduct, getProductRecord } from '@/lib/product/product'
+import { documentSeo } from '@/lib/seo/document'
+import { absoluteImageUrl } from '@/lib/seo/metadata'
+import { getSiteUrl, pageMetadata } from '@/lib/seo/site'
+import { breadcrumbStructuredData, productStructuredData } from '@/lib/seo/structured-data'
 
 /**
  * **`/product/<slug>` — the route every phase since 9 has recorded as owed.**
@@ -31,11 +40,49 @@ import { getProduct } from '@/lib/product/product'
  * `notFound()` renders `global-not-found.tsx` inside the shell — decision **D-31** — so the customer
  * lands somewhere with navigation rather than on a blank document.
  *
- * **No `generateMetadata` and no `generateStaticParams`.** SEO is Phase 24, exactly as Phases 10, 11
- * and 12 deferred it; `seoField()` is already on the collection for that phase to read. Static
- * generation is a Phase 30 performance question, and it is not obviously right here — the page reads
- * live stock.
+ * **`generateMetadata` arrived in Phase 24**, which is where Phases 10, 11 and 12 deferred it. There
+ * is still no `generateStaticParams`: static generation is a Phase 30 performance question, and it is
+ * not obviously right here, because the page reads live stock.
  */
+
+/**
+ * §24.1a for the page that matters most, and §24.1b's structured data below it.
+ *
+ * `getProduct` is React-`cache`d, so this and the render are **one read**. The variant selection is
+ * deliberately not passed: metadata describes the product, and the canonical URL has no query — a
+ * `?size=m` variant of a page is the same document, and saying otherwise asks an index to hold one
+ * entry per size.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+}): Promise<Metadata> {
+  const { slug } = await params
+  const record = await getProductRecord(slug)
+
+  if (!record) {
+    return { title: 'Not found' }
+  }
+
+  const { product } = record
+
+  return pageMetadata({
+    description: product.shortDescription ?? product.description,
+    image: firstGalleryImage(product.gallery),
+    path: `/product/${slug}`,
+    seo: documentSeo(product.seo),
+    title: product.name,
+  })
+}
+
+/** The card image, populated. An unpopulated relationship is an id, which cannot make a URL. */
+function firstGalleryImage(gallery: unknown): Media | null {
+  const first = Array.isArray(gallery) ? gallery[0] : null
+  const image = (first as { image?: unknown } | null)?.image
+
+  return typeof image === 'object' && image !== null && 'id' in image ? (image as Media) : null
+}
 export default async function ProductDetailPage({
   params,
   searchParams,
@@ -80,20 +127,63 @@ export default async function ProductDetailPage({
     resolveEligibility(payload, customer, view.product.id, true),
   ])
 
+  const siteUrl = getSiteUrl()
+  const socialImage = absoluteImageUrl(siteUrl, firstGalleryImage(view.product.gallery)?.url)
+
+  /*
+   * **§24.1b, emitted from the same numbers the page renders.**
+   *
+   * The offers are filtered to variants a customer can put in a bag **today** — active and in stock —
+   * which is what *"prices not actually purchasable"* forbids claiming otherwise. The rating is the
+   * summary already computed above from approved reviews, so a product with none emits no
+   * `aggregateRating` at all rather than a default.
+   *
+   * A SKU is emitted only when the product **is** one variant. With several, a product-level SKU is a
+   * claim about which one, and there is no honest answer.
+   */
+  const purchasable = view.variants.filter((variant) => variant.active !== false)
+
+  const structuredData = productStructuredData({
+    currency: view.settings.currency,
+    description: view.product.shortDescription ?? null,
+    image: socialImage,
+    name: view.product.name,
+    offers: purchasable.map((variant) => ({
+      available: variant.inventoryQuantity ?? 0,
+      priceMinor: variant.priceMinor ?? Number.NaN,
+    })),
+    rating:
+      summary.average !== null && summary.count > 0
+        ? { average: summary.average, count: summary.count }
+        : null,
+    sku: view.variants.length === 1 ? (view.variants[0]?.sku ?? null) : null,
+    url: `${siteUrl}/product/${slug}`,
+  })
+
   return (
-    <ProductPage
-      reviews={
-        <ProductReviews
-          displayName={customer?.firstName ?? ''}
-          eligibility={eligibility}
-          productId={view.product.id}
-          reviews={reviews}
-          summary={summary}
-        />
-      }
-      savedForCustomer={savedForCustomer}
-      signedIn={customer !== null}
-      view={view}
-    />
+    <>
+      <JsonLd data={structuredData} />
+      <JsonLd
+        data={breadcrumbStructuredData(siteUrl, [
+          { name: 'Shop', path: '/shop' },
+          { name: view.product.name, path: `/product/${slug}` },
+        ])}
+      />
+
+      <ProductPage
+        reviews={
+          <ProductReviews
+            displayName={customer?.firstName ?? ''}
+            eligibility={eligibility}
+            productId={view.product.id}
+            reviews={reviews}
+            summary={summary}
+          />
+        }
+        savedForCustomer={savedForCustomer}
+        signedIn={customer !== null}
+        view={view}
+      />
+    </>
   )
 }

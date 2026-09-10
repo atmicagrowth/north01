@@ -9,11 +9,9 @@ import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import { getPayloadClient } from '@/lib/payload'
 import { readWishlist } from '@/lib/wishlist/read'
 import { WISHLIST_EMPTY_COPY } from '@/lib/wishlist/rules'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  robots: { follow: false, index: false },
-  title: 'Saved items',
-}
+export const metadata: Metadata = privateMetadata('Saved items')
 
 /**
  * **`/account/wishlist`** — plan §20.1d, and the destination the header's heart has pointed at since

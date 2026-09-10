@@ -1,3 +1,5 @@
+import type { Metadata } from 'next'
+
 import { redirect } from 'next/navigation'
 
 import { CatalogPage } from '@/components/catalog/catalog-page'
@@ -5,6 +7,9 @@ import { SearchLanding } from '@/components/catalog/search-landing'
 import { getCatalogVocabulary, getCuratedProducts } from '@/lib/catalog/catalog'
 import { loadCatalogParams } from '@/lib/catalog/params'
 import { SEARCH_PATH, normaliseSearchTerm } from '@/lib/catalog/search'
+import { privateMetadata } from '@/lib/seo/metadata'
+
+export const metadata: Metadata = privateMetadata('Search')
 
 /**
  * **`/search` — the full results page.**
@@ -28,11 +33,14 @@ import { SEARCH_PATH, normaliseSearchTerm } from '@/lib/catalog/search'
  * results page is reachable **with JavaScript disabled**. The overlay is an enhancement over this,
  * not the only way in.
  *
- * ### No `generateMetadata`, no canonical, no `noindex`
+ * ### Phase 24 answered the indexability question: no
  *
- * Phase 24 owns SEO — including the separate question of whether a search results page should be
- * indexable at all. Phase 10 and Phase 11 deferred the same way. What this phase hands Phase 24 is
- * *one* crawlable search namespace rather than two, because `/shop?q=` redirects here.
+ * A search results page is a **query**, not a document. Indexing one produces a search result that
+ * leads to a search result, and every distinct `?q=` is another near-duplicate. The bare route shows
+ * an empty state, which is not a page anybody should arrive at from an index either — so `/search`
+ * is `noindex` here and excluded from both the sitemap and `robots.txt` by
+ * `NON_INDEXABLE_PREFIXES`. That `/shop?q=` redirects here still matters: it is the reason there is
+ * one search namespace to exclude rather than two.
  */
 export default async function SearchPage({
   searchParams,

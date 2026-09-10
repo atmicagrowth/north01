@@ -1,8 +1,11 @@
+import type { Metadata } from 'next'
+
 import { notFound } from 'next/navigation'
 
 import { CatalogPage } from '@/components/catalog/catalog-page'
 import { getShopCategory } from '@/lib/catalog/catalog'
 import { loadCatalogParams } from '@/lib/catalog/params'
+import { pageMetadata } from '@/lib/seo/site'
 
 /**
  * **`/shop/<category>` — the route `lib/navigation/routes.ts` has been pointing at since Phase 9.**
@@ -32,6 +35,31 @@ import { loadCatalogParams } from '@/lib/catalog/params'
  * engine, and `withAncestors` stores the widened form in the search index, so both engines answer
  * the same question. `verify:catalog` asserts they agree.
  */
+/**
+ * §24.1a, from the category document. `getShopCategory` is React-`cache`d by slug, so this and the
+ * render are one query.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ category: string }>
+}): Promise<Metadata> {
+  const { category: slug } = await params
+  const category = await getShopCategory(slug)
+
+  if (!category) {
+    return { title: 'Not found' }
+  }
+
+  return pageMetadata({
+    description: category.description,
+    image: category.image,
+    path: `/shop/${category.slug}`,
+    seo: category.seo,
+    title: category.name,
+  })
+}
+
 export default async function ShopCategoryPage({
   params,
   searchParams,

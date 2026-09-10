@@ -1,5 +1,8 @@
+import type { Metadata } from 'next'
+
 import { CatalogPage } from '@/components/catalog/catalog-page'
 import { loadCatalogParams } from '@/lib/catalog/params'
+import { pageMetadata } from '@/lib/seo/site'
 
 /**
  * **`/shop` — the whole catalogue.**
@@ -16,11 +19,25 @@ import { loadCatalogParams } from '@/lib/catalog/params'
  * explicitly for this shape. The parse is deferred into the component that needs it, so the shell
  * around the suspense boundary is not waiting on a query string to render a page title.
  *
- * **No `generateMetadata`.** The layout's default title and description apply, exactly as they do on
- * the homepage. Phase 10 recorded the same absence as a decision rather than an omission — SEO is
- * **Phase 24**, `site-settings` already holds the defaults it will read, and adding a bespoke
- * `<title>` here alone would leave the storefront half-done in a way that looks finished.
+ * Phase 10 recorded the absence of a `<title>` here as a decision rather than an omission, on the
+ * grounds that adding a bespoke one to this route alone would leave the storefront half-done in a
+ * way that looks finished. Phase 24 finished it everywhere at once, which is what that note was
+ * waiting for.
  */
+
+/**
+ * §24.1a. The canonical is `/shop` with **no query**, which is the whole point on this route: the
+ * page is a function of nine parameters, and canonicalising each combination would ask an index to
+ * hold every filter of every sort of every page. `canonicalUrl` strips the query for exactly this.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  return pageMetadata({
+    description: 'Every published garment, filterable by category, size, colour and price.',
+    path: '/shop',
+    title: 'Shop',
+  })
+}
+
 export default async function ShopPage({
   searchParams,
 }: {

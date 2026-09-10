@@ -6,6 +6,8 @@ import type { Payload, Where } from 'payload'
 
 import { appEnv, integrationStatus, serverEnv } from '@/lib/env.server'
 import { getPayloadClient } from '@/lib/payload'
+import { documentSeo, type DocumentSeo } from '@/lib/seo/document'
+import type { Media } from '@/payload-types'
 import { DEFAULT_CURRENCY, type CurrencyCode } from '@/payload/fields/money'
 
 import {
@@ -612,7 +614,11 @@ export const getCatalogVocabulary = cache(async (): Promise<CatalogVocabulary> =
 
 export type ShopCategory = {
   description: null | string
+  /** The category's own picture, which is also the best social card it has — Phase 24. */
+  image: Media | null
   name: string
+  /** `seoField()`'s overrides. Authorable since Phase 6; read from Phase 24. */
+  seo: DocumentSeo
   slug: string
 }
 
@@ -635,7 +641,8 @@ export const getShopCategory = cache(async (slug: string): Promise<ShopCategory 
   try {
     const { docs } = await payload.find({
       collection: 'categories',
-      depth: 0,
+      /* `depth: 1` so the image and the SEO override arrive populated — an id makes no URL. */
+      depth: 1,
       limit: 1,
       where: { and: [{ slug: { equals: slug } }, { status: { equals: 'published' } }] },
     })
@@ -648,7 +655,9 @@ export const getShopCategory = cache(async (slug: string): Promise<ShopCategory 
 
     return {
       description: doc.description?.trim() || null,
+      image: typeof doc.image === 'object' && doc.image !== null ? (doc.image as Media) : null,
       name: doc.name,
+      seo: documentSeo(doc.seo),
       slug: doc.slug,
     }
   } catch (error) {

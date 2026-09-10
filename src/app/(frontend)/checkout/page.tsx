@@ -1,3 +1,5 @@
+import type { Metadata } from 'next'
+
 import { redirect } from 'next/navigation'
 
 import { CartSummary } from '@/components/cart/cart-summary'
@@ -11,6 +13,9 @@ import { getCart } from '@/lib/cart/cart'
 import { isStripeConfigured } from '@/lib/checkout/stripe'
 import { getCatalogSettings } from '@/lib/catalog/catalog'
 import { shippingProvider } from '@/lib/shipping/provider'
+import { privateMetadata } from '@/lib/seo/metadata'
+
+export const metadata: Metadata = privateMetadata('Checkout')
 
 /**
  * **`/checkout`** — structure §14's *"Customer information → Shipping → Shipping method"*, before the
@@ -28,7 +33,8 @@ import { shippingProvider } from '@/lib/shipping/provider'
  * than showing a form whose only outcome is a refusal at the last step. That is the same decision
  * Phase 13 made about Add to Bag and Phase 14 about Checkout — **DEV-62**.
  *
- * **No `generateMetadata`.** SEO is Phase 24, and a checkout page is `noindex` territory anyway.
+ * **`noindex`, from Phase 24.** §24.1c excludes checkout by name; it is application state, not a
+ * document.
  */
 export default async function CheckoutPage() {
   const customer = await getCustomer()

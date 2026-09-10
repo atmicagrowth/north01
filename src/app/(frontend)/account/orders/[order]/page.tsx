@@ -7,11 +7,9 @@ import { readCustomerOrder } from '@/lib/account/orders'
 import { requireCustomer } from '@/lib/auth/session'
 import { getCatalogSettings } from '@/lib/catalog/catalog'
 import { getPayloadClient } from '@/lib/payload'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  robots: { follow: false, index: false },
-  title: 'Order',
-}
+export const metadata: Metadata = privateMetadata('Order')
 
 /**
  * **`/account/orders/[order]`** — plan §20.1d, spelled `[order]` because the plan spells it `[order]`.

@@ -1,3 +1,5 @@
+import type { Metadata } from 'next'
+
 import { CartLineRow } from '@/components/cart/cart-lines'
 import { CartSummary } from '@/components/cart/cart-summary'
 import { ProductCard } from '@/components/catalog/product-card'
@@ -10,6 +12,9 @@ import { getCustomer } from '@/lib/auth/session'
 import { getCart } from '@/lib/cart/cart'
 import { CART_COPY } from '@/lib/cart/rules'
 import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
+import { privateMetadata } from '@/lib/seo/metadata'
+
+export const metadata: Metadata = privateMetadata('Your bag')
 
 /**
  * **`/cart` — the full bag page**, which the Phase 14 prompt asks for beside the drawer.
@@ -28,7 +33,8 @@ import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
  * **No Checkout button.** Checkout is Phase 17. See **DEV-57**: the bag page states what happens next
  * in a sentence rather than offering a control that leads nowhere.
  *
- * **No `generateMetadata`.** SEO is Phase 24, and a bag page is `noindex` territory in any case.
+ * **`noindex`, from Phase 24.** §24.1c excludes the cart by name, and a crawler that indexed this
+ * page would index an empty bag, forever, under a title promising otherwise.
  */
 export default async function CartPage() {
   const customer = await getCustomer()

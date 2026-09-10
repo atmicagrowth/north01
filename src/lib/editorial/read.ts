@@ -10,6 +10,7 @@ import { getCatalogSettings } from '@/lib/catalog/catalog'
 import { publishedProductWhere } from '@/lib/catalog/query'
 import { resolveProductCards } from '@/lib/catalog/resolve'
 import { getPayloadClient } from '@/lib/payload'
+import { documentSeo, type DocumentSeo } from '@/lib/seo/document'
 import { resolveEditorialBody } from './resolve'
 
 /**
@@ -111,6 +112,8 @@ export type CollectionView = {
   introMedia: Media | null
   products: ProductCard[]
   related: { href: string; title: string }[]
+  /** `seoField()`'s overrides — Phase 24 reads them; nothing did before. */
+  seo: DocumentSeo
   title: string
 }
 
@@ -165,6 +168,7 @@ export const getCollectionPage = cache(async (slug: string): Promise<CollectionV
           : null,
       )
       .filter((entry): entry is { href: string; title: string } => entry !== null),
+    seo: documentSeo(collection.seo),
     title: String(collection.title),
   }
 })
@@ -179,6 +183,7 @@ export type EditView = {
   hero: Media | null
   intro: unknown
   lookbooks: { href: string; title: string }[]
+  seo: DocumentSeo
   title: string
 }
 
@@ -236,6 +241,7 @@ export const getEditPage = cache(async (slug: string): Promise<EditView | null> 
           : null,
       )
       .filter((entry): entry is { href: string; title: string } => entry !== null),
+    seo: documentSeo(edit.seo),
     title: String(edit.title),
   }
 })
@@ -245,6 +251,8 @@ export const getEditPage = cache(async (slug: string): Promise<EditView | null> 
  * ---------------------------------------------------------------------------------------------- */
 
 export type LookbookView = {
+  /** The index-page cover, which is also the best social card a season has. */
+  cover: Media | null
   chapters: {
     editorialText: unknown
     gallery: { caption: null | string; media: Media }[]
@@ -254,6 +262,7 @@ export type LookbookView = {
   }[]
   intro: unknown
   season: null | string
+  seo: DocumentSeo
   title: string
 }
 
@@ -316,9 +325,11 @@ export const getLookbook = cache(async (slug: string): Promise<LookbookView | nu
         title: String(chapter.title),
       }
     }),
+    cover: asMedia(lookbook.coverImage),
     intro: lookbook.intro ?? null,
     season:
       typeof lookbook.season === 'string' && lookbook.season.length > 0 ? lookbook.season : null,
+    seo: documentSeo(lookbook.seo),
     title: String(lookbook.title),
   }
 })
@@ -366,6 +377,7 @@ export type JournalCard = {
 export type JournalView = JournalCard & {
   author: null | string
   body: unknown
+  seo: DocumentSeo
   relatedArticles: JournalCard[]
   relatedCollections: { href: string; title: string }[]
   relatedProducts: ProductCard[]
@@ -426,6 +438,7 @@ export const getJournalArticle = cache(async (slug: string): Promise<JournalView
     ...toCard(article),
     author: typeof article.author === 'string' && article.author.length > 0 ? article.author : null,
     body: article.body ?? null,
+    seo: documentSeo(article.seo),
     relatedArticles: (article.relatedArticles ?? [])
       .map((value) =>
         typeof value === 'object' && value && 'slug' in value ? toCard(value as Journal) : null,

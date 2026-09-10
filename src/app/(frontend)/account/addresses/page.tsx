@@ -4,11 +4,9 @@ import { AddAddressForm, RemoveAddressButton } from '@/components/account/addres
 import { PageTitle } from '@/components/layout/page-title'
 import { requireCustomer } from '@/lib/auth/session'
 import { getPayloadClient } from '@/lib/payload'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  robots: { follow: false, index: false },
-  title: 'Addresses',
-}
+export const metadata: Metadata = privateMetadata('Addresses')
 
 /**
  * **`/account/addresses`** — plan §20.1d, and §7.1b's *"read/write their own addresses"*.

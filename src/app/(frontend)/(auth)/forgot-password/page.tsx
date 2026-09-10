@@ -3,11 +3,9 @@ import type { Metadata } from 'next'
 import { ForgotPasswordForm } from '@/components/auth/forgot-password-form'
 import { PageTitle } from '@/components/layout/page-title'
 import { Link } from '@/components/ui/link'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  title: 'Reset your password',
-  robots: { index: false, follow: false },
-}
+export const metadata: Metadata = privateMetadata('Reset your password')
 
 /**
  * Ask for a reset link. Plan §7.1e.

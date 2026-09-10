@@ -11,16 +11,40 @@ import { SearchOverlay } from '@/components/shell/search-overlay'
 import { getCustomer } from '@/lib/auth/session'
 import { getCart } from '@/lib/cart/cart'
 import { getShell } from '@/lib/navigation/shell'
+import { getSeoDefaults, getSiteUrl } from '@/lib/seo/site'
 
 import { fontVariables } from './fonts'
 import './globals.css'
 
-export const metadata: Metadata = {
-  title: {
-    default: 'NORTH / 01',
-    template: '%s · NORTH / 01',
-  },
-  description: 'An online-only direct-to-consumer premium apparel storefront.',
+/**
+ * **The document defaults every route inherits** — plan §24.1a.
+ *
+ * Three things, and each one is here rather than on a page because it is the same on every page:
+ *
+ * 1. **`metadataBase`.** Next resolves relative URLs in `openGraph` and `alternates` against it, and
+ *    warns on every build without one. Everything this project emits is already absolute; the base
+ *    is the backstop for anything that later is not, and it comes from configuration rather than
+ *    from a request header — see `siteUrl` for why that distinction is load-bearing.
+ * 2. **The title template.** `%s · NORTH / 01`, with the site's own name read from `site-settings`
+ *    rather than hard-coded, so renaming the shop in the CMS renames every tab in it. The homepage
+ *    opts out with `title: { absolute }` — it is the one page whose title *is* the site name.
+ * 3. **The default description**, for any page that supplies none of its own.
+ *
+ * It is `generateMetadata` rather than a `metadata` constant because it reads the CMS. The read is
+ * cached under the `site-settings` tag the global already revalidates, and memoised per render.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const defaults = await getSeoDefaults()
+
+  return {
+    description:
+      defaults.description ?? 'An online-only direct-to-consumer premium apparel storefront.',
+    metadataBase: new URL(getSiteUrl()),
+    title: {
+      default: defaults.title ?? defaults.siteName,
+      template: `%s · ${defaults.siteName}`,
+    },
+  }
 }
 
 /**

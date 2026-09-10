@@ -64,56 +64,79 @@ export type ProductView = {
   variants: SelectableVariant[]
 }
 
+/** Everything the page reads, before a variant has been chosen. */
+export type ProductRecord = Omit<ProductView, 'matrix'>
+
 /**
- * A published product by slug, with everything the page needs, or `null`.
+ * **A published product by slug, with everything the page needs, or `null` — and cached by slug
+ * alone.**
  *
  * `null` is the route's 404. A draft, a scheduled drop and a product withdrawn from sale all reach
  * it the same way — `publishedProductWhere` is the one definition of *listable*, shared with both
  * catalogue engines and the indexer, so a product that cannot appear in a listing cannot be reached
  * by typing its URL either.
+ *
+ * ### Why the reads are separated from the selection — Phase 24
+ *
+ * `getProduct` takes a `selection` **object**, and React's `cache` compares arguments with
+ * `Object.is`. Two callers passing `{ color: null, size: null }` therefore miss each other's entry
+ * and both run the queries, because the two objects are not the same object. That did not matter
+ * while the page was the only caller; `generateMetadata` is a second one, in the same request, and
+ * memoisation that silently does not apply is worse than none — it looks free.
+ *
+ * So the queries are keyed by the slug, which is a string, and the variant matrix — pure, cheap, and
+ * the only part that depends on the selection — is built on top of the memoised result.
  */
-export const getProduct = cache(
-  async (
-    slug: string,
-    selection: { color?: null | string; size?: null | string },
-  ): Promise<ProductView | null> => {
-    const payload = await getPayloadClient()
-    const settings = await getCatalogSettings()
-    const now = new Date().toISOString()
+export const getProductRecord = cache(async (slug: string): Promise<ProductRecord | null> => {
+  const payload = await getPayloadClient()
+  const settings = await getCatalogSettings()
+  const now = new Date().toISOString()
 
-    const { docs } = await payload.find({
-      collection: 'products',
-      depth: PRODUCT_DEPTH,
-      limit: 1,
-      ...STOREFRONT_ACCESS,
-      where: { and: [...publishedProductWhere(now), { slug: { equals: slug } }] },
-    })
+  const { docs } = await payload.find({
+    collection: 'products',
+    depth: PRODUCT_DEPTH,
+    limit: 1,
+    ...STOREFRONT_ACCESS,
+    where: { and: [...publishedProductWhere(now), { slug: { equals: slug } }] },
+  })
 
-    const product = docs[0]
+  const product = docs[0]
 
-    if (!product) {
-      return null
-    }
+  if (!product) {
+    return null
+  }
 
-    const variants = await readVariants(payload, product.id)
+  return {
+    product,
+    recommendations: await readRecommendations(payload, product, settings, now),
+    settings,
+    sizeGuide:
+      typeof product.sizeGuide === 'object' && product.sizeGuide ? product.sizeGuide : null,
+    variants: await readVariants(payload, product.id),
+  }
+})
 
-    return {
-      matrix: buildVariantMatrix(
-        variants,
-        selection,
-        settings.currency,
-        settings.locale,
-        settings.lowStockThreshold,
-      ),
-      product,
-      recommendations: await readRecommendations(payload, product, settings, now),
-      settings,
-      sizeGuide:
-        typeof product.sizeGuide === 'object' && product.sizeGuide ? product.sizeGuide : null,
-      variants,
-    }
-  },
-)
+export async function getProduct(
+  slug: string,
+  selection: { color?: null | string; size?: null | string },
+): Promise<ProductView | null> {
+  const record = await getProductRecord(slug)
+
+  if (!record) {
+    return null
+  }
+
+  return {
+    ...record,
+    matrix: buildVariantMatrix(
+      record.variants,
+      selection,
+      record.settings.currency,
+      record.settings.locale,
+      record.settings.lowStockThreshold,
+    ),
+  }
+}
 
 async function readVariants(payload: Payload, productId: number): Promise<SelectableVariant[]> {
   const { docs } = await payload.find({

@@ -6,11 +6,9 @@ import { readCustomerOrders } from '@/lib/account/orders'
 import { requireCustomer } from '@/lib/auth/session'
 import { getCatalogSettings } from '@/lib/catalog/catalog'
 import { getPayloadClient } from '@/lib/payload'
+import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = {
-  robots: { follow: false, index: false },
-  title: 'Your orders',
-}
+export const metadata: Metadata = privateMetadata('Your orders')
 
 /**
  * **`/account/orders`** — plan §20.1d.

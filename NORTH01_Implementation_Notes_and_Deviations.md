@@ -6701,6 +6701,179 @@ nothing, and a deleted related product is absent rather than a broken link.
 - **The contact form** — gap **G-08**, and the caller Phase 19's contact-confirmation template
   (**DEV-66**) is still waiting for. Not in §23's three sub-sections, so not built here.
 
+## 1.29 Phase 24 — search engine optimization
+
+Plan §24.1a–§24.1d. **No dependency and no migration** — the fifth phase running. `docs/STACK_VERSIONS.md`
+lists nothing for §24, and it is right to: metadata is built into Next and JSON-LD is a string.
+
+### 1.29.1 Three CMS fields had been authorable for eighteen phases and read by nothing
+
+`site-settings.defaultSeoTitle`, `defaultSeoDescription` and `defaultOgImage` have existed since
+Phase 6. `seoField()` — a title, a description and a social image — has been on nine collections
+since the same phase. **Nothing read any of them.**
+
+That is the defect Phase 23 found in the `gallery` and `pullQuote` blocks, and it is worse here,
+because these sit on a settings screen that looks exactly like it is configuring this. `SiteSettings.ts`
+said so in its own docblock — *"Phase 24 the SEO defaults"* — and `seo.ts` said *"falling back to the
+page's hero when unset is Phase 24's job."* Both promises are now kept, which is the substance of this
+phase rather than an aside to it.
+
+The precedence is stated in exactly one place, `pageMetadata`:
+
+1. the document's own SEO override, because an editor who typed a title meant it;
+2. the page's own content — its name, its prose, its hero;
+3. the site defaults from `site-settings`;
+4. the built-in fallback, so a fresh install is not blank.
+
+**An emptied override is not an override.** A cleared field means *derive it*, not *publish an empty
+tag* — `seoField()`'s own description says the fields are overrides and every one is optional, and
+`documentSeo` is where that is enforced rather than remembered.
+
+### 1.29.2 §24.1b is a rule about honesty, and it is enforced by shape
+
+*"Do not include fake ratings, fake availability, incorrect prices, prices not actually purchasable."*
+The prompt restates it harder: *"never generate structured data that claims false price, availability,
+or ratings."*
+
+That is an unusual instruction for a metadata phase and it is the right one. Structured data is the
+one output on a storefront **read by machines and shown to customers without the page being visited** —
+a rating in a search result reaches people who never see the product page, and a price in a shopping
+listing is a promise made before anybody reaches the shop. Getting it wrong is not an SEO defect; it
+is a false claim at scale.
+
+So `productStructuredData` **omits rather than guesses**, and each omission is forced by the input
+shape rather than by a check somebody has to remember:
+
+- **The offer is built only from purchasable variants** — active, in stock, priced. A sold-out size
+  cannot set the price, which is precisely what *"prices not actually purchasable"* names.
+- **Nothing buyable emits `OutOfStock` with no price at all.** The product is real, so saying so is
+  honest; attaching a price nobody can pay is the forbidden claim, and a price is what a naive
+  implementation would keep.
+- **A product with no variants emits no `offers` key**, rather than a free one.
+- **`aggregateRating` appears only when a real, approved review exists.** No key — not a zero, not an
+  empty object, and not the industry's favourite lie: five stars from nobody. Phase 21 made ratings
+  real; this is the first thing that could have made them fake again.
+
+A SKU is emitted only when a product **is** one variant. With several, a product-level SKU is a claim
+about which one, and there is no honest answer.
+
+### 1.29.3 `getProduct`'s cache did not apply to its second caller, and that is why it was split
+
+`generateMetadata` and the page render are two calls in one request, and reading the document twice
+is how a `<title>` ends up describing a page that 404'd — the two reads can disagree about publication
+state in the moment an editor unpublishes.
+
+React's `cache` was supposed to make that free. **It did not.** `getProduct(slug, selection)` takes
+an object, and `cache` compares arguments with `Object.is`: two callers passing `{ color: null, size:
+null }` miss each other's entry and both run the queries, because the two objects are not the same
+object. Memoisation that silently does not apply is worse than none — it looks free.
+
+So `getProductRecord(slug)` holds the queries and is keyed by a **string**, and `getProduct` builds
+the variant matrix — pure, cheap, and the only part that depends on the selection — on top of it. The
+editorial readers already took a single slug, so they needed nothing.
+
+### 1.29.4 The canonical never comes from the request, and never carries a query
+
+`resetPasswordEmail.ts` recorded the reason in Phase 7: a `Host` header is attacker-controlled, and a
+URL built from one is a URL an attacker can point at their own domain. `canonicalUrl` takes `siteUrl`,
+which is configuration.
+
+It also strips the query, which matters most on the two routes that have one. `/shop` is a function of
+nine parameters; canonicalising each combination would ask an index to hold every filter of every sort
+of every page. `/product/<slug>?size=m` is the same document as `/product/<slug>` — a variant of a
+page, not a page.
+
+### 1.29.5 The homepage had no metadata at all, on purpose, and it cost it a canonical
+
+The old docblock recorded a real trap: the layout's template renders `%s · NORTH / 01`, so a
+page-level title on the homepage reads *"NORTH / 01 · NORTH / 01"*. Its answer was to export nothing —
+which also cost the front page its canonical URL and its Open Graph card, on the route most likely to
+be shared.
+
+`absoluteTitle` is the answer instead: `title: { absolute }` bypasses the template, and everything
+else is derived normally. The layout's own metadata became `generateMetadata` at the same time, so the
+title template carries the site's name **from the CMS** rather than a hard-coded string — renaming the
+shop now renames every tab in it.
+
+### 1.29.6 `robots.txt` needs three rules per prefix, and every shorter version is wrong
+
+`Disallow: /account/` matches the subtree and **not** `/account`, which is a real page. Dropping the
+slash blocks `/accounts-payable` too, because a disallow is a plain prefix match — the same
+string-versus-path trap `isIndexablePath` avoids, arriving through a different door.
+
+And a matched path in RFC 9309 **includes the query string**, so neither rule touches
+`/search?q=jacket` — the near-duplicate the exclusion exists for in the first place.
+
+So each prefix emits `${p}$`, `${p}/` and `${p}?`. Exactly the subtree, and nothing else.
+
+The list itself is **one constant**, `NON_INDEXABLE_PREFIXES`, shared by `robots.txt` and the sitemap.
+A sitemap that submits a URL `robots.txt` disallows tells a crawler two things at once, and which one
+it believes is not predictable.
+
+### 1.29.7 The sitemap reads as the public, and degrades rather than failing
+
+Products go through `publishedProductWhere(now)` — the same predicate the shop grid, the search
+indexer and every editorial page use — and every document is read under `overrideAccess: false, user:
+null`. A sitemap built from a privileged read would list drafts, which is not a small mistake: it
+hands a crawler a URL that answers 404 to the public, and it discloses the existence of unreleased
+work.
+
+A database that cannot be reached returns the four static routes instead of a 500. A sitemap missing
+its product URLs for an hour is recoverable; a sitemap URL that answers 500 is one a crawler remembers.
+
+`robots.ts` and `sitemap.ts` sit at `app/`, **not** inside `(frontend)`. A route group does not appear
+in a URL, but these two are resolved by position in the tree, and Payload's admin occupies the sibling
+group.
+
+### 1.29.8 JSON-LD is a raw-text element, so the payload is escaped
+
+`<script type="application/ld+json">` is raw text: the browser parses no entities inside it, and it
+ends at the first literal `</script`. `dangerouslySetInnerHTML` is therefore the only way to render
+one — and escaping is not optional, because every value in the payload comes from the database. A
+product named `</script><script>…` would otherwise close the block and open a real one.
+
+`JSON.stringify` does not escape `<`. `JsonLd` does, along with `>`, `&`, `U+2028` and `U+2029`.
+
+### 1.29.9 What was verified, and how
+
+The first harness in this project that **touches no database at all** — so there is no D-10 guard,
+because it creates nothing, deletes nothing and never opens a connection. That is a consequence of the
+pure-module discipline rather than a coincidence: everything §24 decides was written as a pure
+function, and the one module that reads the CMS holds a `findGlobal` and no decision.
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck` | passes |
+| `pnpm lint --max-warnings 0` | passes |
+| `pnpm build` | **passes** — `/robots.txt` and `/sitemap.xml` prerendered, 35 URLs from real data |
+| `pnpm verify:seo` | **90/90** |
+
+The build was the first since Phase 18. `robots.txt` and `sitemap.xml` were read back out of the build
+output rather than assumed.
+
+### 1.29.10 Two stale claims in old docblocks, corrected rather than repeated
+
+The homepage's docblock said the route was *"statically prerendered"*. **It is not, and has not been
+since Phase 9** — the storefront layout awaits `cookies()` through `getCustomer()` for the header's bag
+badge, which makes every route beneath it dynamic. The caching argument built on it still holds,
+because it rests on the *data* cache, which is what `unstable_cache` and the 300-second revalidate
+actually control; the sentence about prerendering was simply wrong and is now marked as corrected.
+
+Four routes carried *"No `generateMetadata`. SEO is Phase 24"* notes. They are Phase 24's now, so they
+say what was decided instead of what was deferred.
+
+### 1.29.11 What is now owed
+
+- **`/collections` and `/edits` index pages**, still — they are in the sitemap only as detail URLs.
+- **`generateStaticParams`** on the document routes. A Phase 30 question, and not obviously right for
+  a PDP that reads live stock.
+- **Product `Offer.priceValidUntil` and `shippingDetails`** — Google's Merchant listings want both.
+  Neither is claimable today: there is no price-expiry field, and shipping is computed per basket.
+- **The harnesses written since Phase 19** — `verify:email` (85), `verify:account` (40),
+  `verify:reviews` (30), `verify:lookbook` (20), `verify:editorial` (24) — remain unrun. They write
+  documents, so D-10 holds them until a **development** connection string exists. See `TODO.md`.
+- **A browser pass** over the six Phase 23 routes and the Phase 22 hotspots.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -8595,4 +8768,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 21 — reviews | 2026-09-09 | Notes **§1.26**. **No dependency and no migration** — `Reviews` was built to §6.1j in Phase 6 with every field, every bound, and the compound unique index on `(product, customer)` whose `customer` column was made **required** precisely so the index would bite, since Postgres treats NULLs as distinct. **The corpus disagrees with itself twice** and `AGENTS.md`'s precedence settled both (**DEV-69**): a purchase is a **badge, not a gate**, because the plan hedges twice while the matrix implies a gate — and a shop that only accepts reviews from buyers has none on a new product, which is when a customer most wants one; and the bar is **paid**, not the matrix's *"not delivered yet"*, with a refunded order still verifying because the customer did buy it. **Three things the browser cannot decide, each closed differently**: `status` defaults to pending *and* the field is staff-only, so a review lands pending through any door; `verifiedPurchase` is staff-only and set from an order lookup, because a badge the submitter can assert is not a badge; `customer` is *forced* by `enforceCustomerOwnership`, since `create: isActiveCustomer` alone would accept `POST /api/reviews` with somebody else's id. **The duplicate is caught by the index, not before it** — the newsletter action had already recorded that read-then-create is both a concurrency bug and a measurable timing oracle. §13.1f's *"do not show an empty star histogram"* is honoured literally: five bars at zero reads as five one-star reviews, so an unreviewed product gets one sentence and no chart, and the average is **`null`, never `0`** — the same distinction `lib/money.ts` makes for a price. Aggregates are computed from the same rows that render, because two queries can disagree and the failure is a page claiming forty-one reviews above a list of forty. Three deviations: **DEV-69** (badge not gate), **DEV-70** (no profanity filter — a word list publishes what it misses and rejects what it misreads, and a person already reads every review), **DEV-71** (no review photos — `media.create` is staff-only and **D-28** says media bytes are public the moment they are uploaded, so an unmoderated review photo would be fetchable before anyone saw it; the column stays, the upload path is a design question). Rate limiting is Phase 26's Turnstile and is recorded as owed without overclaiming. New harness `pnpm verify:reviews` — 30 checks covering the two tests the prompt names by title plus §21.1a's paid-order match and the cases that must NOT verify. **Never run**: the Neon password has been invalid since Phase 19's sweep, so only typecheck and lint could be gated. See `TODO.md`. |
 | Phase 22 — shop the look | 2026-09-09 | Notes **§1.27**. **No dependency, no migration, and no new component library** — `radix-ui@1.6.7` already ships `@radix-ui/react-popover`. §22 is unusually thin: no route, no test list, no acceptance gate. What it names is §22.1d's six numbered steps and a prohibition repeated twice — *"do not guess sizes silently"*, *"never silently guess unavailable or missing variants"* — and that prohibition is the phase. Phase 6 had already built §22.1a's fields (four coordinates as **percentages**, so *"do not hard-code hotspot coordinates in React"* was satisfied before this phase began) and Phase 10 had already shipped the marker, having named its own successor: *"a marker that opened an empty dialog would be §0.1.17's fake control."* **The naive upgrade would have broken the clause the plan did not have to state** (**DEV-72**): turning the marker into a button satisfies three of §22.1c's four clauses and breaks *"allow full PDP navigation"* — and breaks something §22.1c never mentions, because Phase 10's marker works with **no JavaScript**. So the trigger is still the anchor, wrapped in `Popover.Trigger asChild` with its default prevented: with JS the preview opens, without it the anchor navigates, and the preview **offers** the product page rather than replacing it. A **Popover, not a Dialog** — a preview is anchored to what opened it and does not deserve a focus trap, a scrim or a scroll lock; and the shell's `overlay-context` is deliberately not reused, because it exists for overlays with **no trigger in their own subtree** and would also enter a mutual-exclusion machine that closes the bag. Radix supplies the ARIA Phase 9 once got wrong by hand. **The preview is fetched when opened**, not when rendered: four blocks × eight markers would be thirty-two stock queries paid by everyone for a section most visitors never touch — and it means availability is resolved as it is *now*. §22.1d's step 3 is enforced by a **type**: products needing a size come back in a bucket carrying no variant to add, so a caller cannot guess by accident. One purchasable variant is not a guess (it is the single available thing); picking medium out of three in stock is. Step 6's report **separates the two reasons** — *"needs a size"* is a ten-second fix and *"not available"* is a dead end, and *"2 items skipped"* is neither. The count reported is what actually landed, since `addToCart` re-checks live stock. **`/lookbook` still 404s** and that is deliberate: §22 names no route, the page is Phase 23's, and building it here would be building a later phase early. New harness `pnpm verify:lookbook` — 20 checks asserting the prohibition, because §22 sets no tests of its own. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass on hotspot alignment, where `reserveBox`'s unguarded 16:9 fallback for a media record with no stored dimensions is the one path that could silently drift every marker. |
 | Phase 23 — editorial, collections, journal | 2026-09-09 | Notes **§1.28**. **No dependency and no migration** — the fourth phase running — and six new routes: `/collections/[slug]`, `/edits/[slug]`, `/lookbook`, `/lookbook/[slug]`, `/journal`, `/journal/[slug]`. **Two blocks had been authorable for seventeen phases and rendered nothing**: `gallery` and `pullQuote` have been on `collections.body` and `edits.body` since Phase 6 with no resolver case and no component anywhere, so an editor could compose one, publish, and find the section absent — §0.1.17's rule inverted, a CMS field that silently discards work. Invisible until now because no route rendered a body. **Two block resolvers now exist on purpose**: `home/resolve.ts`'s is module-private and typed to the Homepage union, and widening it would make the homepage's exhaustive `never` default reject two blocks the homepage can never receive. **A collection page is not a filterable grid** — DEV-09 ruled that out, and reusing `CatalogPage` would also have been a live defect: `requiresSearchIndex()` sends any collection query to Algolia, because membership is a Payload `join` with no column, so the page would have rendered **nothing at all** whenever the search service was down while every other listing survived. Reading the ordered id list through Postgres keeps it working with no search service and keeps the curator's order. **Featured products without a new field**: `Collections.products` is ordered and its own description says *"dragging a row is the curation"* — the front of a curated list is what featured means, resolved from the same cards as the grid so the two cannot disagree. **Products are never read through the relationship at depth**: `publishedOnly` checks `status` and explicitly not `publishedAt`, and knows nothing about `derived.priceFromMinor`, so a depth-populated grid would have shown scheduled drops and withdrawn garments. **The navigation has been broken since Phase 9 and is not any more** — `/lookbook` and `documentHref`'s `/lookbook/<slug>` both 404'd; building either alone would have left the other broken. §23.1c's *"avoid creating an editorial dead end"* is designed against rather than avoided: three exits per article, each resolved through the published rules so a withdrawn product is not offered rather than offered as a 404, and a fallback exit when an editor filled in none of them. New harness `pnpm verify:editorial` — 24 checks covering the four failure cases the prompt names by title. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass over six routes that have never rendered, `/collections` and `/edits` indexes, `generateMetadata` (Phase 24), and the contact form (**G-08**), which is still the missing caller for Phase 19's contact template. |
+| Phase 24 — search engine optimization | 2026-09-09 | Notes **§1.29**. **No dependency and no migration** — the fifth phase running. **Three site-wide CMS fields and a nine-collection field group had been authorable since Phase 6 and read by nothing**: `defaultSeoTitle`, `defaultSeoDescription`, `defaultOgImage` and `seoField()`'s title/description/image. `SiteSettings.ts` and `seo.ts` both named Phase 24 as the phase that would read them; both promises are kept, and the precedence — document override, then page content, then site default, then built-in — is stated once in `pageMetadata`. An **emptied override is not an override**: a cleared field means *derive it*, never *publish an empty tag*. **§24.1b is enforced by shape, not by a check**: offers are built only from variants that are active, in stock and priced, so a sold-out size cannot set the price; nothing buyable emits `OutOfStock` **with no price at all**, because a price nobody can pay is the forbidden claim; a product with no variants emits no `offers` key; and `aggregateRating` appears only when a real approved review exists — no key, not a zero, not five stars from nobody. **`getProduct`'s memoisation did not apply to its second caller**: React's `cache` compares arguments with `Object.is`, so two callers passing `{ color: null, size: null }` both ran the queries — memoisation that silently does not apply is worse than none. Split into `getProductRecord(slug)`, keyed by a string, with the variant matrix built on top. **The canonical never comes from the request** (Phase 7's host-header argument) and never carries a query — `/shop`'s nine parameters and `/product/x?size=m` are one page each. **The homepage exported no metadata at all**, to dodge the *"NORTH / 01 · NORTH / 01"* title template — which cost the front page its canonical and its OG card; `absoluteTitle` is the answer, and the layout's metadata now reads the site name from the CMS. **`robots.txt` needs three rules per prefix**: `/account/` misses `/account`, `/account` blocks `/accounts-payable`, and an RFC 9309 matched path includes the query string, so neither touches `/search?q=` — the exclusion's whole point. One shared constant with the sitemap, because the two disagreeing is the classic SEO defect. **JSON-LD is escaped**: a raw-text element ends at the first literal `</script`, and every value in it comes from the database. New harness `pnpm verify:seo` — **90/90, and the first in this project that touches no database**, so no D-10 guard: everything §24 decides is a pure function. `pnpm build` passed — the first since Phase 18 — and `robots.txt` and `sitemap.xml` were read back out of the build output (35 URLs from real data) rather than assumed. Two stale docblock claims corrected: the homepage has **not** been statically prerendered since Phase 9 (the layout awaits `cookies()`), and four routes' *"SEO is Phase 24"* notes now say what was decided. Owed: `/collections` and `/edits` indexes, `generateStaticParams` (Phase 30), `priceValidUntil` and `shippingDetails` (neither claimable today), a browser pass, and the five harnesses D-10 still holds until a **development** connection string exists. |
 > **Append this table, and the sections above it, at the end of every phase.**

@@ -50,7 +50,8 @@
     "verify:reviews": "payload run scripts/verify-reviews.ts",
     "verify:lookbook": "payload run scripts/verify-lookbook.ts",
     "verify:editorial": "payload run scripts/verify-editorial.ts",
-    "verify:orders": "payload run scripts/verify-orders.ts"
+    "verify:orders": "payload run scripts/verify-orders.ts",
+    "verify:seo": "payload run scripts/verify-seo.ts"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.88.0",
