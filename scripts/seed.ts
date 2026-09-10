@@ -32,11 +32,10 @@
  * moment `DATABASE_URL` is repointed. See `requireLocalDatabase` below.
  */
 
-import type { Payload, Where } from 'payload'
-
 import config from '../src/payload.config'
 
 import { developmentDatabase } from '../src/lib/env.core'
+import { rich, upsert, type ProductSpec } from './seed/shared'
 
 /**
  * **The guard names the database, not the environment.** An `appEnv !== 'local'` check was the first
@@ -64,85 +63,6 @@ requireLocalDatabase('seed')
 
 const { getPayload } = await import('payload')
 
-/**
- * A minimal Lexical document. The editor stores its own JSON shape, and hand-writing paragraphs is
- * both shorter and more legible here than importing the Markdown converter and its editor config
- * for a dozen sentences of demo copy.
- */
-const rich = (...paragraphs: string[]) => ({
-  root: {
-    type: 'root',
-    format: '' as const,
-    indent: 0,
-    version: 1,
-    direction: 'ltr' as const,
-    children: paragraphs.map((text) => ({
-      type: 'paragraph',
-      format: '' as const,
-      indent: 0,
-      version: 1,
-      direction: 'ltr' as const,
-      textFormat: 0,
-      children: [
-        {
-          type: 'text',
-          text,
-          detail: 0,
-          format: 0,
-          mode: 'normal',
-          style: '',
-          version: 1,
-        },
-      ],
-    })),
-  },
-})
-
-type Upsert = {
-  payload: Payload
-  collection: Parameters<Payload['find']>[0]['collection']
-  /** The natural key — the field a human would use to say "this one". */
-  where: Where
-  /**
-   * Payload's per-collection data types are a discriminated union keyed on `collection`, which a
-   * generic helper cannot narrow. The alternative is one upsert per collection; this stays honest
-   * about the trade by keeping the helper tiny and the call sites typed by their own literals.
-   */
-  data: Record<string, unknown>
-}
-
-/** Every primary key in this schema is `serial` — decision D-17 — so an id is a number. */
-const upsert = async ({ payload, collection, where, data }: Upsert): Promise<number> => {
-  /**
-   * `trash: true` means *include trashed rows*, not *delete them* — Payload's least intuitive option
-   * name, and here it is load-bearing. `find` excludes soft-deleted documents by default, but the
-   * UNIQUE index on `slug` and `sku` does not: a product an editor moved to the trash is invisible to
-   * the lookup and still occupies its slug, so without this the second run of the seed tries to
-   * *create* it and aborts on a constraint violation. Re-seeding also restores such a row rather than
-   * leaving a shadow behind.
-   */
-  const existing = await payload.find({ collection, where, limit: 1, depth: 0, trash: true })
-  const found = existing.docs[0]
-
-  if (found) {
-    const updated = await payload.update({
-      collection,
-      id: found.id,
-      // `deletedAt: null` un-trashes anything an editor had removed, so a re-seed restores the demo
-      // catalogue rather than colliding with its own ghosts.
-      data: { ...data, deletedAt: null } as never,
-      depth: 0,
-      trash: true,
-    })
-
-    return updated.id as number
-  }
-
-  const created = await payload.create({ collection, data: data as never, depth: 0 })
-
-  return created.id as number
-}
-
 const payload = await getPayload({ config })
 
 try {
@@ -153,6 +73,14 @@ try {
   const categorySpecs = [
     { slug: 'clothing', name: 'Clothing', parent: null, sortOrder: 10 },
     { slug: 'tops', name: 'Tops', parent: 'clothing', sortOrder: 20 },
+    /*
+     * **Phase 29 added Tees, Hats and Bags**, which §29.1b names and this taxonomy did not have.
+     * Tees sits under Tops beside Shirts; Hats and Bags under Accessories, which until now was a
+     * leaf holding everything from a scarf to a card holder. §6.1d's rule still governs — *"avoid
+     * creating categories that are not actually used in navigation or filters"* — and all three now
+     * hold products, which is what makes them legitimate rather than decorative.
+     */
+    { slug: 'tees', name: 'Tees', parent: 'tops', sortOrder: 25 },
     { slug: 'shirts', name: 'Shirts', parent: 'tops', sortOrder: 30 },
     { slug: 'sweatshirts', name: 'Sweatshirts', parent: 'tops', sortOrder: 40 },
     { slug: 'hoodies', name: 'Hoodies', parent: 'tops', sortOrder: 50 },
@@ -160,6 +88,8 @@ try {
     { slug: 'pants', name: 'Pants', parent: 'clothing', sortOrder: 70 },
     { slug: 'shorts', name: 'Shorts', parent: 'clothing', sortOrder: 80 },
     { slug: 'accessories', name: 'Accessories', parent: null, sortOrder: 90 },
+    { slug: 'hats', name: 'Hats', parent: 'accessories', sortOrder: 100 },
+    { slug: 'bags', name: 'Bags', parent: 'accessories', sortOrder: 110 },
   ]
 
   const categoryIds = new Map<string, number>()
@@ -316,33 +246,6 @@ try {
     { size: '34', sizeSortOrder: 30 },
     { size: '36', sizeSortOrder: 40 },
   ]
-
-  type ProductSpec = {
-    slug: string
-    name: string
-    sku: string
-    shortDescription: string
-    description: string[]
-    categories: string[]
-    gender: 'women' | 'men' | 'unisex'
-    fit: 'slim' | 'regular' | 'relaxed' | 'oversized'
-    materials: string[]
-    care: string[]
-    tags: string[]
-    /** Optional: a ONE SIZE accessory has nothing to measure. */
-    sizeGuide?: number
-    priceMinor: number
-    compareAtPriceMinor?: number
-    colors: { name: string; hex: string; family: string; stock: number[] }[]
-    sizes: { size: string; sizeSortOrder: number }[]
-    flags?: Partial<{
-      featured: boolean
-      isNew: boolean
-      isBestSeller: boolean
-      isLimitedEdition: boolean
-    }>
-    sortOrder: number
-  }
 
   const products: ProductSpec[] = [
     {
