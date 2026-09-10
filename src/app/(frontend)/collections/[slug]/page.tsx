@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 
 import { CollectionPage } from '@/components/editorial/collection-page'
 import { getCollectionPage } from '@/lib/editorial/read'
+import { privateMetadata } from '@/lib/seo/metadata'
 import { pageMetadata } from '@/lib/seo/site'
 
 /**
@@ -36,7 +37,7 @@ export async function generateMetadata({
   const collection = await getCollectionPage(slug)
 
   if (!collection) {
-    return { title: 'Not found' }
+    return privateMetadata('Not found')
   }
 
   return pageMetadata({

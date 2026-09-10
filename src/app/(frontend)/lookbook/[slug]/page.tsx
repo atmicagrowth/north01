@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 
 import { LookbookPage } from '@/components/editorial/lookbook-page'
 import { getLookbook } from '@/lib/editorial/read'
+import { privateMetadata } from '@/lib/seo/metadata'
 import { pageMetadata } from '@/lib/seo/site'
 
 /**
@@ -22,7 +23,7 @@ export async function generateMetadata({
   const lookbook = await getLookbook(slug)
 
   if (!lookbook) {
-    return { title: 'Not found' }
+    return privateMetadata('Not found')
   }
 
   return pageMetadata({

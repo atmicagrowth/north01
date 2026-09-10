@@ -21,6 +21,7 @@
  */
 
 import { documentSeo, EMPTY_DOCUMENT_SEO } from '../src/lib/seo/document'
+import { socialImageUrl } from '../src/lib/seo/image'
 import {
   buildMetadata,
   canonicalUrl,
@@ -527,6 +528,33 @@ const BASE = {
   check(
     'J: **a bare relationship id is treated as absent** — it cannot produce a URL',
     documentSeo({ image: 4 }).image === null,
+  )
+
+  check(
+    'J: the shared empty is frozen — nine collections hold the same object',
+    Object.isFrozen(EMPTY_DOCUMENT_SEO),
+  )
+}
+
+/* ============================================ K — the social card, in its absent cases */
+{
+  check(
+    'K: no media is no card',
+    socialImageUrl(null) === null && socialImageUrl(undefined) === null,
+  )
+
+  check(
+    'K: an unmigrated asset — no Cloudinary id — is no card, not a broken URL',
+    socialImageUrl({ id: 1 } as never) === null,
+  )
+
+  check(
+    'K: **a video is not a social card** — an image transform on a video renders nowhere',
+    socialImageUrl({
+      cloudinaryPublicId: 'north01/clip',
+      cloudinaryResourceType: 'video',
+      id: 2,
+    } as never) === null,
   )
 }
 

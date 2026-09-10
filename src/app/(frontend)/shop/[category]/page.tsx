@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation'
 import { CatalogPage } from '@/components/catalog/catalog-page'
 import { getShopCategory } from '@/lib/catalog/catalog'
 import { loadCatalogParams } from '@/lib/catalog/params'
+import { privateMetadata } from '@/lib/seo/metadata'
 import { pageMetadata } from '@/lib/seo/site'
 
 /**
@@ -48,7 +49,7 @@ export async function generateMetadata({
   const category = await getShopCategory(slug)
 
   if (!category) {
-    return { title: 'Not found' }
+    return privateMetadata('Not found')
   }
 
   return pageMetadata({

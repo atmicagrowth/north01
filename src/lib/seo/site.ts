@@ -30,11 +30,22 @@ import { EMPTY_DOCUMENT_SEO, type DocumentSeo } from './document'
  * `getCatalogSettings`; metadata runs on every page, so a per-request `findGlobal` would be the most
  * frequent query in the application.
  *
- * ### It fails open
+ * ### It fails open, and — the part the first version got wrong — it does not remember failing
  *
  * A settings global that cannot be read produces the built-in defaults rather than an exception.
- * `generateMetadata` throwing takes the **page** down, not just its `<head>` — a database blip would
- * turn every product page into a 500 to avoid a slightly generic `<title>`.
+ * `generateMetadata` throwing takes the **page** down, not just its `<head>`, and a database blip
+ * should not turn every product page into a 500 to avoid a generic `<title>`.
+ *
+ * But the fallback belongs **outside** `unstable_cache`, not inside it. The first version caught the
+ * error on the `findGlobal` itself, which meant the cached function returned successfully with blank
+ * defaults — so Next stored those blanks for **300 seconds**, and every page rendered during that
+ * window carried them long after the database recovered. Two failures in one: the error was also
+ * never logged, because nothing ever threw.
+ *
+ * Letting it throw is what makes both right. `unstable_cache` does not store a rejected promise, so
+ * the next request tries again; `getSeoDefaults` catches, logs, and falls back **for that request
+ * only**. It is the same argument the homepage's `degraded` throw makes in `home.ts`: the danger is
+ * not the outage, it is writing the outage into a cache that outlives it.
  */
 export type SeoDefaults = {
   description: null | string
@@ -57,8 +68,12 @@ const loadSeoDefaults = unstable_cache(
   async (): Promise<SeoDefaults> => {
     const payload = await getPayloadClient()
 
-    /* `depth: 1` so the OG image arrives populated — an id cannot produce a URL. */
-    const settings = await payload.findGlobal({ slug: 'site-settings', depth: 1 }).catch(() => null)
+    /*
+     * `depth: 1` so the OG image arrives populated — an id cannot produce a URL. **Not** wrapped in
+     * a `.catch()`: see the docblock. A failure must propagate out of the cached function so it is
+     * not the thing that gets cached.
+     */
+    const settings = await payload.findGlobal({ slug: 'site-settings', depth: 1 })
 
     return {
       description: text(settings?.defaultSeoDescription),
@@ -133,7 +148,13 @@ export async function pageMetadata(input: PageMetadataInput): Promise<Metadata> 
   return buildMetadata({
     ...(input.absoluteTitle ? { absoluteTitle: true } : {}),
     description: trimDescription(description) ?? defaults.description,
-    image: socialImageUrl(input.image ?? defaults.ogImage),
+    /*
+     * Two calls, not `socialImageUrl(input.image ?? defaults.ogImage)`. The page's own image may
+     * exist as a record and still produce no URL — an asset uploaded before Cloudinary was
+     * configured, or a video. Choosing the record first and asking for a URL second means such a
+     * page gets **no card at all** while the site default sat there unused. Ask each in turn.
+     */
+    image: socialImageUrl(input.image) ?? socialImageUrl(defaults.ogImage),
     overrides: {
       description: seo.description,
       image: socialImageUrl(seo.image),

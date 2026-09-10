@@ -20,7 +20,16 @@ export type DocumentSeo = {
   title: null | string
 }
 
-export const EMPTY_DOCUMENT_SEO: DocumentSeo = { description: null, image: null, title: null }
+/**
+ * Returned by identity for every document with no overrides, so it is frozen: a shared object handed
+ * to nine collections' worth of callers is one mutation away from an editor's title appearing on a
+ * page that never had one.
+ */
+export const EMPTY_DOCUMENT_SEO: DocumentSeo = Object.freeze({
+  description: null,
+  image: null,
+  title: null,
+})
 
 const text = (value: unknown): null | string => {
   if (typeof value !== 'string') {

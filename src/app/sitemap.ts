@@ -55,13 +55,31 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       payload.find({ collection: 'journal', depth: 0, limit: 500, ...access }),
     ])
 
+    /**
+     * **A cap that is reached is reported.**
+     *
+     * Every read here is bounded, and a bound that is silently hit is the worst shape a sitemap can
+     * take: the file is valid, the build is green, and a slice of the catalogue is simply not
+     * submitted. Nobody finds out from the output, because the output looks exactly the same.
+     *
+     * `totalDocs` is what makes it detectable, and `readVariants` in `lib/product/product.ts`
+     * established the pattern for the same reason.
+     */
     const add = (
-      docs: { slug?: null | string; updatedAt?: null | string }[],
+      page: { docs: { slug?: null | string; updatedAt?: null | string }[]; totalDocs?: number },
       prefix: string,
       changeFrequency: SitemapEntry['changeFrequency'],
       priority: number,
     ) => {
-      for (const doc of docs) {
+      if ((page.totalDocs ?? 0) > page.docs.length) {
+        payload.logger.error(
+          { prefix, read: page.docs.length, total: page.totalDocs },
+          `The sitemap read hit its limit for "${prefix}". URLs are missing — raise the limit in ` +
+            'src/app/sitemap.ts.',
+        )
+      }
+
+      for (const doc of page.docs) {
         if (typeof doc.slug !== 'string' || doc.slug.length === 0) {
           continue
         }
@@ -75,14 +93,23 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       }
     }
 
-    add(products.docs, '/product', 'weekly', 0.8)
-    add(categories.docs, '/shop', 'weekly', 0.7)
-    add(collections.docs, '/collections', 'weekly', 0.7)
-    add(edits.docs, '/edits', 'weekly', 0.6)
-    add(lookbooks.docs, '/lookbook', 'monthly', 0.5)
-    add(journal.docs, '/journal', 'monthly', 0.5)
-  } catch {
-    /* Static routes only. A degraded sitemap beats a 500 a crawler will remember. */
+    add(products, '/product', 'weekly', 0.8)
+    add(categories, '/shop', 'weekly', 0.7)
+    add(collections, '/collections', 'weekly', 0.7)
+    add(edits, '/edits', 'weekly', 0.6)
+    add(lookbooks, '/lookbook', 'monthly', 0.5)
+    add(journal, '/journal', 'monthly', 0.5)
+  } catch (error) {
+    /*
+     * **Logged, not swallowed.** Static routes only is a survivable answer; not knowing it happened
+     * is not. An empty-looking sitemap and an unreachable database are indistinguishable on screen
+     * and could not be more different to an operator — `home.ts` and `catalog.ts` both say so, and
+     * this is the one route where the reader is a crawler that will not report the problem either.
+     */
+    console.error(
+      '[seo] The sitemap could not be built from the database; static routes only.',
+      error,
+    )
   }
 
   return buildSitemap(siteUrl, entries)

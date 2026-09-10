@@ -14,7 +14,7 @@ import { readWishlistProductIds } from '@/lib/wishlist/read'
 import { loadProductParams } from '@/lib/product/params'
 import { getProduct, getProductRecord } from '@/lib/product/product'
 import { documentSeo } from '@/lib/seo/document'
-import { absoluteImageUrl } from '@/lib/seo/metadata'
+import { absoluteImageUrl, privateMetadata } from '@/lib/seo/metadata'
 import { getSiteUrl, pageMetadata } from '@/lib/seo/site'
 import { breadcrumbStructuredData, productStructuredData } from '@/lib/seo/structured-data'
 
@@ -62,7 +62,7 @@ export async function generateMetadata({
   const record = await getProductRecord(slug)
 
   if (!record) {
-    return { title: 'Not found' }
+    return privateMetadata('Not found')
   }
 
   const { product } = record

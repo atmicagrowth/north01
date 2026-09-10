@@ -6862,7 +6862,43 @@ actually control; the sentence about prerendering was simply wrong and is now ma
 Four routes carried *"No `generateMetadata`. SEO is Phase 24"* notes. They are Phase 24's now, so they
 say what was decided instead of what was deferred.
 
-### 1.29.11 What is now owed
+### 1.29.11 Sweep 1 — what the first pass got wrong
+
+Four defects, and the first two are the same mistake in different clothes: **caching a failure**.
+
+**`getSeoDefaults` remembered the outage.** The `findGlobal` carried its own `.catch(() => null)`
+*inside* `unstable_cache`, so the cached function returned successfully with blank defaults — and Next
+stored those blanks for **300 seconds**. Every page rendered in that window carried a generic title
+and no Open Graph card, long after the database had recovered, and nothing was ever logged because
+nothing ever threw. The docblock claimed it "fails open"; it failed *silently and durably*, which is
+the opposite. `home.ts` had already written the argument down — *"returning a valid empty homepage
+would have written a 200 blank page into the route cache… outliving the database blip that caused
+it"* — and this reproduced it one file away. The catch belongs **outside** the cached function:
+`unstable_cache` does not store a rejected promise, so the next request retries, and the fallback
+applies to one request rather than to five minutes of them.
+
+**The sitemap swallowed its error entirely**, `catch {}` with a comment. Static-routes-only is a
+survivable answer; not knowing it happened is not, and this is the one route whose reader is a crawler
+that will not report the problem either. It also had **silent truncation**: six bounded reads with no
+check against `totalDocs`, so a catalogue past the cap produces a valid sitemap, a green build, and a
+slice of the shop simply not submitted. Both fixed, the second the way `readVariants` already does it.
+
+**`socialImageUrl(input.image ?? defaults.ogImage)` chose the record before asking for a URL.** A page
+whose own image exists as a row but yields no URL — an asset uploaded before Cloudinary was
+configured, or a video — got **no card at all**, while the site default sat there unused. The ladder
+is over *URLs*, not over records: ask each in turn.
+
+**A video was accepted as a social card.** `defaultOgImage` and `seo.image` are uploads to `media`,
+and `media` holds video; a 1.91:1 JPEG transform of a video asset is a URL in the video delivery
+namespace that no crawler renders. Now `null`, checked against the stored `cloudinaryResourceType`
+column rather than the MIME type, per `Media.ts`.
+
+Two smaller ones: a missing document's `generateMetadata` returned a plain `{ title: 'Not found' }`
+where `privateMetadata` is right, and `EMPTY_DOCUMENT_SEO` — handed out by identity to every document
+with no overrides — was an unfrozen shared object. `pnpm verify:seo` is **94/94**, four checks added
+for the cases above that a pure harness can reach.
+
+### 1.29.12 What is now owed
 
 - **`/collections` and `/edits` index pages**, still — they are in the sitemap only as detail URLs.
 - **`generateStaticParams`** on the document routes. A Phase 30 question, and not obviously right for

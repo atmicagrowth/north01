@@ -18,16 +18,23 @@ import { buildSocialCardUrl } from '@/lib/media/cloudinary-url'
  * means the platform crops it, badly, in a place nobody chose — most often through the middle of a
  * face. Asking Cloudinary for the card shape means the crop is the one `gravity` was configured for.
  *
+ * ### A video is not a card
+ *
+ * `defaultOgImage` and `seo.image` are `upload` relations to `media`, and `media` holds video too.
+ * Asking Cloudinary for a 1.91:1 JPEG of a video asset produces a URL in the video delivery
+ * namespace that no crawler will render as an image. `resourceType` is the stored column — never
+ * derived from `mimeType`, per `Media.ts` — so the check is exact.
+ *
  * ### Absence is a real answer
  *
- * No Cloudinary account, an unmigrated asset, or a document with no image at all: `null`, and
+ * No Cloudinary account, an unmigrated asset, a video, or a document with no image at all: `null`, and
  * `buildMetadata` then emits a `summary` Twitter card rather than `summary_large_image`. A card
  * pointing at an image that 404s renders worse than a card with no image.
  */
 export function socialImageUrl(media: Media | null | undefined): null | string {
   const cloudName = publicEnv.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
 
-  if (!cloudName || !media?.cloudinaryPublicId) {
+  if (!cloudName || !media?.cloudinaryPublicId || media.cloudinaryResourceType === 'video') {
     return null
   }
 
@@ -37,7 +44,7 @@ export function socialImageUrl(media: Media | null | undefined): null | string {
       focalY: media.focalY ?? null,
       height: media.height ?? null,
       publicId: media.cloudinaryPublicId,
-      resourceType: media.cloudinaryResourceType === 'video' ? 'video' : 'image',
+      resourceType: 'image',
       version: media.cloudinaryVersion ?? null,
       width: media.width ?? null,
     },

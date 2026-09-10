@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 
 import { EditPage } from '@/components/editorial/edit-page'
 import { getEditPage } from '@/lib/editorial/read'
+import { privateMetadata } from '@/lib/seo/metadata'
 import { pageMetadata } from '@/lib/seo/site'
 
 /**
@@ -21,7 +22,7 @@ export async function generateMetadata({
   const edit = await getEditPage(slug)
 
   if (!edit) {
-    return { title: 'Not found' }
+    return privateMetadata('Not found')
   }
 
   return pageMetadata({

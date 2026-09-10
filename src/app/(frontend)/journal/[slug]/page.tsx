@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 
 import { JournalArticlePage } from '@/components/editorial/journal-article'
 import { getJournalArticle } from '@/lib/editorial/read'
+import { privateMetadata } from '@/lib/seo/metadata'
 import { pageMetadata } from '@/lib/seo/site'
 
 /**
@@ -26,7 +27,7 @@ export async function generateMetadata({
   const article = await getJournalArticle(slug)
 
   if (!article) {
-    return { title: 'Not found' }
+    return privateMetadata('Not found')
   }
 
   return pageMetadata({
