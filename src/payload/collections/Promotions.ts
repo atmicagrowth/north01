@@ -1,4 +1,9 @@
-import type { CollectionConfig, NumberFieldSingleValidation } from 'payload'
+import type { CollectionConfig, DateFieldValidation, NumberFieldSingleValidation } from 'payload'
+
+import type { Promotion } from '@/payload-types'
+
+import { toPromotionInput } from '@/lib/promotions/read'
+import { type PromotionFailure, validatePromotion } from '@/lib/promotions/rules'
 
 import { isAdmin, isStaff, nobodyField } from '../access'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
@@ -60,12 +65,95 @@ const requiredForType =
     return value === null || value === undefined ? message : true
   }
 
+/**
+ * **A window that runs backwards is a promotion that is never live — Phase 28, §28.1d.**
+ *
+ * Nothing downstream breaks on `endsAt < startsAt`: §15.1a checks *"has it started"* and *"has it
+ * ended"* as two independent gates, so an inverted window simply fails both, forever, silently. The
+ * code sits in the list with `active` ticked, and the first anyone hears of it is a customer being
+ * told their code is invalid.
+ *
+ * Refusing it at the point it is typed is the whole of the fix. It costs no column — a `validate` is
+ * not a migration — and it is the difference between a mistake caught on Monday morning and one
+ * discovered by a shopper.
+ */
+const validateEndsAfterStart: DateFieldValidation = (value, { siblingData }) => {
+  const startsAt = (siblingData as { startsAt?: unknown })?.startsAt
+
+  if (!value || !startsAt) {
+    return true
+  }
+
+  const start = new Date(startsAt as Date | string).getTime()
+  const end = new Date(value as Date | string).getTime()
+
+  if (Number.isNaN(start) || Number.isNaN(end)) {
+    return true
+  }
+
+  return end > start
+    ? true
+    : 'The end must come after the start, or this code can never be live. Leave it empty for no expiry.'
+}
+
+/**
+ * **"Is this code live right now?" — the question the columns could not answer.**
+ *
+ * `active`, `startsAt`, `endsAt` and `usageLimit` are four true facts that mean nothing until they
+ * are combined in somebody's head. A code with `active` ticked and an `endsAt` of last Tuesday reads
+ * as ON in the list and is OFF at the till; a code that has hit its usage limit reads the same way.
+ * Both directions of that gap end in the same Monday morning question — *why isn't my code working*,
+ * or the more expensive *why is this one still working* — and neither is answerable by looking.
+ *
+ * **Virtual, so it costs nothing.** `virtual: true` keeps it out of the database entirely: no column,
+ * no migration, computed on read. Payload also refuses to sort a virtual column
+ * (`buildColumnState` disables the header), which is the correct behaviour here — there is no
+ * `live_now` to `ORDER BY`.
+ *
+ * **It reuses `validatePromotion` rather than re-deriving the window**, so the admin's answer and
+ * checkout's answer are the same answer by construction. A second copy of *has it started, has it
+ * ended, is it used up* would drift the first time §15.1a changed, and it would drift in the
+ * direction of an admin panel that lies about what the shop will honour.
+ *
+ * The empty bag is deliberate. The four gates named below are properties of the **promotion**; the
+ * gates §15.1a checks after them — currency, minimum subtotal, product eligibility — are properties
+ * of a **bag**, which a list view does not have and must not invent. Those fall through to "Live
+ * now", which is the honest answer to the question actually being asked.
+ */
+const NOT_LIVE_COPY: Partial<Record<PromotionFailure, string>> = {
+  expired: 'Ended — the end date has passed.',
+  inactive: 'Off — the Active switch is unticked.',
+  notStarted: 'Scheduled — it goes live on the start date.',
+  usageLimit: 'Used up — it has reached its total usage limit.',
+}
+
 export const Promotions: CollectionConfig = {
   slug: 'promotions',
 
   admin: {
     useAsTitle: 'code',
-    defaultColumns: ['code', 'type', 'active', 'startsAt', 'endsAt', 'timesUsed'],
+    /**
+     * `usageLimit` sits beside `timesUsed` because a count with no denominator is not a fact anyone
+     * can act on: *used 3 times* is unremarkable against a limit of 500 and means the code is dead
+     * against a limit of 3. `liveNow` leads because it is the column the list is read for.
+     */
+    defaultColumns: [
+      'code',
+      'liveNow',
+      'type',
+      'active',
+      'startsAt',
+      'endsAt',
+      'timesUsed',
+      'usageLimit',
+    ],
+    /**
+     * A code is found by what it is called *or* by what it was for. `description` is the internal
+     * note — "Black Friday, email list" — and it is usually the only thing anyone remembers three
+     * months later. `code` is repeated because declaring this list replaces the `useAsTitle` default
+     * outright rather than adding to it.
+     */
+    listSearchableFields: ['code', 'description'],
     group: 'Commerce',
     description:
       'Discount codes. Every rule here is evaluated on the server, never in the browser.',
@@ -198,10 +286,11 @@ export const Promotions: CollectionConfig = {
           name: 'endsAt',
           type: 'date',
           index: true,
+          validate: validateEndsAfterStart,
           admin: {
             width: '50%',
             date: { pickerAppearance: 'dayAndTime' },
-            description: 'Empty means no expiry.',
+            description: 'Empty means no expiry. Must be after the start date.',
           },
         },
       ],
@@ -273,15 +362,60 @@ export const Promotions: CollectionConfig = {
           required: true,
           defaultValue: 0,
           min: 0,
-          access: { update: nobodyField },
+          /*
+           * **`create` as well as `update` — Phase 28.** The update guard closed the door on
+           * retyping the counter and left the one beside it open: `POST /api/promotions` is
+           * `isStaff`, so a code could be *born* claiming ninety-nine redemptions it never had. That
+           * is the same lie as resetting it, told at the other end, and it is worse in one respect —
+           * there is no earlier value to notice the difference against.
+           *
+           * Denied field access does not fail the write: Payload deletes the key and falls back to
+           * `defaultValue` (`getFallbackValue`), so a staff-created promotion starts at 0, which is
+           * the only honest number for a code nobody has used yet. Phase 17's increment runs with
+           * `overrideAccess: true` past field access entirely, so the fulfilment path is untouched.
+           */
+          access: { create: nobodyField, update: nobodyField },
           admin: {
             width: '33%',
             readOnly: true,
             step: 1,
-            description: 'Incremented by Phase 17, in the transaction that finalises payment.',
+            description:
+              'Incremented by Phase 17, in the transaction that finalises payment. Never typed by hand, here or through the API — a count somebody chose is a usage limit that lies.',
           },
         },
       ],
+    },
+    {
+      /** See `NOT_LIVE_COPY` above for why this exists and why it is derived rather than stored. */
+      name: 'liveNow',
+      type: 'text',
+      virtual: true,
+      label: 'Live now',
+      admin: {
+        position: 'sidebar',
+        /*
+         * There is no `live_now` column, so there is nothing for a filter to compare against. Payload
+         * already refuses to *sort* a virtual column; the filter list is not disabled for us.
+         */
+        disableListFilter: true,
+        description:
+          'Worked out from the switch, the dates and the usage limit — the same checks checkout runs. A code discounts nothing unless this says Live now.',
+      },
+      hooks: {
+        afterRead: [
+          ({ siblingData }) => {
+            const doc = siblingData as Promotion
+
+            const failure = validatePromotion(toPromotionInput(doc), [], {
+              cartCurrency: doc.currency ?? DEFAULT_CURRENCY,
+              customerUses: 0,
+              now: new Date(),
+            })
+
+            return (failure === null ? undefined : NOT_LIVE_COPY[failure]) ?? 'Live now'
+          },
+        ],
+      },
     },
     {
       name: 'active',

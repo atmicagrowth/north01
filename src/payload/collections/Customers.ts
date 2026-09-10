@@ -92,6 +92,23 @@ export const Customers: CollectionConfig = {
   admin: {
     useAsTitle: 'email',
     defaultColumns: ['email', 'firstName', 'lastName', 'accountStatus', 'createdAt'],
+    /**
+     * **Phase 28.** Without this the search box queries `useAsTitle` and nothing else, so the only
+     * way to find an account is to already know the email address. That is not how support works:
+     * the person on the phone gives a name, and *"I can't find you"* is the wrong answer to a
+     * customer who is plainly in the database.
+     *
+     * `email` is repeated deliberately — declaring the list replaces the `useAsTitle` default
+     * outright (`getTextFieldsToBeSearched` returns only the named fields), so omitting it would
+     * *remove* the search that works today.
+     *
+     * `firstName` and `lastName` are unindexed, and indexing them would not help: the search builder
+     * emits `ILIKE '%term%'`, and a leading wildcard cannot use a btree however well indexed the
+     * column is — the same measurement `Orders.ts` records beside its own five fields. The answer if
+     * this table ever grows past a sequential scan is a `pg_trgm` index, which is a migration and an
+     * extension; nothing here is owed one yet.
+     */
+    listSearchableFields: ['email', 'firstName', 'lastName'],
     group: 'Customers',
     description:
       'Shopper accounts. Separate from staff Users — a customer cannot sign in to this admin panel.',

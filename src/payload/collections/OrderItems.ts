@@ -38,7 +38,25 @@ export const OrderItems: CollectionConfig = {
     useAsTitle: 'productName',
     defaultColumns: ['order', 'productName', 'variantLabel', 'sku', 'quantity', 'lineTotalMinor'],
     group: 'Commerce',
-    description: 'Frozen purchase lines. Never edited after the order is placed.',
+    description:
+      'Frozen purchase lines. Never edited after the order is placed. Search by SKU to find every ' +
+      'order that contains a particular item.',
+
+    /**
+     * **The recall question, which is the only reason to open this list directly.**
+     *
+     * An order's lines are read from the order itself — the `items` join on `Orders` shows them in
+     * place, and that is how they are looked at ninety-nine times in a hundred. The hundredth is the
+     * other direction: *"this batch of `N01-TEE-BONE-M` was faulty — who has one?"* That question has
+     * no answer through the orders list, because the SKU is not a column on an order; it is a column
+     * here, on every line that ever shipped.
+     *
+     * Without this key the list search matched `useAsTitle` alone — `productName` — which answers a
+     * blunter version of the same question and cannot tell a size or a colourway apart. `sku` first,
+     * because it is the precise handle; `variantLabel` beside it because *"Bone / M"* is what a person
+     * has in front of them when the SKU is on a label they cannot read.
+     */
+    listSearchableFields: ['sku', 'productName', 'variantLabel'],
   },
 
   /**
@@ -61,11 +79,35 @@ export const OrderItems: CollectionConfig = {
 
   fields: [
     {
+      /*
+       * **Closed to the browser in Phase 28, and it is the one hole `freezeOrderLines` leaves.**
+       *
+       * That hook refuses §18.1d's four snapshot columns, and `nobodyField` closes `quantity` and
+       * `lineTotalMinor`. `order` was neither — so `update: isStaff` meant a staff member could
+       * reparent a purchased line onto a different order, which rewrites **two** financial records at
+       * once: one loses a line it was paid for, the other gains a line nobody paid for. Both totals
+       * then disagree with what Stripe charged, and neither order says why.
+       *
+       * It is not the correctable-pointer case the docblock above describes. `product` and `variant`
+       * are navigation and are meant to be fixable; `order` is what makes this row part of that
+       * purchase at all, and it was decided by the checkout that created it. There is no support task
+       * that needs it moved — a line on the wrong order is a refund and a new order, not a re-link.
+       *
+       * `readOnly` is only how the panel says so; `overrideAccess: true` skips field access, so
+       * `checkout/preflight.ts` still writes it at create (and it only ever creates — the snapshot is
+       * deleted and rewritten per attempt rather than edited).
+       */
       name: 'order',
       type: 'relationship',
       relationTo: 'orders',
       required: true,
       index: true,
+      access: { update: nobodyField },
+      admin: {
+        readOnly: true,
+        description:
+          'The purchase this line belongs to, fixed when the order was placed. A line cannot be moved to another order — if one is on the wrong order, that is a refund and a new order, not an edit.',
+      },
     },
     {
       type: 'row',

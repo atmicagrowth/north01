@@ -39,7 +39,18 @@ export const Edits: CollectionConfig = {
     useAsTitle: 'title',
     defaultColumns: ['title', 'status', 'publishedAt', 'updatedAt'],
     group: 'Editorial',
-    description: 'Intent-based shopping pages at /edit/… Keep the set small and obvious.',
+
+    /**
+     * The scheduling sentence is the same correction made on `Collections.ts`, and made for the same
+     * reason: `access.read` narrows on `status` alone, `getEditPage` adds no date clause, and only
+     * `navigation/resolve.ts` and `home/resolve.ts` actually consult `publishedAt`. The field-level
+     * wording in `fields/seo.ts` says "schedules the page", which for an Edit it does not.
+     */
+    description:
+      'Intent-based shopping pages at /edit/… Keep the set small and obvious. Published is live the moment you save it — a future date only keeps the edit out of navigation menus and the homepage, not off its own URL.',
+
+    /** An editor is given a URL, not a title. See the note on `Collections.admin`. */
+    listSearchableFields: ['title', 'slug'],
   },
 
   defaultSort: '-publishedAt',
@@ -102,13 +113,24 @@ export const Edits: CollectionConfig = {
                   type: 'textarea',
                   admin: { description: 'Optional. One line of context for the group.' },
                 },
+                /*
+                 * No `filterOptions` restricting this to published products, for the two reasons
+                 * spelled out on `Collections.products` — the filter is re-validated on save, so it
+                 * would forbid drafting an edit ahead of its drop, and it would break the save of
+                 * every edit referencing a product that is later soft-deleted. A group whose
+                 * products are all unpublished is dropped whole by `lib/editorial/read.ts` rather
+                 * than rendered as an empty heading, which is the honest outcome.
+                 */
                 {
                   name: 'products',
                   type: 'relationship',
                   relationTo: 'products',
                   hasMany: true,
                   required: true,
-                  admin: { description: 'Drag to set the order the customer sees.' },
+                  admin: {
+                    description:
+                      'Drag to set the order the customer sees. Drafts, future-dated products and anything out of stock are dropped from the live page — and if none of a group survives, the whole group disappears rather than showing an empty heading.',
+                  },
                 },
               ],
             },
@@ -119,7 +141,7 @@ export const Edits: CollectionConfig = {
               hasMany: true,
               admin: {
                 description:
-                  'Optional — plan §6.1f. Links the edit to the editorial story behind it, and gives the reader somewhere to go next.',
+                  'Optional — plan §6.1f. Links the edit to the editorial story behind it, and gives the reader somewhere to go next. A draft lookbook listed here renders as nothing at all, so publish it first or the section quietly shrinks.',
               },
             },
           ],

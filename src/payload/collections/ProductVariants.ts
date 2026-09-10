@@ -1,4 +1,10 @@
-import type { CollectionConfig, NumberFieldSingleValidation } from 'payload'
+import type {
+  CollectionBeforeValidateHook,
+  CollectionConfig,
+  NumberFieldSingleValidation,
+} from 'payload'
+
+import { ValidationError } from 'payload'
 
 import { COLOR_FAMILY_OPTIONS } from '@/lib/catalog/colors'
 
@@ -81,13 +87,84 @@ const validateStock: NumberFieldSingleValidation = (value, { req: { t }, require
   return true
 }
 
+/**
+ * **§28.1d, "invalid commerce states cannot be created accidentally": a sale that is not a saving.**
+ *
+ * A compare-at price is a *claim* — it says the customer is paying less than they would have. The
+ * renderer already refuses to repeat a false one: `lib/catalog/resolve.ts` shows the struck-through
+ * price only when `compareAt > price`, because *"`compareAt === price` is not a sale, and
+ * `compareAt < price` is a data-entry error"*, and plan §24.1b forbids a false price claim in
+ * structured data outright.
+ *
+ * That leaves the editor in the worst possible position. Typing the two numbers the wrong way round
+ * saves cleanly, the field description says the value will be struck through, and then nothing
+ * appears anywhere on the site — the badge, the strike-through and the saving all silently absent
+ * with no error to explain it. The rule is the same rule as the renderer's, applied at the point the
+ * mistake is made instead of five screens away.
+ *
+ * **It is a collection hook rather than a field `validate` on purpose.** `minorUnits()` supplies the
+ * validator that enforces *required*, whole numbers and a lower bound, and Payload installs a
+ * built-in validator only where a field declares none — so a `validate` here would replace all of
+ * that and have to restate it, which is precisely the duplication `fields/money.ts` warns about. A
+ * `ValidationError` carrying `path: 'compareAtPriceMinor'` puts the message on the field either way.
+ *
+ * The price is read from the incoming data first and from the stored row second. Payload's field
+ * pass has usually filled the gap already — an omitted field falls back to the saved value before a
+ * collection hook sees it — but a partial write is exactly the case this must not get wrong, so it
+ * is spelled out rather than assumed. A *missing* price is left to that field's own required check;
+ * answering it here with a message about sales would send the editor to the wrong control.
+ *
+ * The consequence worth knowing: because the fallback fills `compareAtPriceMinor` in too, a row that
+ * already holds a false sale cannot be saved again — not even to change its stock — until the
+ * compare-at is corrected or cleared. That is the intended reading of *"cannot be created
+ * accidentally"* and the message names both numbers, but it is a refusal that can surface on a save
+ * that had nothing to do with pricing.
+ */
+const refuseFakeSale: CollectionBeforeValidateHook = ({ data, originalDoc, req }) => {
+  const compareAt = (data as { compareAtPriceMinor?: unknown } | undefined)?.compareAtPriceMinor
+
+  // Empty means "not on sale", which is the ordinary state and the way a sale is ended.
+  if (typeof compareAt !== 'number') {
+    return data
+  }
+
+  const incoming = (data as { priceMinor?: unknown } | undefined)?.priceMinor
+  const price =
+    typeof incoming === 'number'
+      ? incoming
+      : (originalDoc as { priceMinor?: unknown } | undefined)?.priceMinor
+
+  if (typeof price !== 'number' || compareAt > price) {
+    return data
+  }
+
+  throw new ValidationError({
+    collection: 'product-variants',
+    errors: [
+      {
+        path: 'compareAtPriceMinor',
+        message: `A compare-at price is the former, higher price shown struck through, and ${compareAt} is not higher than this variant's price of ${price} — so no saving would be shown and the sale badge would never appear. Enter the old price here and the new one in Price, or leave this empty when the variant is not on sale.`,
+      },
+    ],
+    req,
+  })
+}
+
 export const ProductVariants: CollectionConfig = {
   slug: 'product-variants',
 
   labels: { singular: 'Variant', plural: 'Variants' },
 
   admin: {
+    /**
+     * The SKU, because it is the one value on this row that is unique, permanent and printed on the
+     * thing itself — it is what arrives in a support email and on a stock count. A generated label
+     * ("Field Jacket — Bone / M") would read better in a relationship picker and would have to be a
+     * virtual field with no column behind it, which then cannot be sorted, filtered or searched: the
+     * list's title column and its search box both stop working to make the drop-downs prettier.
+     */
     useAsTitle: 'sku',
+
     defaultColumns: [
       'sku',
       'product',
@@ -97,8 +174,32 @@ export const ProductVariants: CollectionConfig = {
       'inventoryQuantity',
       'active',
     ],
+
+    /**
+     * **This is the list where a shop manager finds one physical garment** — plan §28.1a's product
+     * management is mostly done from the product itself, but "we've had a return of NRT-FJ-BON-M"
+     * starts here, and so does "how much Bone is left".
+     *
+     * The search box searches `useAsTitle` and nothing else unless this replaces it
+     * (`mergeListSearchAndWhere` substitutes, it does not extend), so `sku` is repeated rather than
+     * assumed. All three are indexed columns on this table.
+     *
+     * The product's *name* is not among them and cannot be: it lives on the other side of a
+     * relationship, and this box builds `like` clauses against columns of this collection only.
+     * Searching by product name is the Products list's job; each row here links to its product.
+     */
+    listSearchableFields: ['sku', 'color', 'size'],
+
     group: 'Catalogue',
-    description: 'One row per purchasable colour and size. Cart and order lines point here.',
+
+    /**
+     * Written for the person deciding, at speed, between three controls that look alike. Getting it
+     * wrong is not symmetrical: unchecking Active is reversible in a second, and deleting a variant
+     * takes its SKU out of circulation permanently, because order history records that SKU as a
+     * snapshot and it may never be reassigned (see the collection docblock above).
+     */
+    description:
+      'One row per purchasable colour and size — this is what a customer actually buys, and what cart and order lines point at. To stop selling one, uncheck Active; the row stays, its stock is kept, and the size simply disappears from the size selector. Delete only a variant that was created by mistake: a SKU that has ever been ordered must keep meaning that garment for ever.',
   },
 
   /**
@@ -124,6 +225,7 @@ export const ProductVariants: CollectionConfig = {
   indexes: [{ fields: ['product', 'color', 'size'], unique: true }],
 
   hooks: {
+    beforeValidate: [refuseFakeSale],
     afterChange: [syncProductDerivedAfterChange],
     /**
      * `cart-items.variant` is required, so it is `NOT NULL` with `ON DELETE SET NULL` — a bag line
@@ -290,7 +392,7 @@ export const ProductVariants: CollectionConfig = {
           admin: {
             width: '50%',
             description:
-              'The former price, shown struck through. Leave empty when not on sale — an equal or lower value is not a sale and must not be displayed as one.',
+              'The former, higher price, shown struck through beside the current one. Leave it empty when this variant is not on sale — a value equal to or below the price is not a saving, and the save is refused rather than quietly showing nothing.',
           },
         }),
       ],
@@ -315,8 +417,14 @@ export const ProductVariants: CollectionConfig = {
       validate: validateStock,
       admin: {
         step: 1,
+        /*
+         * The field a non-technical client is most likely to break, and the way they would break it
+         * is by being conscientious: subtracting the units an order has just taken. Decision D-06
+         * already subtracted them inside the payment webhook, so the correction would count the
+         * sale twice and quietly under-sell the line for the rest of its life.
+         */
         description:
-          'Centralised online fulfilment stock. Decremented only by a confirmed payment — see decision D-06.',
+          'How many of this exact colour and size are in the warehouse. 0 shows the size as sold out; it can never go below 0. This number goes down by itself when an order is paid for — never reduce it by hand to account for a sale, or that sale is counted twice. Type the real counted figure here after a delivery or a stock take.',
       },
     },
     {

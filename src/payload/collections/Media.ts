@@ -5,7 +5,7 @@ import type { CollectionConfig } from 'payload'
 import { ValidationError } from 'payload'
 
 import { publicEnv } from '../../lib/env.public'
-import { ACCEPTED_MIME_TYPES, MAX_IMAGE_DIMENSION } from '../../lib/media/limits'
+import { ACCEPTED_MIME_TYPES, MAX_IMAGE_DIMENSION, MAX_UPLOAD_BYTES } from '../../lib/media/limits'
 import { MEDIA_ROLE_OPTIONS } from '../../lib/media/roles'
 import { anyone, isAdmin, isStaff, nobodyField } from '../access'
 
@@ -21,6 +21,34 @@ const dirname = path.dirname(fileURLToPath(import.meta.url))
  * a different matter entirely and never come near this file — see `payload/storage/cloudinary.ts`.
  */
 const CLOUDINARY_CLOUD_NAME = publicEnv.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+
+/**
+ * **The limits, said out loud on the screen where they apply** — plan §28.1a's *"upload media"*,
+ * read for the person doing the uploading rather than the person who wrote the rule.
+ *
+ * Until Phase 28 every one of these numbers was enforced and none of them was stated: an editor met
+ * the 25 MB cap as a rejected upload, the format allowlist as a rejected upload, and the dimension
+ * cap as a rejected upload. Each rule is correct and each was discovered the expensive way.
+ *
+ * They are interpolated from the constants rather than typed out, because a description that says
+ * "25 MB" beside a `MAX_UPLOAD_BYTES` somebody has since changed is worse than no description at
+ * all — it is a confident lie the admin panel tells every morning.
+ */
+const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))
+
+/**
+ * The focal point sentence is here and not in a field description because the focal point is not a
+ * field: Payload draws it as a marker on the image in the upload area, above everything this
+ * collection declares. A collection's `admin.description` renders on the document view as well as
+ * the list view (`@payloadcms/next` → `renderDocumentSlots`), which makes it the only piece of
+ * configuration that can put a sentence next to that marker without a custom component.
+ */
+const MEDIA_DESCRIPTION = [
+  `Every photograph and video the storefront uses. JPEG, PNG, WebP or AVIF for stills and MP4 or WebM for video, up to ${MAX_UPLOAD_MB} MB and ${MAX_IMAGE_DIMENSION.toLocaleString('en-US')} pixels on the longest side.`,
+  'SVG and GIF are refused deliberately, so a logo comes in as a PNG.',
+  'Upload the largest uncropped original you have: every size the site shows is cut from it at delivery time, so a picture that arrives already cropped can only ever be cropped further.',
+  'The marker you drag onto the picture is its focal point — it says which part must stay in frame when the same photograph is shown wide on a laptop and tall on a phone. Put it on the face, or on the product. Leave it in the middle if you are unsure.',
+].join(' ')
 
 /**
  * Images and video — Payload holds the metadata, Cloudinary holds and delivers the bytes.
@@ -70,8 +98,21 @@ export const Media: CollectionConfig = {
     useAsTitle: 'filename',
     defaultColumns: ['filename', 'alt', 'role', 'mimeType', 'updatedAt'],
     group: 'Content',
-    description:
-      'Images and video. Payload holds the metadata; Cloudinary delivers the bytes and performs every crop and resize.',
+    description: MEDIA_DESCRIPTION,
+    /**
+     * **Search the library by what the picture shows, not only by what the file is called.**
+     *
+     * Payload's list search covers `useAsTitle` alone by default, and `useAsTitle` here is
+     * `filename` — `DSC_4417.jpg`. An editor looking for the shot of the navy overshirt knows the
+     * subject and never the filename, and `alt` is the one field that records the subject, because
+     * it is required on every upload.
+     *
+     * `alt` carries no index and deliberately does not get one: an index is a column change and a
+     * migration, and the media library of a single DTC storefront is a table of hundreds of rows,
+     * where a sequential `ILIKE` is not a cost anyone can perceive. If it ever becomes one, the
+     * index is the fix and it is a schema change, not a config change.
+     */
+    listSearchableFields: ['filename', 'alt'],
   },
 
   upload: {
@@ -193,7 +234,7 @@ export const Media: CollectionConfig = {
       admin: {
         position: 'sidebar',
         description:
-          'How this asset is framed by default. Any page may override it; this is what it does when nobody says otherwise.',
+          'The shape this picture is cut to when the page using it does not ask for a particular one. Product is the upright card frame on a shop grid, Campaign the wide banner frame, and Editorial and Logo / mark are not cut at all — the whole picture is used, at its own proportions. A page that needs a different shape asks for it and wins, so this is a starting point rather than a lock, and getting it wrong costs a badly framed picture, never a broken one.',
       },
     },
     {

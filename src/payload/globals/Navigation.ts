@@ -5,6 +5,40 @@ import { linkFields } from '../fields/link'
 import { revalidateGlobal } from '../hooks/revalidateTags'
 
 /**
+ * **Which parts of the footer are content, and which are not** — plan §28.1c lists *"footer"* among
+ * the surfaces a non-technical client manages, and the honest answer is "most of it, from three
+ * different screens, and two pieces from none of them".
+ *
+ * Phase 28 audited `components/layout/site-footer.tsx` against this global and found the split
+ * below. Nothing is *changed* by writing it down; what changes is that an editor hunting for the
+ * copyright line or the Privacy link stops hunting, instead of concluding the admin is broken.
+ *
+ * | Part of the footer | Where it is edited |
+ * |---|---|
+ * | The link columns | here |
+ * | Social links | here, on the Social tab |
+ * | The wordmark and the line under it | Site Settings → Identity (`siteName`, `tagline`) |
+ * | The © line | nowhere — it is the site name again, so it follows Site Settings |
+ * | The newsletter column | nowhere — it is a form, not navigation (**DEV-42**) |
+ * | Privacy and Terms | nowhere — `lib/navigation/utility.ts` (**see below**) |
+ *
+ * **The legal row is deliberately not content, and this is the one entry worth defending.** It is a
+ * two-item array in code because a legal notice is not merchandising: it must be present on every
+ * page of a trading storefront, and a footer column an editor can reorder is a footer column an
+ * editor can empty. Making it editable would put "can this shop legally trade" behind a drag handle.
+ * An editor who needs different legal wording is asking for a development change, and the
+ * description says so rather than leaving them to look for a field that does not exist.
+ */
+const FOOTER_GUIDE = [
+  'Structure §20: Shop, Help, About/editorial. Four columns at most.',
+  'A column needs a heading and at least one working link or the whole column is left off the footer — and a link whose page has been unpublished or deleted is dropped silently, so a column can empty itself without anyone editing it here.',
+  'Three parts of the footer are not edited on this screen.',
+  'The shop name and the line beneath it, and therefore the copyright line, come from Site Settings → Identity.',
+  'The newsletter column is a signup form rather than navigation, so its wording is set in code (DEV-42).',
+  'The Privacy and Terms row is fixed in code on purpose: legal links have to be on every page, and a column that can be reordered is a column that can be emptied. Changing those two needs a developer.',
+].join(' ')
+
+/**
  * Header navigation, footer navigation and social links — the other three items on plan §6.1a's
  * list. They are a separate global from Site Settings because they are a separate editing job: one
  * screen is "what is this shop", the other is "how do you move around it", and putting eight nested
@@ -76,7 +110,7 @@ export const Navigation: GlobalConfig = {
               labels: { singular: 'Primary item', plural: 'Primary items' },
               admin: {
                 description:
-                  'Six at most: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK, ABOUT. The limit is the rule, not a suggestion — see DEV-07.',
+                  'Six at most: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK, ABOUT. The limit is the rule, not a suggestion — see DEV-07. An item pointing at a page that is a draft, dated in the future, or deleted is left out of the header entirely rather than shown as a dead link, and nothing warns you here — so after unpublishing a page, look at the header.',
               },
               fields: [
                 ...linkFields({ required: true }),
@@ -87,7 +121,7 @@ export const Navigation: GlobalConfig = {
                   labels: { singular: 'Mega menu column', plural: 'Mega menu columns' },
                   admin: {
                     description:
-                      'Leave empty for a plain link. One or more columns turns this item into a mega menu.',
+                      'Leave empty for a plain link. One or more columns turns this item into a mega menu. A column whose links have all been unpublished or deleted is dropped rather than shown as a heading over nothing — so a mega menu can quietly become a plain link without anyone editing it.',
                   },
                   fields: [
                     {
@@ -112,7 +146,7 @@ export const Navigation: GlobalConfig = {
                   label: 'Featured panel',
                   admin: {
                     description:
-                      'Optional image beside the columns. The mega menu is a merchandising surface, not a sitemap.',
+                      'Optional image beside the columns. The mega menu is a merchandising surface, not a sitemap. The panel needs a picture or a caption to appear at all — a link on its own renders nothing, because there would be nothing to click.',
                   },
                   fields: [
                     {
@@ -137,8 +171,7 @@ export const Navigation: GlobalConfig = {
               maxRows: 4,
               labels: { singular: 'Footer column', plural: 'Footer columns' },
               admin: {
-                description:
-                  'Structure §20: Shop, Help, About/editorial, and the legal links. The newsletter column is a form rather than navigation, so it is not edited here — it was built in Phase 10 (DEV-42).',
+                description: FOOTER_GUIDE,
               },
               fields: [
                 { name: 'heading', type: 'text', required: true },

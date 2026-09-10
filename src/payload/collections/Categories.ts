@@ -1,10 +1,118 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionConfig, RelationshipFieldSingleValidation } from 'payload'
 
 import { isAdmin, isStaff, publishedOnly } from '../access'
 import { seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
 import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
 import { syncCategoryRename } from '../hooks/syncTaxonomyRename'
+
+/**
+ * A relationship value, as an id — `4`, `"4"`, `{ id: 4, … }` (a populated document, which the Local
+ * API will happily hand a validator) or `{ relationTo, value }` (the polymorphic shape). All four
+ * reach this field, and comparing the raw values would silently miss three of them.
+ */
+function toCategoryId(value: unknown): null | number {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? value : null
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    const parsed = Number(trimmed)
+
+    // `Number('')` is 0, which is a plausible-looking id that no row ever has.
+    return trimmed !== '' && Number.isInteger(parsed) ? parsed : null
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const record = value as { id?: unknown; value?: unknown }
+
+    return toCategoryId(record.value ?? record.id)
+  }
+
+  return null
+}
+
+const SELF_PARENT = 'A category cannot be its own parent.'
+
+const SELF_ANCESTOR =
+  'That category sits below this one, so this would make the category its own ancestor. Move the child out first.'
+
+/**
+ * **A category may not be its own ancestor — checked the whole way up, not one hop.**
+ *
+ * Three things are worth knowing about the shape of this:
+ *
+ * **One query, not one per level.** The obvious implementation walks `findByID` up the chain, which
+ * is a round trip per generation. The taxonomy is a bounded set — plan §6.1d's own rule is *"avoid
+ * creating categories that are not actually used"* — so reading all of them once and walking a
+ * `Map` in memory is both cheaper and the pattern `syncCategoryRename` already uses for the mirror
+ * problem (walking *down*).
+ *
+ * **It skips the read while the editor is still typing.** Payload re-runs every field's validator on
+ * each form-state request, tagged `event: 'onChange'`; the real save is tagged `'submit'` (see
+ * `fields/hooks/beforeChange/promise.js`). Without the guard, one keystroke anywhere on the form —
+ * in the name, in the description — costs a full read of the taxonomy. The cheap self-parent test
+ * still runs on every change, so the mistake an editor actually makes is flagged live; the ancestry
+ * walk waits for the save it would refuse.
+ *
+ * **It reports only the cycle this edit would create.** Walking up from the *proposed parent* and
+ * stopping on any repeat means a cycle that already exists elsewhere in the tree terminates the loop
+ * without blaming this save for it. A validator that refused an unrelated edit because the data was
+ * already broken would leave an editor with no way to fix anything.
+ *
+ * On create there is nothing to check: a row with no id yet cannot be anyone's ancestor.
+ */
+const validateParent: RelationshipFieldSingleValidation = async (value, { event, id, req }) => {
+  const parentId = toCategoryId(value)
+  const selfId = toCategoryId(id)
+
+  if (parentId === null || selfId === null) {
+    return true
+  }
+
+  if (parentId === selfId) {
+    return SELF_PARENT
+  }
+
+  if (event === 'onChange') {
+    return true
+  }
+
+  const { docs } = await req.payload.find({
+    collection: 'categories',
+    depth: 0,
+    limit: 0,
+    overrideAccess: true,
+    pagination: false,
+    req,
+    select: { parent: true },
+  })
+
+  const parentOf = new Map<number, number>()
+
+  for (const doc of docs) {
+    const parent = toCategoryId(doc.parent)
+
+    if (parent !== null) {
+      parentOf.set(doc.id, parent)
+    }
+  }
+
+  const seen = new Set<number>()
+  let cursor: number | undefined = parentId
+
+  while (cursor !== undefined && !seen.has(cursor)) {
+    if (cursor === selfId) {
+      return SELF_ANCESTOR
+    }
+
+    seen.add(cursor)
+    cursor = parentOf.get(cursor)
+  }
+
+  return true
+}
 
 /**
  * The product taxonomy. Plan §6.1d gives the shape by example — Clothing, Tops, Shirts, Hoodies,
@@ -24,11 +132,24 @@ import { syncCategoryRename } from '../hooks/syncTaxonomyRename'
  * flags on the product (plan §6.1b), rendered as navigation entries by Phase 9.
  *
  * **Depth is not enforced in the schema.** Postgres cannot express "at most three levels" through a
- * self-referencing foreign key, and a validator that walked the ancestry on every save would be a
- * query per write to prevent a mistake an editor makes once. The constraint that *is* enforced is
- * the one that corrupts data rather than merely looking untidy: a category cannot be its own parent.
- * A longer cycle (A → B → A) is still reachable through two separate saves; Phase 9, which renders
- * the tree, is where a traversal guard belongs, because it is the code that would otherwise loop.
+ * self-referencing foreign key, and a validator that counted levels would be policing tidiness
+ * rather than correctness — a four-level taxonomy renders perfectly well, it is merely deeper than
+ * the plan's example.
+ *
+ * **A cycle is a different matter, and Phase 28 closes it.** Phase 6 enforced only the one-hop case
+ * — a category as its own *parent* — and deliberately left `A → B → A`, which is reachable through
+ * two separate saves, to the traversals that would otherwise loop on it. Those guards were built and
+ * they hold: `expandCategory`, `withAncestors` and `syncCategoryRename`'s subtree walk each carry a
+ * `seen` set, so a cycle hangs nothing today. What it still does is produce a taxonomy that is
+ * nonsense in both directions — file Clothing under Tops and `/shop/tops` starts listing every pair
+ * of trousers in the shop, because "every descendant of Tops" now includes Tops' own parent.
+ *
+ * Plan §28.1d is the instruction that changes the trade-off: the admin *"must not permit"* an
+ * invalid state to be created accidentally, and a self-ancestor is exactly that. `validateParent`
+ * above refuses it at the point of the save, at a cost of one bounded query on the save of a
+ * category that has a parent — not on every keystroke, and not on a category with no parent at all.
+ * The downstream `seen` guards stay where they are: they defend against a cycle that already exists
+ * in the data, which this validator cannot retroactively undo.
  */
 export const Categories: CollectionConfig = {
   slug: 'categories',
@@ -80,7 +201,10 @@ export const Categories: CollectionConfig = {
       name: 'name',
       type: 'text',
       required: true,
-      admin: { description: 'As it appears in navigation. Title case — "Field Jackets".' },
+      admin: {
+        description:
+          'As it appears in navigation. Title case — "Field Jackets". Renaming it updates the header, the shop filters and search for every product beneath this category, including products filed under its children; you do not need to re-save any of them.',
+      },
     },
     slugField(),
     {
@@ -90,19 +214,18 @@ export const Categories: CollectionConfig = {
       index: true,
       admin: {
         position: 'sidebar',
-        description: 'Leave empty for a top-level category.',
+        description:
+          'The category this one sits beneath — Tops beneath Clothing. Leave it empty for a top-level category. The picker will not offer this category itself, and a save that would file it beneath one of its own children is refused: a category cannot end up inside itself.',
       },
       /**
-       * Self-parenting is the one cycle a single save can create, and the one that makes a
-       * breadth-first render loop immediately. `filterOptions` also removes the document from its
-       * own picker, so the admin panel does not offer the mistake in the first place — but the
-       * validator is what a REST client meets.
+       * `filterOptions` removes the document from its own picker, so the admin panel does not offer
+       * the one-hop mistake at all. It cannot express the longer one — "not any of my descendants"
+       * is a recursive question and a `Where` is not recursive — and it is not a control in the
+       * first place: a REST or Local API write never sees the picker. `validateParent` is what both
+       * of those meet, and it covers the whole chain.
        */
       filterOptions: ({ id }) => (id ? { id: { not_equals: id } } : true),
-      validate: (value: unknown, { id }: { id?: number | string }) =>
-        value !== undefined && value !== null && id !== undefined && String(value) === String(id)
-          ? 'A category cannot be its own parent.'
-          : true,
+      validate: validateParent,
     },
     {
       name: 'description',
@@ -134,7 +257,8 @@ export const Categories: CollectionConfig = {
       admin: {
         position: 'sidebar',
         step: 1,
-        description: 'Lower sorts first, within the same parent.',
+        description:
+          'Lower sorts first, within the same parent. Ties fall back to alphabetical order. This is the order in the mega menu and in the shop filter panel — not the order of this list, which is sorted for the admin panel.',
       },
     },
     {
@@ -155,7 +279,8 @@ export const Categories: CollectionConfig = {
       ],
       admin: {
         position: 'sidebar',
-        description: 'Drafts are hidden from navigation, filters and the sitemap.',
+        description:
+          'A draft is hidden from the mega menu, the shop filters, the homepage category tiles and the sitemap, and its own page is not reachable. It does not cascade in either direction: publishing this does not publish its children, and putting it back to draft leaves its published children on the site, where they then read as top-level categories. To retire a whole branch, set every category in it to draft. Products are unaffected either way — they stay published and stay in search.',
       },
     },
     seoField(),

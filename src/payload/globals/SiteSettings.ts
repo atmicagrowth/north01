@@ -129,6 +129,23 @@ export const SiteSettings: GlobalConfig = {
         },
         {
           label: 'Commerce',
+          /**
+           * **The read-only fields explain themselves here, on the tab, rather than nowhere.**
+           *
+           * Every field on this tab carries `access.update: isAdminField`, which Payload honours by
+           * rendering it read-only for an editor. That is the correct behaviour and it is also
+           * mute: an editor sees a screen of greyed-out boxes and no statement of why, which reads
+           * as a broken admin panel rather than as a deliberate boundary (§7.1c withholds
+           * *"financial administration"* from editors).
+           *
+           * A tab description is the cheapest place to say it — one string, no component, no
+           * migration — and Payload renders `tab.admin.description` above the tab's fields
+           * (`@payloadcms/ui` → `fields/Tabs/index.js`).
+           */
+          admin: {
+            description:
+              'These change what customers are charged and what they are allowed to buy, so only an administrator can edit them — an editor sees them read-only rather than being offered a change that would be silently discarded. None of them is ever taken from the browser: the bag and the checkout recalculate against these values on the server, on every request.',
+          },
           fields: [
             {
               name: 'defaultCurrency',
@@ -388,7 +405,14 @@ export const SiteSettings: GlobalConfig = {
                   name: 'href',
                   type: 'text',
                   admin: {
-                    description: 'Optional. A site path such as /collections/limited.',
+                    /*
+                     * The validator below accepts a site path *or* a full https:// address, and
+                     * this line used to name only the first — so an editor with a campaign
+                     * microsite was told, by the field itself, that the thing they were about to
+                     * type was not allowed. Say what is actually accepted.
+                     */
+                    description:
+                      'Optional. A site path such as /collections/limited, or a full https:// address. Leave it empty for a bar that is not a link.',
                     condition: (_data, siblingData: { enabled?: unknown }) =>
                       Boolean(siblingData?.enabled),
                   },

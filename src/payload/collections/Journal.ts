@@ -42,7 +42,23 @@ export const Journal: CollectionConfig = {
     useAsTitle: 'title',
     defaultColumns: ['title', 'category', 'author', 'status', 'publishedAt'],
     group: 'Editorial',
-    description: 'Articles at /journal/… Reached from the footer and from editorial surfaces.',
+
+    /**
+     * `publishedAt` does more here than anywhere else — it is the index's sort key — and less than
+     * `fields/seo.ts` claims: `getJournalIndex` sorts on `-publishedAt` and adds no date clause, so
+     * an article dated next Tuesday is published *now*, at the top of `/journal`. Backdating works
+     * as expected and is the reason the field is writable; forward-dating is the trap, and this is
+     * the sentence that closes it.
+     */
+    description:
+      'Articles at /journal/… Reached from the footer and from editorial surfaces. The date sets the order of the index — backdate to file an article below the others, but a future date publishes it now and pins it to the top.',
+
+    /**
+     * `author` is deliberately not searched: it carries no index, so a `LIKE` over it is a
+     * sequential scan, and it is already a `defaultColumn` that Payload's own filter panel can
+     * filter exactly. `slug` is the one an editor cannot otherwise reach — see `Collections.admin`.
+     */
+    listSearchableFields: ['title', 'slug'],
   },
 
   defaultSort: '-publishedAt',
@@ -96,6 +112,15 @@ export const Journal: CollectionConfig = {
         {
           label: 'Connections',
           fields: [
+            /*
+             * All three of these are unfiltered on purpose. `relatedArticles` carries the only
+             * `filterOptions` that is safe on this collection — excluding the article itself — and
+             * the reasoning against restricting the other two to published documents is on
+             * `Collections.products`: Payload re-validates `filterOptions` on save, so the filter
+             * would block writes to fields the editor never touched. Each description below says
+             * what actually happens instead, which is that an unpublished reference renders as
+             * nothing at all.
+             */
             {
               name: 'relatedProducts',
               type: 'relationship',
@@ -103,7 +128,7 @@ export const Journal: CollectionConfig = {
               hasMany: true,
               admin: {
                 description:
-                  'The way out of the article and into the shop — plan §23.1c. An article with none is an editorial dead end.',
+                  'The way out of the article and into the shop — plan §23.1c. An article with none is an editorial dead end. Drafts and out-of-stock products are dropped from the rendered article, so check the count here against the page before publishing.',
               },
             },
             {
@@ -111,13 +136,20 @@ export const Journal: CollectionConfig = {
               type: 'relationship',
               relationTo: 'collections',
               hasMany: true,
+              admin: {
+                description:
+                  'The second exit — plan §23.1c. Point at the collection the article is really about, not at everything it mentions. A draft collection renders as nothing.',
+              },
             },
             {
               name: 'relatedArticles',
               type: 'relationship',
               relationTo: 'journal',
               hasMany: true,
-              admin: { description: 'Feature matrix §15 — "related stories".' },
+              admin: {
+                description:
+                  'Feature matrix §15 — "related stories". A draft article renders as nothing, so two articles written together need both published before either shows the other.',
+              },
               filterOptions: ({ id }) => (id ? { id: { not_equals: id } } : true),
             },
           ],

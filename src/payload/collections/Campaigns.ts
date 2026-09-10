@@ -37,7 +37,26 @@ export const Campaigns: CollectionConfig = {
     useAsTitle: 'title',
     defaultColumns: ['title', 'season', 'status', 'publishedAt'],
     group: 'Editorial',
-    description: 'Seasonal statements. One is usually the homepage hero.',
+
+    /**
+     * **This is the one collection where `publishedAt` really is an embargo**, and saying so is
+     * worth more than saying it anywhere else.
+     *
+     * A campaign has no route of its own (**DEV-39** removed `campaigns` from `LINKABLE_COLLECTIONS`
+     * and from the route map), so the only place it ever appears is the homepage `hero` block — and
+     * `home/resolve.ts` gates that block on `isPublicDocument`, which checks `status` **and**
+     * `publishedAt`. A future-dated campaign is therefore genuinely held back: the hero block
+     * resolves to `null` and the homepage falls through to whatever comes next.
+     *
+     * That fall-through is the part an editor has to be told. Scheduling a campaign for Monday does
+     * not leave last season's hero up; it leaves the homepage opening on its second block until
+     * Monday. The homepage global has to keep pointing at the campaign that should be live.
+     */
+    description:
+      'Seasonal statements — the homepage hero, and nothing else. A future date really does hold this one back, and until it passes the homepage opens on whatever block comes after the hero.',
+
+    /** Season is how a campaign is named out loud. Both fields are indexed. */
+    listSearchableFields: ['title', 'season', 'slug'],
   },
 
   defaultSort: '-publishedAt',
@@ -125,6 +144,33 @@ export const Campaigns: CollectionConfig = {
             linkGroup({ name: 'secondaryCta', label: 'Secondary call to action' }),
           ],
         },
+        /**
+         * ### Both fields in this tab are read by nothing, and the descriptions now say so
+         *
+         * Phase 28's audit (§28.1c) traced every campaign field to a renderer. Seven of them arrive
+         * somewhere — `title`, `season`, `story`, `hero`, `mobileHero`, `cta` and `secondaryCta` are
+         * all read by `home/resolve.ts`'s `hero` case. `collection` and `products` are read by
+         * **nothing**: `grep -rn campaigns src/lib src/components src/app` finds only comments, and
+         * `scripts/seed.ts` populates both, so a client opening a seeded campaign sees a filled-in
+         * Merchandise tab that has never rendered a pixel.
+         *
+         * That is §0.1.17's fake control — *"never build UI that looks functional but does nothing"* —
+         * and it exists because **DEV-39** took the campaign's own route away. Plan §6.1g listed
+         * these fields for a campaign *page*; without that page, `cta` is the whole editorial-to-
+         * commerce path §10.1c asks for, and `collection` is a second, silent way to say the same
+         * thing.
+         *
+         * **They are described rather than hidden or removed**, and the difference matters:
+         *
+         * - Removing them is a migration (two columns' worth of `campaigns_rels` rows), which this
+         *   phase is explicitly not allowed to author. It is filed as a schema change instead.
+         * - `admin.hidden` would take the fields off the screen without a migration, but the seed
+         *   writes them, so hiding would leave a client with data they can neither see nor correct —
+         *   trading a misleading field for an invisible one.
+         *
+         * An honest label is the fix that is both available and reversible. When a phase gives
+         * campaigns a page, the descriptions come off with the same commit that renders them.
+         */
         {
           label: 'Merchandise',
           fields: [
@@ -134,7 +180,7 @@ export const Campaigns: CollectionConfig = {
               relationTo: 'collections',
               admin: {
                 description:
-                  'The collection this campaign sells. The CTA usually points here — plan §10.1c requires an explicit path from editorial to commerce.',
+                  'Not shown anywhere on the site today — a campaign appears only as the homepage hero, which has no room for a merchandise link. Use the Call to action on the Campaign tab to send readers to this collection; that button is the one that renders.',
               },
             },
             {
@@ -143,7 +189,8 @@ export const Campaigns: CollectionConfig = {
               relationTo: 'products',
               hasMany: true,
               admin: {
-                description: 'Optional. A handful of hero pieces, in order, for the campaign rail.',
+                description:
+                  'Not shown anywhere on the site today — there is no campaign rail to fill. To put products on the homepage, add a Product rail block to the Homepage instead; anything entered here is stored and never rendered.',
               },
             },
           ],

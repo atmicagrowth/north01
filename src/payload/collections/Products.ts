@@ -1,6 +1,8 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionBeforeValidateHook, CollectionConfig, PayloadRequest } from 'payload'
 
-import { isAdmin, isStaff, publishedOnly } from '../access'
+import { ValidationError } from 'payload'
+
+import { isAdmin, isStaff, nobodyField, publishedOnly } from '../access'
 import { minorUnits } from '../fields/money'
 import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
@@ -8,6 +10,191 @@ import { validateRequiredUpload } from '../fields/required'
 import { cascadeDelete } from '../hooks/cascadeDelete'
 import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
 import { syncSearchIndexAfterChange, syncSearchIndexAfterDelete } from '../hooks/syncSearchIndex'
+
+/**
+ * Free-form tags are a *facet*, and a facet is only as good as its vocabulary.
+ *
+ * The field's description used to ask for "free-form, lowercase" and nothing made it so, which is
+ * the kind of unkept promise this project treats as a defect rather than a style note: `Linen`, `linen `
+ * and `linen` are one tag to the person typing and three entries in the filter panel plan §12.1a
+ * indexes them into. Nothing downstream can repair that — `buildProductRecord` passes tags through
+ * verbatim, because a normalisation applied at index time and not at write time is a second
+ * vocabulary that disagrees with the one the editor sees.
+ *
+ * So it happens once, here, on the way in: trimmed, lowercased, empties dropped, duplicates removed,
+ * order preserved. The same `beforeValidate` normalisation `slug`, `sku` and `size` already use, and
+ * for the same reason — the value stored is the value compared.
+ *
+ * Non-strings pass through untouched so the field's own validator reports them, rather than being
+ * silently swallowed by a hook that was only meant to lowercase.
+ */
+const normaliseTags = ({ value }: { value?: unknown }): unknown => {
+  if (!Array.isArray(value)) {
+    return value
+  }
+
+  const seen = new Set<unknown>()
+  const tags: unknown[] = []
+
+  for (const entry of value) {
+    const tag = typeof entry === 'string' ? entry.trim().toLowerCase() : entry
+
+    if (tag === '' || seen.has(tag)) {
+      continue
+    }
+
+    seen.add(tag)
+    tags.push(tag)
+  }
+
+  return tags
+}
+
+/**
+ * Why a product that is about to be published cannot be sold — in the words of the person who has
+ * to fix it, and only ever reached on the refusal path below.
+ *
+ * The decision is made from `derived.priceFromMinor` (see `refuseUnsellablePublish`); this reads the
+ * variants afterwards purely to tell the three cases apart. *"Add a variant"*, *"switch one back
+ * on"* and *"the summary is stale"* are three different actions, and a single message covering all
+ * three would send an editor to look for a variant that is already there.
+ *
+ * `req` is passed to `find` so the read joins the caller's transaction and sees variants saved
+ * moments earlier in the same operation; `payload.find` already excludes trashed rows, which is
+ * correct — a variant in the trash is not for sale either.
+ */
+const explainUnsellable = async ({
+  productId,
+  req,
+}: {
+  productId: number | string | undefined
+  req: PayloadRequest
+}): Promise<string> => {
+  const lead =
+    'Publishing this would hide it rather than show it: a product with nothing purchasable on it is left out of the shop, of search and of the sitemap.'
+
+  if (productId === undefined) {
+    return `${lead} A brand-new product has no variants yet — save it as a draft, add at least one colour and size under Variants, then set it to Published.`
+  }
+
+  const { docs } = await req.payload.find({
+    collection: 'product-variants',
+    where: { product: { equals: productId } },
+    limit: 0,
+    depth: 0,
+    pagination: false,
+    req,
+  })
+
+  if (docs.length === 0) {
+    return `${lead} This product has no variants. Add at least one colour and size under Variants, each with its own price and stock, then publish.`
+  }
+
+  const active = docs.filter((variant) => variant.active)
+
+  if (active.length === 0) {
+    return `${lead} All ${docs.length} of this product's variants are switched off. Tick Active on at least one of them, then publish.`
+  }
+
+  return `${lead} Its price summary has not caught up with its ${active.length} active variant${active.length === 1 ? '' : 's'} — open any one of them and save it again to rebuild it, then publish.`
+}
+
+/**
+ * **§28.1d: "the admin must not permit publishing malformed products."**
+ *
+ * A product is not a page, it is an offer, and an offer has preconditions. `publishedProductWhere`
+ * in `lib/catalog/query.ts` is where they are written down — the single definition of *listable*,
+ * shared by the shop grid, the search index, the sitemap, the wishlist and the PDP. It has three
+ * clauses, and `buildProductRecord` adds a fourth requirement of its own (a non-empty name and
+ * slug) for the index. All but one of them are already unreachable from the admin: `name` and `slug`
+ * are `required` and Payload reports each on its own field, a draft is what this transition is
+ * leaving, and a `publishedAt` in the future is a scheduled drop rather than a mistake.
+ *
+ * The exception — `derived.priceFromMinor` existing — had nothing guarding it, and its failure mode
+ * is the worst kind. The save succeeds. The sidebar says **Published**. The product then appears
+ * nowhere at all, and there is no message anywhere in the panel that explains it, because the rule
+ * that removed it lives in a query an editor never sees. So the *transition* to published is
+ * refused, and the refusal says exactly what is missing.
+ *
+ * **A missing image is deliberately not on that list.** It is the one "malformed product" case the
+ * §28 prompt names that the storefront does not agree is one: plan §8.1d answers an absent image
+ * with *"a deliberate neutral placeholder"*, `publishedProductWhere` does not look at the gallery,
+ * and a product with no photograph is visible, buyable and merely ugly. Refusing that save would be
+ * a second opinion — a rule the shop does not hold, invented in the admin panel.
+ *
+ * **It reads the column the listing reads, not a second opinion.** `derived.priceFromMinor` is
+ * `null` exactly when a product has no active, priced variant, which is the merchandising rule
+ * `publishedProductWhere` applies. A guard that recomputed its own answer from the variants could
+ * pass while the shop's rule failed — a guardrail that certifies an invisible product is worse than
+ * none. The variants are read only *after* the decision has been made, to explain it.
+ *
+ * That is also why the `derived` group below is closed to API writes: if the admin form could send a
+ * stale copy of it back, this hook would be reading whatever the browser last saw.
+ *
+ * **Only the transition.** An already-published product losing its last active variant is a
+ * *withdrawal*, and a legitimate one: the listing rule takes it out of the shop, the PDP keeps
+ * rendering it for anyone holding the link, and a merchandiser can switch off the last colour of a
+ * garment without unpublishing it first. Refusing that save would make the ordinary way to retire a
+ * line impossible. It is also what keeps this hook off `syncProductDerived`'s path — that hook
+ * writes `{ derived }` and never a status, so it can never look like a transition and can never
+ * roll back a variant save.
+ *
+ * **Duplicate slips past it, and that is the better outcome.** Payload's duplicate is a `create`
+ * that hands the hook the *source* document as `originalDoc` (`collections/operations/create.js`),
+ * so copying a published product reads here as "already published" and the guard steps aside. The
+ * copy is then a published product with no variants of its own — unsellable, filtered out of every
+ * listing exactly as the rule intends, and one click away from being fixed. Refusing the button
+ * would be worse: a duplicate saves immediately, so there is no form in which to set it to draft
+ * first and the editor would be left with an error they cannot act on.
+ *
+ * **And only for a request that has a user on it.** The seed, an import and a migration build a
+ * catalogue in an order they control — the product row first, its variants second — and are not a
+ * person clicking Publish; `hooks/enforceCustomerOwnership.ts` draws the same line for the same
+ * reason. Nothing is lost by exempting them, because this is an authoring guardrail and not a
+ * security boundary: the authority remains `publishedProductWhere`, which filters an unsellable
+ * product out of every listing however the row got written.
+ */
+const refuseUnsellablePublish: CollectionBeforeValidateHook = async ({
+  data,
+  originalDoc,
+  req,
+}) => {
+  const next = (data as { status?: unknown } | undefined)?.status
+  const previous = (originalDoc as { status?: unknown } | undefined)?.status
+
+  if (next !== 'published' || previous === 'published') {
+    return data
+  }
+
+  if (!req.user) {
+    return data
+  }
+
+  const derived = (originalDoc as { derived?: { priceFromMinor?: null | number } } | undefined)
+    ?.derived
+
+  if (typeof derived?.priceFromMinor === 'number') {
+    return data
+  }
+
+  throw new ValidationError({
+    collection: 'products',
+    errors: [
+      {
+        /*
+         * On `status`, so the message opens beside the control the editor just changed rather than
+         * as a banner at the top of a six-tab form.
+         */
+        path: 'status',
+        message: await explainUnsellable({
+          productId: (originalDoc as { id?: number | string } | undefined)?.id,
+          req,
+        }),
+      },
+    ],
+    req,
+  })
+}
 
 /**
  * The merchandising entity. Plan §2.1 is explicit about what that means: *"A product is the
@@ -66,10 +253,56 @@ export const Products: CollectionConfig = {
 
   admin: {
     useAsTitle: 'name',
-    defaultColumns: ['name', 'status', 'gender', 'featured', 'updatedAt'],
+
+    /**
+     * **Price and stock are on the list, and they come from the `derived` group** — plan §28.1a asks
+     * that a shop manager can *manage* products, and the first question anyone opens this list with
+     * is "what does it cost and is there any left". Both are columns rather than a trip into each
+     * product because both are indexed columns on `products`; nothing here is computed per row.
+     *
+     * The dotted names are not a guess. Payload flattens a group's members to the top level for the
+     * table and gives each one an `accessor` of `<group>.<field>`, which is what a `defaultColumns`
+     * entry is matched against (`@payloadcms/ui`'s `flattenTopLevelFields` and `sortFieldMap`).
+     *
+     * They read in minor units, like every money value in this schema — the column header says
+     * *Lowest active price* and the field description says what 24000 means. A custom `Cell` would
+     * format it, and that is exactly the *"unnecessary custom dashboard complexity"* the phase
+     * prompt rules out for a cosmetic gain.
+     */
+    defaultColumns: [
+      'name',
+      'status',
+      'derived.priceFromMinor',
+      'derived.inventoryTotal',
+      'gender',
+      'featured',
+      'updatedAt',
+    ],
+
+    /**
+     * The list's search box searches `useAsTitle` alone unless this says otherwise — and it
+     * *replaces* rather than extends, so `name` has to be repeated here (`mergeListSearchAndWhere`).
+     *
+     * `slug` is the second one because it is the half of a product a colleague pastes into chat: a
+     * support question arrives as `/product/field-jacket`, not as "the Field Jacket". Both are
+     * indexed text columns on this table.
+     *
+     * **SKU is deliberately not here, because it cannot be.** A SKU belongs to a variant, and this
+     * list can only search its own columns. Searching by SKU is what the Variants list is for, and
+     * it opens straight onto the variant's product — see `ProductVariants.listSearchableFields`.
+     */
+    listSearchableFields: ['name', 'slug'],
+
     group: 'Catalogue',
+
+    /**
+     * Read by a non-technical client, so it answers the question they actually arrive with — *how do
+     * I take this off the site?* — rather than restating the collection's name. Plan §28.1a lists
+     * "archive product" as a thing the admin must support, and it is supported by two different
+     * controls that look interchangeable and are not.
+     */
     description:
-      'Merchandising records. Price, SKU and stock live on the variants beneath each one.',
+      'Merchandising records. Price, SKU and stock live on the variants beneath each one. To take a product off the site, set it to Draft — it keeps its variants, its history and its URL, ready to come back. Delete moves it to Trash instead: it can be restored from there, but while it sits in the trash it is also gone from every bag and wishlist that held it.',
   },
 
   /**
@@ -84,6 +317,15 @@ export const Products: CollectionConfig = {
   defaultSort: '-updatedAt',
 
   hooks: {
+    /**
+     * The publish guardrail, §28.1d. `beforeValidate` rather than `beforeChange` so the refusal
+     * arrives alongside Payload's own field errors in one response, and because it runs after the
+     * field pass — the pass in which the `derived` group's access rule strips whatever the browser
+     * sent. The guard reads `originalDoc` regardless, so what it checks is the database's answer and
+     * never the form's.
+     */
+    beforeValidate: [refuseUnsellablePublish],
+
     /**
      * **Phase 11 gave products an `afterChange`, and two things depend on it.**
      *
@@ -218,7 +460,7 @@ export const Products: CollectionConfig = {
               defaultLimit: 50,
               admin: {
                 description:
-                  'The purchasable rows. Price, SKU and stock live here — a product with no active variant cannot be bought.',
+                  'The purchasable rows. Price, SKU and stock live here — a product with no active variant cannot be bought, and cannot be published: the shop, search and the sitemap all leave it out, so publishing it would hide it rather than show it.',
               },
             },
           ],
@@ -371,8 +613,9 @@ export const Products: CollectionConfig = {
               index: true,
               admin: {
                 description:
-                  'Free-form, lowercase. A filterable attribute in plan §12.1a; keep the vocabulary small or the facet becomes noise.',
+                  'One word or phrase per entry — these become filters customers can tick, so reuse the tags already in use rather than inventing a near-duplicate ("linen", not "Linen fabric"). Capitals and stray spaces are corrected on save. Keep the vocabulary small: a filter with forty options is a filter nobody uses.',
               },
+              hooks: { beforeValidate: [normaliseTags] },
             },
           ],
         },
@@ -462,10 +705,37 @@ export const Products: CollectionConfig = {
       name: 'derived',
       type: 'group',
       label: 'Derived from variants',
+
+      /**
+       * **`admin.readOnly` is a disabled input, not a rule, and this group needed the rule.**
+       *
+       * Payload's `readOnly` governs the widget alone. The value stays in the edit form's state and
+       * goes back with the save — `Form`'s submit body is `reduceFieldsToValues(fields, true)`,
+       * which drops only fields marked `disableFormData` and has never heard of `readOnly` — and
+       * the REST API never saw the flag at all.
+       *
+       * That turns the ordinary authoring sequence into silent data loss. Open a product, add its
+       * sizes through the Variants drawer (each of which refreshes this group *in the database*),
+       * then save the product: the form writes back the copy it read before the variants existed,
+       * `priceFromMinor` returns to `null`, and `publishedProductWhere` removes the product from the
+       * shop — for a save the editor thought was a no-op, with the variants sitting right there.
+       *
+       * Field access is the answer because of *how* it denies: it deletes the key from the incoming
+       * data and falls back to the stored value, rather than failing the request
+       * (`fields/hooks/beforeValidate/promise.js`). So a product save simply leaves this group
+       * alone, which is what "derived" was always supposed to mean.
+       *
+       * `syncProductDerived` is unaffected. Field access is evaluated only when `overrideAccess` is
+       * false, and its `payload.update` is a Local API call with the default `overrideAccess: true`
+       * — the same door `Media.cloudinaryVersion` uses. This is not a *lock*: it is a statement
+       * about who owns the column, and the owner is the variant table.
+       */
+      access: { create: nobodyField, update: nobodyField },
+
       admin: {
         position: 'sidebar',
         description:
-          'Maintained automatically whenever a variant changes. Read-only: the variants are the source of truth, and if these disagree the variants are right.',
+          'Maintained automatically whenever a variant changes, and not editable here or through the API. The variants are the source of truth — if these disagree with them, the variants are right; saving any variant rebuilds this.',
       },
       fields: [
         minorUnits({

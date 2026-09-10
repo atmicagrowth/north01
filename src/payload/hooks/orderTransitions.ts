@@ -28,6 +28,30 @@ import { FULFILLMENT_COPY, planFulfillmentChange } from '@/lib/orders/rules'
  * It also does not touch `paymentStatus`. That axis belongs to Phase 17's webhook and is closed to the
  * browser by `nobodyField` on the field itself.
  *
+ * ### Which paths it covers, verified rather than assumed — Phase 28
+ *
+ * §28.1d asks that the admin UI must not permit arbitrary order status transitions, so *"a hook runs
+ * on every path"* was worth checking against the framework rather than repeating. It holds, and the
+ * bulk case is the one that could plausibly have been an exception:
+ *
+ * | Path | Runs this hook? | Why |
+ * |---|---|---|
+ * | Admin single save, REST `PATCH /api/orders/:id` | yes | `updateByIDOperation` → `updateDocument` |
+ * | **Payload bulk edit**, REST `PATCH /api/orders?where=…` | **yes** | `collections/operations/update.js` maps over the matched docs and calls the same `updateDocument` per document — *"runs all document level hooks"*, in its own comment. There is no batch path that skips it. |
+ * | Local API, including the Stripe webhook | yes | same operations; `overrideAccess` skips *access*, never hooks |
+ *
+ * The gap Phase 28 did find was not enforcement but **legibility on the bulk path**, and it is a
+ * framework property this hook cannot fix from here: the bulk endpoint catches each document's error
+ * and returns a summary — *"Unable to update 18 out of 30 Orders"* — and the admin's `Form` toasts
+ * that summary and returns before it ever looks at the per-document reasons. The refusals below are
+ * produced correctly and then discarded by the transport.
+ *
+ * So the fix is in `Orders.ts`, not here: `admin.disableBulkEdit` on `fulfillmentStatus`, `carrier`,
+ * `trackingNumber` and `trackingUrl` removes them from the bulk-edit field picker entirely, which is
+ * independently right — a dispatch is per parcel, and a mixed selection half-applies, mailing the
+ * orders that pass and silently leaving the rest. What remains here is `label`, below, so that the
+ * sentence a REST caller does get names a field rather than a column.
+ *
  * ### Restocking is deliberately absent
  *
  * Cancelling an order does not return its units to inventory. Phase 17 moves stock **only** at
@@ -90,9 +114,28 @@ export const enforceOrderTransitions: CollectionBeforeChangeHook = async ({
   })
 
   if (!plan.ok) {
+    /*
+     * **A `ValidationError` rather than an `APIError`, and the difference is where the sentence lands.**
+     *
+     * `formatErrors` gives a `ValidationError` its own `data.errors` array, and the admin's `Form`
+     * feeds every entry carrying a `path` to `ADD_SERVER_ERRORS` — so `FULFILLMENT_COPY` renders
+     * *underneath the Fulfilment status select*, in the tab, next to the carrier and tracking fields it
+     * is usually talking about. An `APIError` would produce a cleaner toast and attach to nothing,
+     * which is worse: the editor has to carry the sentence back to the field themselves.
+     *
+     * `label` is what Payload composes the outer message from — without it that message ends in the
+     * raw column name, `fulfillmentStatus`. It is the only part of the error that survives the bulk
+     * endpoint's per-document `error.message`, so it is written as something a person reads.
+     */
     throw new ValidationError({
       collection: 'orders',
-      errors: [{ message: FULFILLMENT_COPY[plan.reason], path: 'fulfillmentStatus' }],
+      errors: [
+        {
+          label: 'Fulfilment status',
+          message: FULFILLMENT_COPY[plan.reason],
+          path: 'fulfillmentStatus',
+        },
+      ],
       req,
     })
   }

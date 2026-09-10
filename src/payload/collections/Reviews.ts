@@ -57,10 +57,31 @@ export const Reviews: CollectionConfig = {
   slug: 'reviews',
 
   admin: {
-    useAsTitle: 'title',
+    /**
+     * **`displayName`, not `title` — Phase 28.**
+     *
+     * `title` is optional (plan §6.1j makes the headline a nicety), and `useAsTitle` pointing at an
+     * optional column means every review written without one renders as `ID 412` — in the list, in
+     * the document header, and in any relationship field that points here. A moderation queue where
+     * half the rows have no name is a queue nobody can work through. The byline is required, so it
+     * is always there, and it is what a moderator recognises the row by.
+     */
+    useAsTitle: 'displayName',
     defaultColumns: ['product', 'rating', 'displayName', 'status', 'verifiedPurchase', 'createdAt'],
+    /**
+     * The search box looks at `useAsTitle` alone unless told otherwise, and moderation is not a job
+     * done by searching bylines: it is done by searching for *what somebody wrote* — a phrase
+     * reported as abusive, a competitor named in a body, the wording of a duplicate.
+     *
+     * None of the three is indexed, and an index would not serve them anyway: the search builder
+     * emits `ILIKE '%term%'`, which a leading wildcard puts beyond any btree. This is a sequential
+     * scan over a moderation queue somebody works through by hand a few times a day, which is the
+     * one shape that costs nothing.
+     */
+    listSearchableFields: ['displayName', 'title', 'body'],
     group: 'Customers',
-    description: 'Pending until moderated. Only approved reviews are ever rendered publicly.',
+    description:
+      'Pending until moderated. Only approved reviews are ever rendered publicly — filter Status to "Pending moderation" for the queue.',
   },
 
   /**
@@ -203,7 +224,9 @@ export const Reviews: CollectionConfig = {
       admin: {
         position: 'sidebar',
         description:
-          'Pending by default, so nothing can reach the public site unmoderated by accident.',
+          'Pending by default, so nothing can reach the public site unmoderated by accident. ' +
+          'Rejected keeps the review on file and off the site — deleting it instead loses the record ' +
+          'of what was submitted, and frees the customer to post the same thing again.',
       },
     },
     {

@@ -40,7 +40,20 @@ export const Lookbooks: CollectionConfig = {
     useAsTitle: 'title',
     defaultColumns: ['title', 'season', 'status', 'publishedAt'],
     group: 'Editorial',
-    description: 'Chaptered editorial with shoppable hotspots.',
+
+    /**
+     * Unlike a Collection or an Edit, a Lookbook has an **index** at `/lookbook`, and
+     * `getLookbookIndex` sorts on `-publishedAt` with no date clause. So a future date here does not
+     * hold a lookbook back at all — it pins it to the *top* of the index, which is the opposite of
+     * what "scheduled" suggests and is worth an editor knowing before they date one forward to keep
+     * it hidden. (`fields/seo.ts` describes the field as scheduling the page; only navigation and
+     * the homepage honour that.)
+     */
+    description:
+      'Chaptered editorial with shoppable hotspots, indexed at /lookbook. Published is live the moment you save it, and a future date pins it to the top of the index rather than hiding it.',
+
+    /** Season is how a lookbook is actually referred to — "the AW26 one". */
+    listSearchableFields: ['title', 'season', 'slug'],
   },
 
   defaultSort: '-publishedAt',

@@ -204,7 +204,7 @@ export interface UserAuthOperations {
   };
 }
 /**
- * Merchandising records. Price, SKU and stock live on the variants beneath each one.
+ * Merchandising records. Price, SKU and stock live on the variants beneath each one. To take a product off the site, set it to Draft — it keeps its variants, its history and its URL, ready to come back. Delete moves it to Trash instead: it can be restored from there, but while it sits in the trash it is also gone from every bag and wishlist that held it.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "products".
@@ -256,7 +256,7 @@ export interface Product {
     [k: string]: unknown;
   } | null;
   /**
-   * The purchasable rows. Price, SKU and stock live here — a product with no active variant cannot be bought.
+   * The purchasable rows. Price, SKU and stock live here — a product with no active variant cannot be bought, and cannot be published: the shop, search and the sitemap all leave it out, so publishing it would hide it rather than show it.
    */
   variants?: {
     docs?: (number | ProductVariant)[];
@@ -327,7 +327,7 @@ export interface Product {
    */
   gender?: ('women' | 'men' | 'unisex') | null;
   /**
-   * Free-form, lowercase. A filterable attribute in plan §12.1a; keep the vocabulary small or the facet becomes noise.
+   * One word or phrase per entry — these become filters customers can tick, so reuse the tags already in use rather than inventing a near-duplicate ("linen", not "Linen fabric"). Capitals and stray spaces are corrected on save. Keep the vocabulary small: a filter with forty options is a filter nobody uses.
    */
   tags?: string[] | null;
   /**
@@ -374,7 +374,7 @@ export interface Product {
    */
   sortOrder: number;
   /**
-   * Maintained automatically whenever a variant changes. Read-only: the variants are the source of truth, and if these disagree the variants are right.
+   * Maintained automatically whenever a variant changes, and not editable here or through the API. The variants are the source of truth — if these disagree with them, the variants are right; saving any variant rebuilds this.
    */
   derived: {
     /**
@@ -396,7 +396,7 @@ export interface Product {
   deletedAt?: string | null;
 }
 /**
- * One row per purchasable colour and size. Cart and order lines point here.
+ * One row per purchasable colour and size — this is what a customer actually buys, and what cart and order lines point at. To stop selling one, uncheck Active; the row stays, its stock is kept, and the size simply disappears from the size selector. Delete only a variant that was created by mistake: a SKU that has ever been ordered must keep meaning that garment for ever.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "product-variants".
@@ -436,11 +436,11 @@ export interface ProductVariant {
    */
   priceMinor: number;
   /**
-   * The former price, shown struck through. Leave empty when not on sale — an equal or lower value is not a sale and must not be displayed as one.
+   * The former, higher price, shown struck through beside the current one. Leave it empty when this variant is not on sale — a value equal to or below the price is not a saving, and the save is refused rather than quietly showing nothing.
    */
   compareAtPriceMinor?: number | null;
   /**
-   * Centralised online fulfilment stock. Decremented only by a confirmed payment — see decision D-06.
+   * How many of this exact colour and size are in the warehouse. 0 shows the size as sold out; it can never go below 0. This number goes down by itself when an order is paid for — never reduce it by hand to account for a sale, or that sale is counted twice. Type the real counted figure here after a delivery or a stock take.
    */
   inventoryQuantity: number;
   /**
@@ -463,7 +463,7 @@ export interface ProductVariant {
   deletedAt?: string | null;
 }
 /**
- * Images and video. Payload holds the metadata; Cloudinary delivers the bytes and performs every crop and resize.
+ * Every photograph and video the storefront uses. JPEG, PNG, WebP or AVIF for stills and MP4 or WebM for video, up to 25 MB and 12,000 pixels on the longest side. SVG and GIF are refused deliberately, so a logo comes in as a PNG. Upload the largest uncropped original you have: every size the site shows is cut from it at delivery time, so a picture that arrives already cropped can only ever be cropped further. The marker you drag onto the picture is its focal point — it says which part must stay in frame when the same photograph is shown wide on a laptop and tall on a phone. Put it on the face, or on the product. Leave it in the middle if you are unsure.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "media".
@@ -479,7 +479,7 @@ export interface Media {
    */
   caption?: string | null;
   /**
-   * How this asset is framed by default. Any page may override it; this is what it does when nobody says otherwise.
+   * The shape this picture is cut to when the page using it does not ask for a particular one. Product is the upright card frame on a shop grid, Campaign the wide banner frame, and Editorial and Logo / mark are not cut at all — the whole picture is used, at its own proportions. A page that needs a different shape asks for it and wins, so this is a starting point rather than a lock, and getting it wrong costs a badly framed picture, never a broken one.
    */
   role: 'product' | 'campaign' | 'editorial' | 'logo';
   /**
@@ -590,7 +590,7 @@ export interface SizeGuide {
 export interface Category {
   id: number;
   /**
-   * As it appears in navigation. Title case — "Field Jackets".
+   * As it appears in navigation. Title case — "Field Jackets". Renaming it updates the header, the shop filters and search for every product beneath this category, including products filed under its children; you do not need to re-save any of them.
    */
   name: string;
   /**
@@ -598,7 +598,7 @@ export interface Category {
    */
   slug: string;
   /**
-   * Leave empty for a top-level category.
+   * The category this one sits beneath — Tops beneath Clothing. Leave it empty for a top-level category. The picker will not offer this category itself, and a save that would file it beneath one of its own children is refused: a category cannot end up inside itself.
    */
   parent?: (number | null) | Category;
   /**
@@ -610,11 +610,11 @@ export interface Category {
    */
   image?: (number | null) | Media;
   /**
-   * Lower sorts first, within the same parent.
+   * Lower sorts first, within the same parent. Ties fall back to alphabetical order. This is the order in the mega menu and in the shop filter panel — not the order of this list, which is sorted for the admin panel.
    */
   sortOrder: number;
   /**
-   * Drafts are hidden from navigation, filters and the sitemap.
+   * A draft is hidden from the mega menu, the shop filters, the homepage category tiles and the sitemap, and its own page is not reachable. It does not cascade in either direction: publishing this does not publish its children, and putting it back to draft leaves its published children on the site, where they then read as top-level categories. To retire a whole branch, set every category in it to draft. Products are unaffected either way — they stay published and stay in search.
    */
   status: 'draft' | 'published';
   /**
@@ -638,7 +638,7 @@ export interface Category {
   createdAt: string;
 }
 /**
- * Campaign-led merchandising pages at /collections/…
+ * Campaign-led merchandising pages at /collections/… Published is live the moment you save it — a future date does not hold the page back, it only keeps the collection out of navigation menus and the homepage until the date passes.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "collections".
@@ -673,11 +673,11 @@ export interface Collection {
    */
   introMedia?: (number | null) | Media;
   /**
-   * Every product in this collection, in the order the customer sees. Dragging a row is the curation — feature matrix §12.
+   * Every product in this collection, in the order the customer sees. Dragging a row is the curation — feature matrix §12. A product that is still a draft, dated in the future, or has no variant left in stock is dropped from the live page without warning, so a page shorter than this list means a product is not ready — not that a row was lost.
    */
   products?: (number | Product)[] | null;
   /**
-   * Shown at the foot of the page — plan §23.1a. Keeps an editorial page from being a dead end.
+   * Shown at the foot of the page — plan §23.1a. Keeps an editorial page from being a dead end. A draft collection listed here shows nothing rather than a broken link, so publish both before you rely on the pairing.
    */
   relatedCollections?: (number | Collection)[] | null;
   /**
@@ -785,7 +785,7 @@ export interface FigureBlock {
   blockType: 'figure';
 }
 /**
- * Intent-based shopping pages at /edit/… Keep the set small and obvious.
+ * Intent-based shopping pages at /edit/… Keep the set small and obvious. Published is live the moment you save it — a future date only keeps the edit out of navigation menus and the homepage, not off its own URL.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "edits".
@@ -826,14 +826,14 @@ export interface Edit {
          */
         intro?: string | null;
         /**
-         * Drag to set the order the customer sees.
+         * Drag to set the order the customer sees. Drafts, future-dated products and anything out of stock are dropped from the live page — and if none of a group survives, the whole group disappears rather than showing an empty heading.
          */
         products: (number | Product)[];
         id?: string | null;
       }[]
     | null;
   /**
-   * Optional — plan §6.1f. Links the edit to the editorial story behind it, and gives the reader somewhere to go next.
+   * Optional — plan §6.1f. Links the edit to the editorial story behind it, and gives the reader somewhere to go next. A draft lookbook listed here renders as nothing at all, so publish it first or the section quietly shrinks.
    */
   lookbooks?: (number | Lookbook)[] | null;
   /**
@@ -883,7 +883,7 @@ export interface Edit {
   createdAt: string;
 }
 /**
- * Chaptered editorial with shoppable hotspots.
+ * Chaptered editorial with shoppable hotspots, indexed at /lookbook. Published is live the moment you save it, and a future date pins it to the top of the index rather than hiding it.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "lookbooks".
@@ -1082,7 +1082,7 @@ export interface SplitFeatureBlock {
   blockType: 'splitFeature';
 }
 /**
- * Articles at /journal/… Reached from the footer and from editorial surfaces.
+ * Articles at /journal/… Reached from the footer and from editorial surfaces. The date sets the order of the index — backdate to file an article below the others, but a future date publishes it now and pins it to the top.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "journal".
@@ -1117,12 +1117,15 @@ export interface Journal {
     [k: string]: unknown;
   } | null;
   /**
-   * The way out of the article and into the shop — plan §23.1c. An article with none is an editorial dead end.
+   * The way out of the article and into the shop — plan §23.1c. An article with none is an editorial dead end. Drafts and out-of-stock products are dropped from the rendered article, so check the count here against the page before publishing.
    */
   relatedProducts?: (number | Product)[] | null;
+  /**
+   * The second exit — plan §23.1c. Point at the collection the article is really about, not at everything it mentions. A draft collection renders as nothing.
+   */
   relatedCollections?: (number | Collection)[] | null;
   /**
-   * Feature matrix §15 — "related stories".
+   * Feature matrix §15 — "related stories". A draft article renders as nothing, so two articles written together need both published before either shows the other.
    */
   relatedArticles?: (number | Journal)[] | null;
   /**
@@ -1316,7 +1319,7 @@ export interface ShopTheLookBlock {
   blockType: 'shopTheLook';
 }
 /**
- * Seasonal statements. One is usually the homepage hero.
+ * Seasonal statements — the homepage hero, and nothing else. A future date really does hold this one back, and until it passes the homepage opens on whatever block comes after the hero.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "campaigns".
@@ -1433,11 +1436,11 @@ export interface Campaign {
     href?: string | null;
   };
   /**
-   * The collection this campaign sells. The CTA usually points here — plan §10.1c requires an explicit path from editorial to commerce.
+   * Not shown anywhere on the site today — a campaign appears only as the homepage hero, which has no room for a merchandise link. Use the Call to action on the Campaign tab to send readers to this collection; that button is the one that renders.
    */
   collection?: (number | null) | Collection;
   /**
-   * Optional. A handful of hero pieces, in order, for the campaign rail.
+   * Not shown anywhere on the site today — there is no campaign rail to fill. To put products on the homepage, add a Product rail block to the Homepage instead; anything entered here is stored and never rendered.
    */
   products?: (number | Product)[] | null;
   /**
@@ -1620,7 +1623,7 @@ export interface Address {
   createdAt: string;
 }
 /**
- * Durable purchase records. Item names, prices and addresses are frozen at purchase.
+ * Durable purchase records. Item names, prices and addresses are frozen at purchase. Search by order number, customer email, tracking number, or a Stripe id copied out of the Stripe dashboard.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "orders".
@@ -1628,12 +1631,12 @@ export interface Address {
 export interface Order {
   id: number;
   /**
-   * Set by a signature-verified Stripe webhook. Not editable here — reaching the success page is not payment, and neither is typing in this box.
+   * Set by a signature-verified Stripe webhook, and by nothing else. Not editable here — reaching the success page is not payment, and neither is typing in this box. A refund is started in Stripe and lands here as "Refunded" once Stripe has confirmed the money went back; see the Stripe tab.
    */
   paymentStatus:
     'draft' | 'checkout_started' | 'pending_payment' | 'paid' | 'payment_failed' | 'refunded' | 'cancelled';
   /**
-   * Independent of payment — an order can be refunded after it shipped. Steps are checked server-side (§18.1b): picking and dispatch need a paid order, shipping needs a carrier and a tracking number, and Delivered and Cancelled are ends.
+   * The only status you set by hand, one order at a time. Move it one step: Unfulfilled to Processing once someone has picked the order, Processing to Shipped once the carrier and tracking number are saved in the Fulfilment tab — that sends the customer a dispatch email — then Shipped to Delivered. Delivered and Cancelled are ends: nothing follows them, so do not use them to park an order. Cancel before dispatch, not after. Anything else is refused and tells you why.
    */
   fulfillmentStatus: 'unfulfilled' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   /**
@@ -1657,7 +1660,7 @@ export interface Order {
    */
   email: string;
   /**
-   * Fixed at checkout. Every amount below is in this currency.
+   * Fixed at checkout. Every amount below is in this currency — changing it later would not convert anything, it would just relabel the numbers.
    */
   currency: 'USD' | 'GBP' | 'EUR';
   /**
@@ -1665,11 +1668,11 @@ export interface Order {
    */
   subtotalMinor: number;
   /**
-   * Recalculated server-side at checkout — plan §15.1a.
+   * What the promotion took off, as the server recalculated it at checkout — plan §15.1a. Never what the customer said it should be.
    */
   discountMinor: number;
   /**
-   * Minor units — 1999 is 19.99. Whole numbers only; no decimal point.
+   * What was charged for delivery, from the rate quoted at checkout.
    */
   shippingMinor: number;
   /**
@@ -1685,7 +1688,7 @@ export interface Order {
    */
   promotion?: (number | null) | Promotion;
   /**
-   * Snapshot of the code used. Survives the promotion being renamed or deleted.
+   * Snapshot of the code used, exactly as the customer typed it. Survives the promotion being renamed or deleted.
    */
   discountCode?: string | null;
   /**
@@ -1757,22 +1760,31 @@ export interface Order {
     phone?: string | null;
   };
   /**
-   * Required in practice when marking shipped — plan §18.1c.
+   * Who is carrying it, spelled as the customer should read it — "DHL", "Royal Mail". Required together with the tracking number before this order can be marked Shipped, and it appears in the dispatch email.
    */
   carrier?: string | null;
+  /**
+   * The carrier's reference for this parcel. Required with the carrier before Shipped. It goes into the dispatch email exactly as typed, so check it against the label — a wrong number here is a wrong number in the customer's inbox. One order, one reference; do not reuse another order's.
+   */
   trackingNumber?: string | null;
   /**
-   * The carrier's tracking page. Manually managed for the demo — structure §18 allows exactly this.
+   * The carrier's tracking page for this parcel — it becomes the "Track this parcel" button in the dispatch email. Optional: leave it empty and the email simply shows the carrier and the number instead. Manually managed for the demo, which structure §18 allows.
    */
   trackingUrl?: string | null;
+  /**
+   * Stamped automatically the moment the status became Shipped. Empty means it has not been dispatched — it never means the date is unknown.
+   */
   shippedAt?: string | null;
+  /**
+   * Stamped automatically when the status became Delivered. Empty until someone records the arrival.
+   */
   deliveredAt?: string | null;
   /**
-   * Set when the Checkout Session is created (Phase 17).
+   * Stripe's id for the checkout attempt ("cs_…"), set when the session is created. It exists even when payment never completed, so it is the handle to search on when a customer believes they were charged and there is no payment against the order.
    */
   stripeCheckoutSessionId?: string | null;
   /**
-   * Set from the verified webhook event (Phase 17).
+   * Stripe's id for the payment itself ("pi_…"), set from the verified webhook. Paste it into Stripe to find this order's payment — or paste it into the search box above to come back the other way.
    */
   stripePaymentIntentId?: string | null;
   /**
@@ -1780,11 +1792,11 @@ export interface Order {
    */
   paidAt?: string | null;
   /**
-   * Set from a signature-verified refund event.
+   * When Stripe confirmed the refund, from the signed event. Empty means no refund has been reported — it does not mean a refund was refused, and it does not mean one is not in progress at Stripe.
    */
   refundedAt?: string | null;
   /**
-   * How much came back, in minor units. Partial refunds are ordinary.
+   * How much came back, in minor units, as Stripe reported it — 1999 is 19.99. Partial refunds are ordinary, so this is often less than the total. Empty means no refund has been reported at all; check Stripe before assuming nothing was sent back.
    */
   refundedMinor?: number | null;
   /**
@@ -1796,13 +1808,16 @@ export interface Order {
   deletedAt?: string | null;
 }
 /**
- * Frozen purchase lines. Never edited after the order is placed.
+ * Frozen purchase lines. Never edited after the order is placed. Search by SKU to find every order that contains a particular item.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "order-items".
  */
 export interface OrderItem {
   id: number;
+  /**
+   * The purchase this line belongs to, fixed when the order was placed. A line cannot be moved to another order — if one is on the wrong order, that is a refund and a new order, not an edit.
+   */
   order: number | Order;
   /**
    * A link back, if the product still exists. The snapshot below is the record.
@@ -1871,7 +1886,7 @@ export interface Promotion {
    */
   startsAt?: string | null;
   /**
-   * Empty means no expiry.
+   * Empty means no expiry. Must be after the start date.
    */
   endsAt?: string | null;
   /**
@@ -1895,9 +1910,13 @@ export interface Promotion {
    */
   perCustomerLimit?: number | null;
   /**
-   * Incremented by Phase 17, in the transaction that finalises payment.
+   * Incremented by Phase 17, in the transaction that finalises payment. Never typed by hand, here or through the API — a count somebody chose is a usage limit that lies.
    */
   timesUsed: number;
+  /**
+   * Worked out from the switch, the dates and the usage limit — the same checks checkout runs. A code discounts nothing unless this says Live now.
+   */
+  liveNow?: string | null;
   /**
    * Off by default — a half-written promotion must not be live. This is the switch; the dates are the schedule.
    */
@@ -2039,7 +2058,7 @@ export interface WishlistItem {
   createdAt: string;
 }
 /**
- * Pending until moderated. Only approved reviews are ever rendered publicly.
+ * Pending until moderated. Only approved reviews are ever rendered publicly — filter Status to "Pending moderation" for the queue.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "reviews".
@@ -2077,7 +2096,7 @@ export interface Review {
       }[]
     | null;
   /**
-   * Pending by default, so nothing can reach the public site unmoderated by accident.
+   * Pending by default, so nothing can reach the public site unmoderated by accident. Rejected keeps the review on file and off the site — deleting it instead loses the record of what was submitted, and frees the customer to post the same thing again.
    */
   status: 'pending' | 'approved' | 'rejected';
   /**
@@ -2112,7 +2131,7 @@ export interface NewsletterSubscriber {
   createdAt: string;
 }
 /**
- * Support answers, grouped by topic. Reached from the footer — never in the shopping flow.
+ * Support answers, grouped by topic and ordered within each group. The help pages that read them are not built yet, so nothing here is on the site — write them now and they appear the day that page ships.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "faqs".
@@ -2141,11 +2160,17 @@ export interface Faq {
     };
     [k: string]: unknown;
   };
+  /**
+   * The heading this question sits under. Changing it moves the question to another group and leaves a gap in the order of the old one — renumber the group you took it from.
+   */
   topic: 'orders' | 'shipping' | 'returns' | 'sizing' | 'care' | 'account';
   /**
-   * Lower sorts first within the topic. The most-asked question goes at the top, not the oldest.
+   * Lower sorts first within the topic. The most-asked question goes at the top, not the oldest. Numbers do not have to be consecutive — leaving gaps of ten makes inserting a question later a single edit.
    */
   sortOrder: number;
+  /**
+   * Draft keeps the answer off the site entirely. There is no date on a FAQ — it goes live the moment you publish it.
+   */
   status: 'draft' | 'published';
   updatedAt: string;
   createdAt: string;
@@ -2922,6 +2947,7 @@ export interface PromotionsSelect<T extends boolean = true> {
   usageLimit?: T;
   perCustomerLimit?: T;
   timesUsed?: T;
+  liveNow?: T;
   active?: T;
   combinable?: T;
   updatedAt?: T;
@@ -3281,7 +3307,7 @@ export interface SiteSetting {
      */
     message?: string | null;
     /**
-     * Optional. A site path such as /collections/limited.
+     * Optional. A site path such as /collections/limited, or a full https:// address. Leave it empty for a bar that is not a link.
      */
     href?: string | null;
   };
@@ -3297,7 +3323,7 @@ export interface SiteSetting {
 export interface Navigation {
   id: number;
   /**
-   * Six at most: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK, ABOUT. The limit is the rule, not a suggestion — see DEV-07.
+   * Six at most: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK, ABOUT. The limit is the rule, not a suggestion — see DEV-07. An item pointing at a page that is a draft, dated in the future, or deleted is left out of the header entirely rather than shown as a dead link, and nothing warns you here — so after unpublishing a page, look at the header.
    */
   primary?:
     | {
@@ -3339,7 +3365,7 @@ export interface Navigation {
          */
         href?: string | null;
         /**
-         * Leave empty for a plain link. One or more columns turns this item into a mega menu.
+         * Leave empty for a plain link. One or more columns turns this item into a mega menu. A column whose links have all been unpublished or deleted is dropped rather than shown as a heading over nothing — so a mega menu can quietly become a plain link without anyone editing it.
          */
         columns?:
           | {
@@ -3393,7 +3419,7 @@ export interface Navigation {
             }[]
           | null;
         /**
-         * Optional image beside the columns. The mega menu is a merchandising surface, not a sitemap.
+         * Optional image beside the columns. The mega menu is a merchandising surface, not a sitemap. The panel needs a picture or a caption to appear at all — a link on its own renders nothing, because there would be nothing to click.
          */
         feature: {
           image?: (number | null) | Media;
@@ -3440,7 +3466,7 @@ export interface Navigation {
       }[]
     | null;
   /**
-   * Structure §20: Shop, Help, About/editorial, and the legal links. The newsletter column is a form rather than navigation, so it is not edited here — it was built in Phase 10 (DEV-42).
+   * Structure §20: Shop, Help, About/editorial. Four columns at most. A column needs a heading and at least one working link or the whole column is left off the footer — and a link whose page has been unpublished or deleted is dropped silently, so a column can empty itself without anyone editing it here. Three parts of the footer are not edited on this screen. The shop name and the line beneath it, and therefore the copyright line, come from Site Settings → Identity. The newsletter column is a signup form rather than navigation, so its wording is set in code (DEV-42). The Privacy and Terms row is fixed in code on purpose: legal links have to be on every page, and a column that can be reordered is a column that can be emptied. Changing those two needs a developer.
    */
   footer?:
     | {
@@ -3515,7 +3541,7 @@ export interface Navigation {
 export interface Homepage {
   id: number;
   /**
-   * The order here is the order on the page. Structure §4 composes it as: hero, categories, new arrivals, an editorial moment, best sellers or limited edition, the brand story, community. A section whose subject is unpublished or deleted is dropped rather than rendered empty.
+   * The order here is the order on the page — drag to rearrange. Structure §4 composes it as: hero, categories, new arrivals, an editorial moment, best sellers or limited edition, the brand story, community. A section with nothing to show is left off the page rather than rendered half-empty, and nothing warns you when you save — so open the homepage afterwards and check that everything you expected is there. What each section needs in order to appear: CAMPAIGN HERO — a campaign that is published, has a title and is not dated in the future. It will still appear with no picture; the space is held rather than collapsed. PROMISE STRIP — at least one statement with words in it. CATEGORY TILES — at least one tile whose category is published. Tiles whose category is a draft or has been deleted drop out one by one; when the last one goes, so does the section. PRODUCT RAIL — at least one published product carrying the flag this rail is set to. Sold out is fine and still shows; a product with no active variant has no price and is skipped. PRODUCT GROUP — the same rule, among the products you picked. IMAGE — a picture. IMAGE AND TEXT — a picture, and either a heading or some body text. SHOP THE LOOK — a picture, and at least one hotspot that is both placed on the image and pointed at a published product. EDITORIAL TEXT — a heading or some body text. Deleting the text leaves an empty paragraph behind, which does not count as text. COLLECTION FEATURE — a collection that is published and has a title. COMMUNITY GALLERY — at least one entry with a picture. The credit alone is not enough.
    */
   sections?:
     | (
