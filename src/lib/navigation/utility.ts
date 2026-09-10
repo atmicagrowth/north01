@@ -25,8 +25,18 @@ export const utilityNav = {
   account: { label: 'Account', href: '/account' },
 } as const
 
-/** The legal row in the footer. Structure §20: *"Social/legal."* Not editable content. */
-export const legalNav = [
-  { label: 'Privacy', href: '/legal/privacy' },
-  { label: 'Terms', href: '/legal/terms' },
-] as const
+/**
+ * The legal row in the footer. Structure §20: *"Social/legal."* Not editable content.
+ *
+ * **Empty, and deliberately — Phase 28's audit.** These two entries pointed at `/legal/privacy` and
+ * `/legal/terms`, and neither route exists: the footer shipped two 404s on every page of the shop.
+ *
+ * They are not built here because a privacy policy and a set of terms are **legal text somebody has
+ * to write and be accountable for**, not a page anyone should generate. Inventing plausible-sounding
+ * privacy copy would be worse than the broken link — it would be a false statement about what this
+ * shop does with personal data, on the page a regulator reads first.
+ *
+ * So the row renders nothing until the copy exists. `SiteFooter` already handles an empty list.
+ * Recorded as gap **G-19**: the pages, the copy, and whether they belong in the CMS or in the repo.
+ */
+export const legalNav: readonly { href: string; label: string }[] = []

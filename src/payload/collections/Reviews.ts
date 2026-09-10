@@ -6,6 +6,7 @@ import {
   isAdmin,
   isStaff,
   isStaffField,
+  nobodyField,
   staffUser,
 } from '../access'
 import { validateRequiredUpload } from '../fields/required'
@@ -149,6 +150,22 @@ export const Reviews: CollectionConfig = {
     },
     {
       name: 'displayName',
+      /*
+       * **Moderation is three states, not editing — Phase 28's first sweep.**
+       *
+       * `access.update` on this collection is `isStaff`, which is right: somebody has to move a
+       * review between pending, approved and rejected. It also meant a moderator could rewrite the
+       * customer's **words** — the body, the rating, the name it is published under — and §21.1b
+       * defines moderation as approving or rejecting, not as authoring.
+       *
+       * A staff-edited review is words put in a customer's mouth under their own name, on a public
+       * page, with no version history to show it happened. Field access closes it the way Payload
+       * closes these: the key is deleted from the incoming data and the stored value stands, so a
+       * moderator saving a status change cannot take the body with it.
+       *
+       * A review that must not be published is **rejected**, which is the control that exists for it.
+       */
+      access: { update: nobodyField },
       type: 'text',
       required: true,
       maxLength: 60,
@@ -158,6 +175,7 @@ export const Reviews: CollectionConfig = {
     },
     {
       name: 'rating',
+      access: { update: nobodyField },
       type: 'number',
       required: true,
       min: 1,
@@ -171,6 +189,7 @@ export const Reviews: CollectionConfig = {
     },
     {
       name: 'title',
+      access: { update: nobodyField },
       type: 'text',
       maxLength: 120,
       admin: { description: 'Optional headline.' },
@@ -182,6 +201,7 @@ export const Reviews: CollectionConfig = {
        * is several long paragraphs.
        */
       name: 'body',
+      access: { update: nobodyField },
       type: 'textarea',
       required: true,
       minLength: 10,

@@ -73,7 +73,15 @@ export const seoField = (): GroupField => ({
  *
  * `publishedAt` is not decoration either. Feature matrix §12 lists "scheduled/past campaign" as an
  * edge case, and this is what makes it answerable — a published document whose date is in the future
- * is scheduled, and the query that renders a listing filters on both columns. Journal articles order
+ * is scheduled, and the query that renders a listing filters on both columns.
+ *
+ * **Phase 28's audit corrected the field's own description, which overstated this.** It read *"a
+ * future date schedules the page"*, and that is true only where a **query** enforces it.
+ * `publishedProductWhere` does, so a product really is held back. `publishedOnly` — the access rule
+ * the four editorial collections read through — checks `status` and **not** `publishedAt`, so a
+ * future-dated collection, edit, lookbook or article is reachable at its own URL the moment it is
+ * published. The date embargoes it from navigation and the homepage and nothing else. Four
+ * collections were being described by a sentence that was true of a fifth. Journal articles order
  * by it. Plan §6.1i lists it outright.
  *
  * Neither field enforces anything on its own. Nothing here hides a draft from an unauthenticated
@@ -106,7 +114,11 @@ export const publishingFields = (): Field[] => [
     admin: {
       position: 'sidebar',
       date: { pickerAppearance: 'dayAndTime' },
-      description: 'A future date schedules the page. Set automatically when first published.',
+      description:
+        'Set automatically the first time this is published; an explicit date always wins. ' +
+        'What a FUTURE date does depends on the collection, and the collection says so: on a ' +
+        'product it holds the drop back, and on an editorial page it only keeps the page out of ' +
+        'menus and the homepage — the page itself is live the moment you publish it.',
     },
     hooks: {
       /**

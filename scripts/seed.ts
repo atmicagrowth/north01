@@ -1220,19 +1220,23 @@ try {
             { label: 'The Edit', kind: 'url', href: '/edit' },
           ],
         },
+        /*
+         * **Every href here is a route that exists** — Phase 28's audit found four that were not.
+         * `/help` (the FAQ pointed at a page that was never built, rather than at `/help/faq`),
+         * `/contact` (gap G-08), and `/about`. Seeding a footer full of 404s makes every fresh
+         * install look broken, and it is the first thing anybody clicks.
+         */
         {
           heading: 'Help',
           links: [
-            { label: 'FAQ', kind: 'url', href: '/help' },
+            { label: 'FAQ', kind: 'url', href: '/help/faq' },
             { label: 'Shipping', kind: 'url', href: '/help/shipping' },
             { label: 'Returns', kind: 'url', href: '/help/returns' },
-            { label: 'Contact', kind: 'url', href: '/contact' },
           ],
         },
         {
           heading: 'NORTH / 01',
           links: [
-            { label: 'About', kind: 'url', href: '/about' },
             { label: 'Journal', kind: 'url', href: '/journal' },
             { label: 'Lookbook', kind: 'url', href: '/lookbook' },
           ],

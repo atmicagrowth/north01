@@ -46,20 +46,29 @@ export const FALLBACK_NAVIGATION: ShellNavigation = {
         { label: 'Edit', href: '/edit', external: false },
       ],
     },
+    /*
+     * **Phase 28's audit: every link here has to be a route that exists.**
+     *
+     * This list shipped pointing at `/help/faq`, `/help/contact`, `/help/shipping`, `/help/returns`,
+     * `/order-tracking` and `/about` — and **none of those routes existed**. A degraded footer is
+     * already a bad moment; a degraded footer whose every Help link 404s is worse than a shorter one.
+     *
+     * Phase 28 built `/help/faq`, `/help/shipping` and `/help/returns`, which is why those three stay.
+     * Contact is gap **G-08** — the form, and the caller Phase 19's contact-confirmation template is
+     * still waiting for. Order tracking and About have no route and no phase claiming them. They come
+     * back when they exist, and not before.
+     */
     {
       heading: 'Help',
       links: [
         { label: 'FAQ', href: '/help/faq', external: false },
-        { label: 'Contact', href: '/help/contact', external: false },
         { label: 'Shipping', href: '/help/shipping', external: false },
         { label: 'Returns', href: '/help/returns', external: false },
-        { label: 'Track Order', href: '/order-tracking', external: false },
       ],
     },
     {
       heading: 'Brand',
       links: [
-        { label: 'About', href: '/about', external: false },
         { label: 'Lookbook', href: '/lookbook', external: false },
         { label: 'Journal', href: '/journal', external: false },
       ],

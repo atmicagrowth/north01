@@ -135,15 +135,23 @@ export async function SiteFooter({
               <p className="font-sans text-micro uppercase text-foreground-muted">
                 © {settings.siteName}
               </p>
-              <ul className="flex items-center gap-m">
-                {legalNav.map((item) => (
-                  <li key={item.href}>
-                    <Link href={item.href} variant="meta" className="text-micro">
-                      {item.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              {/*
+                Nothing rather than an empty `<ul>`. `legalNav` is empty today — Phase 28's audit
+                found both of its links 404ing, and a privacy policy is text somebody has to write
+                rather than a page to generate. An empty list element is still an element, and a
+                screen reader announces "list, 0 items" over a footer that has nothing to say.
+              */}
+              {legalNav.length > 0 ? (
+                <ul className="flex items-center gap-m">
+                  {legalNav.map((item) => (
+                    <li key={item.href}>
+                      <Link href={item.href} variant="meta" className="text-micro">
+                        {item.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           </div>
         </div>

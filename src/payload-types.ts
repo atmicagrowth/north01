@@ -356,7 +356,7 @@ export interface Product {
    */
   status: 'draft' | 'published';
   /**
-   * A future date schedules the page. Set automatically when first published.
+   * Set automatically the first time this is published; an explicit date always wins. What a FUTURE date does depends on the collection, and the collection says so: on a product it holds the drop back, and on an editorial page it only keeps the page out of menus and the homepage — the page itself is live the moment you publish it.
    */
   publishedAt?: string | null;
   /**
@@ -720,7 +720,7 @@ export interface Collection {
    */
   status: 'draft' | 'published';
   /**
-   * A future date schedules the page. Set automatically when first published.
+   * Set automatically the first time this is published; an explicit date always wins. What a FUTURE date does depends on the collection, and the collection says so: on a product it holds the drop back, and on an editorial page it only keeps the page out of menus and the homepage — the page itself is live the moment you publish it.
    */
   publishedAt?: string | null;
   updatedAt: string;
@@ -876,7 +876,7 @@ export interface Edit {
    */
   status: 'draft' | 'published';
   /**
-   * A future date schedules the page. Set automatically when first published.
+   * Set automatically the first time this is published; an explicit date always wins. What a FUTURE date does depends on the collection, and the collection says so: on a product it holds the drop back, and on an editorial page it only keeps the page out of menus and the homepage — the page itself is live the moment you publish it.
    */
   publishedAt?: string | null;
   updatedAt: string;
@@ -1005,7 +1005,7 @@ export interface Lookbook {
    */
   status: 'draft' | 'published';
   /**
-   * A future date schedules the page. Set automatically when first published.
+   * Set automatically the first time this is published; an explicit date always wins. What a FUTURE date does depends on the collection, and the collection says so: on a product it holds the drop back, and on an editorial page it only keeps the page out of menus and the homepage — the page itself is live the moment you publish it.
    */
   publishedAt?: string | null;
   updatedAt: string;
@@ -1162,7 +1162,7 @@ export interface Journal {
    */
   status: 'draft' | 'published';
   /**
-   * A future date schedules the page. Set automatically when first published.
+   * Set automatically the first time this is published; an explicit date always wins. What a FUTURE date does depends on the collection, and the collection says so: on a product it holds the drop back, and on an editorial page it only keeps the page out of menus and the homepage — the page itself is live the moment you publish it.
    */
   publishedAt?: string | null;
   updatedAt: string;
@@ -1469,7 +1469,7 @@ export interface Campaign {
    */
   status: 'draft' | 'published';
   /**
-   * A future date schedules the page. Set automatically when first published.
+   * Set automatically the first time this is published; an explicit date always wins. What a FUTURE date does depends on the collection, and the collection says so: on a product it holds the drop back, and on an editorial page it only keeps the page out of menus and the homepage — the page itself is live the moment you publish it.
    */
   publishedAt?: string | null;
   updatedAt: string;
