@@ -7713,6 +7713,200 @@ blanked and `pnpm verify:seo` still passed 94/94.
   because the settings reader rejects the values that would trigger them, so none was changed; they
   are recorded here so the next phase that touches those numbers knows they exist.
 
+## 1.33 Phase 28 — admin experience
+
+Plan §28.1a–§28.1d. **No dependency, and no migration** — `pnpm migrate:create` reports *"no schema
+changes detected"*, because every change in this phase is admin metadata, field access, a hook or a
+validation. One new field, `promotions.liveNow`, which is `virtual: true` and therefore has no
+column.
+
+**`pnpm verify:admin`: 87/87**, against the development branch, through the live Payload access and
+validation layer.
+
+### 1.33.1 Two of the findings were bugs, not missing configuration
+
+**`admin.readOnly` on `products.derived` was decorative, and that made it a live data-loss path.**
+
+Payload's `readOnly` is a *widget* attribute. The value stays in form state, and `Form`'s submit body
+is `reduceFieldsToValues(fields, true)`, which drops only `disableFormData` fields. So the ordinary
+authoring flow — open a product, add sizes in the Variants drawer, save the product — **wrote back
+the pre-variant copy of `derived`**, setting `priceFromMinor` to null and withdrawing the product
+from the shop, on a save the editor believed was a no-op.
+
+Field access closes it, and closes it in the right way: access *deletes the key* and falls back to
+the stored value rather than failing, so an editor never sees an error for a field they did not
+knowingly touch. `syncProductDerived` is unaffected, because it writes through the Local API with the
+default `overrideAccess: true`.
+
+**Every money column on an order was freely editable by staff**, in the panel and over REST, on a
+record with no version history. §28.1d asks the admin to refuse *"invalid refunds"*, and the closest
+thing to a fake refund this admin ever permitted was not a status — it was typing a smaller total.
+`currency`, `subtotalMinor`, `discountMinor`, `shippingMinor`, `taxMinor`, `totalMinor` and
+`discountCode` are now `nobodyField` on update, alongside `paymentStatus`, which Phase 17's sweep had
+already closed. An order's amounts are a **snapshot of what was actually charged** (§18.1d); one that
+disagrees with Stripe is a reconciliation nobody can win.
+
+### 1.33.2 §28.1d's one genuinely missing guardrail
+
+Nothing stopped `status: published` on a product with **no active priced variant**. The save
+succeeded, the sidebar said Published, and `publishedProductWhere` then removed it from the shop,
+from search, from the sitemap and from every rail — with no message anywhere in the panel, because
+the rule that hid it lives in a query an editor never sees.
+
+`refuseUnsellablePublish` refuses the **transition** to published, reading `derived.priceFromMinor` —
+the same column `publishedProductWhere` filters on, so it is the *same rule* rather than a second
+opinion. The variants are read only on the refusal path, to tell three cases apart: *"add a
+variant"*, *"switch one back on"* and *"the summary is stale"* are three different actions, and one
+message covering all three would send an editor looking for a variant that is already there.
+
+Three deliberate exemptions, each written into the hook:
+
+- **Only the transition.** A published product losing its last variant is a legitimate withdrawal,
+  and refusing that save would make the ordinary way to retire a line impossible. It is also what
+  keeps the hook off `syncProductDerived`'s path.
+- **Duplicate slips past it, and that is the better outcome.** Payload's duplicate is a `create` that
+  hands the hook the *source* document as `originalDoc`, so a copy of a published product reads as
+  "already published". The copy is unsellable and filtered out of every listing exactly as the rule
+  intends. Refusing the button would be worse: a duplicate saves immediately, so there is no form in
+  which to set it to draft first and the editor is left with an error they cannot act on. **Verified
+  by reading `collections/operations/create.js`, not assumed.**
+- **Only for a request with a user.** The seed, an import and a migration build a catalogue in an
+  order they control and are not a person clicking Publish. Nothing is lost, because this is an
+  authoring guardrail and **not a security boundary** — the authority remains
+  `publishedProductWhere`, which filters an unsellable product out however the row was written.
+
+**A missing image is deliberately not malformed**, despite the phase prompt listing it.
+`publishedProductWhere` does not look at the gallery, and §8.1d answers an absent image with a
+deliberate neutral placeholder — so the product is visible, buyable and merely ugly. Blocking the
+save would have invented a rule the storefront does not hold.
+
+### 1.33.3 The other four guardrails were already there, and were verified rather than assumed
+
+| §28.1d | State |
+|---|---|
+| Arbitrary order transitions | `hooks/orderTransitions.ts` already ran `planFulfillmentChange` on every write. Confirmed bulk edit does **not** bypass a collection `beforeChange` hook |
+| Invalid refunds | `paymentStatus` was already `nobodyField`; the amounts were not, and now are |
+| Negative inventory | `min: 0`, a custom `validateStock`, **and** a real `inventory_quantity >= 0` CHECK. The harness asserts both layers, because they fail differently — 23514 from Postgres past validation entirely |
+| Duplicate SKUs | A real Postgres UNIQUE, asserted as 23505 rather than only through Payload's pre-check |
+
+Four smaller ones were closed along the way: a category could be made its own **ancestor** beyond one
+hop (Phase 6 stopped the one-hop case and deferred the rest); a compare-at price at or below the
+price was accepted and then silently rendered as nothing; a promotion whose `endsAt` preceded its
+`startsAt` was accepted and could never be live; and `promotions.timesUsed` was guarded on update
+while **open on create**, so a new code could be born claiming redemptions it never had.
+
+### 1.33.4 Order search matched the order number and nothing else
+
+Payload's list search silently defaults to `useAsTitle`, which on a support desk reads as *"search is
+broken"* rather than *"search is narrow"*. It now covers the customer email, the tracking number and
+the Stripe ids a support agent copies out of the Stripe dashboard — which is the actual first move
+when a customer writes in.
+
+### 1.33.5 The descriptions were rewritten for the person the prompt names
+
+*"Keep the admin useful to a non-technical client"* is a requirement, and a description reading *"The
+product title"* does not meet it. They now say what happens when you get it wrong:
+
+> How many of this exact colour and size are in the warehouse. 0 shows the size as sold out; it can
+> never go below 0. **This number goes down by itself when an order is paid for — never reduce it by
+> hand to account for a sale, or that sale is counted twice.**
+
+That one sentence prevents a class of stock error that no validation can catch, because both numbers
+are individually legal.
+
+### 1.33.6 No custom dashboard, on purpose
+
+The prompt says *"without introducing unnecessary custom dashboard complexity"*, and the whole phase
+holds to it: **no `admin.components` were added at all.** Everything is `admin.description`,
+`defaultColumns`, `listSearchableFields`, `useAsTitle`, `filterOptions`, field `access`, `validate`
+and hooks. `promotions.liveNow` — the one thing that looks like a widget — is a virtual text field
+computed by an `afterRead` hook from `validatePromotion`, the same function checkout runs. A code
+reads *"Used up — it has reached its total usage limit"* rather than leaving somebody to compare two
+counters.
+
+`filterOptions` was **considered and rejected** on `products.categories`, on evidence rather than
+taste: Payload's relationship validator ends in `validateFilterOptions`, which re-runs the filter on
+every save of an existing value. Restricting it to published categories would make every product in a
+category that was later unpublished unsavable — including for an unrelated stock edit.
+
+### 1.33.7 Sweep 1 — the footer pointed at eight routes and none of them existed
+
+`/help/faq`, `/help/contact`, `/help/shipping`, `/help/returns`, `/order-tracking`, `/about`,
+`/legal/privacy` and `/legal/terms`. **Every one a 404**, in the most-rendered component in the
+project, on every page of the shop. The seeded navigation carried its own variant of the same list.
+This is §0.1.17's fake control at the largest scale it has appeared in this build.
+
+Three are now real, and the content for all three had been in the CMS for phases:
+
+- **`/help/faq`** renders the `faqs` collection — a collection §28.1c names as a managed surface and
+  which, until now, **rendered nowhere.** That is precisely the defect Phase 23 found in the
+  `gallery` and `pullQuote` blocks: an editor fills it in and the site silently discards it.
+- **`/help/shipping`** and **`/help/returns`** render `site-settings.shippingPolicy` and
+  `returnsPolicy`, whose own field descriptions have said *"and the shipping support page"* since
+  Phase 6. They read the same field the PDP accordion reads, because `SiteSettings.ts` calls these
+  *"one policy with one source"* and **G-08** already recorded that a support page must not keep a
+  second copy of the words.
+
+The rest are **removed rather than faked**. Contact is G-08. Order tracking and About have no route
+and no phase claiming them. Privacy and Terms are legal text somebody has to write and be accountable
+for — generating plausible privacy copy would be *worse* than the broken link, because it would be a
+false statement about what this shop does with personal data, on the page a regulator reads first.
+Recorded as gap **G-19**.
+
+Two more, in files no agent owned:
+
+**`seoField()`'s `publishedAt` description was wrong for four of the five collections that use it.**
+It read *"a future date schedules the page"*, and that is true only where a **query** enforces it.
+`publishedProductWhere` does. `publishedOnly` — the access rule the four editorial collections read
+through — checks `status` and explicitly **not** `publishedAt`, so a future-dated collection, edit,
+lookbook or article is reachable at its own URL the moment it is published; the date embargoes it
+from navigation and the homepage and nothing else. Four collections were being described by a
+sentence true of a fifth.
+
+**`Reviews.access.update` is `isStaff`, and it has to be** — somebody moves a review between pending,
+approved and rejected. It also let a moderator rewrite the customer's `body`, `rating`, `title` and
+`displayName`. §21.1b defines moderation as three states, not as authoring, and a staff-edited review
+is **words put in a customer's mouth, under their own name, on a public page, with no version
+history**. The four customer-authored fields are now `nobodyField` on update. A review that must not
+be published is *rejected*, which is the control that exists for it.
+
+### 1.33.8 Sweep 2 — verifying the guardrails rather than trusting their framing
+
+The Duplicate escape above was **checked against Payload's own source** rather than accepted from a
+report, and the reasoning holds: the copy is unsellable, filtered out, and one click from being
+fixed, while refusing it would hand an editor an error with no form in which to act on it.
+
+The sweep's own finding was a hole in the *harness*: section B proved the payment **axis** could not
+be typed and never touched the **amounts** — which were the fields Phase 28 had just locked. Eight
+new assertions cover them, each with a legitimate field riding along in the same write, so a working
+denial is told apart from an update that failed for some other reason. 79 → 87.
+
+### 1.33.9 What is now owed
+
+- **`product_variants.sku` is unique case-SENSITIVELY.** The `beforeValidate` hook uppercases, so
+  every path through Payload normalises before the index sees it; a raw SQL insert of `adm-1`
+  alongside `ADM-1` is accepted. A case-insensitive index is a migration, and this is recorded rather
+  than done for the same reason Phase 27's five `Math.max` traps were: it is unreachable through the
+  application, and a defensive migration is not sweep work.
+- **`campaigns.collection` and `campaigns.products` are read by nothing.** DEV-39 removed campaigns
+  from the route map, so a campaign surfaces only as the homepage hero, which uses neither. Both are
+  now honestly labelled *"stored and never rendered"*; dropping them is a migration and a decision.
+- **A refusal from `enforceOrderTransitions` is unreadable on the bulk-edit path.** Payload's bulk
+  endpoint collapses per-document errors into *"unable to update N out of M"*. A framework
+  limitation; mitigated by `disableBulkEdit` on the fields where it matters most.
+- **An admin-initiated refund action**, deliberately not built. It needs a custom control and a server
+  endpoint calling `stripe.refunds.create`, and a control that looked like it moved money and did not
+  would be the exact thing §0.1.17 forbids. Refunds are initiated in Stripe and land here signed.
+- **`cancelledAt`** — a genuine asymmetry. `shipped`, `delivered`, `paid` and `refunded` all carry a
+  timestamp; `cancelled` is terminal and carries none.
+- **Per-block `admin.description`** in `payload/blocks/home.ts` and `blocks/editorial.ts`. Payload's
+  `Block` type has no `admin.description`, so each block's requirements would have to live on a field
+  inside it. `SECTION_GUIDE` in `Homepage.ts` covers the homepage today and paraphrases
+  `resolveSection` — nothing enforces that the two agree.
+- **The five database harnesses and the 57 Playwright tests**, still unrun. The development branch
+  exists now and they are free to run — `verify:access` first, because Phase 26 changed
+  `customers.create` and could not re-verify it.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -9611,4 +9805,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 25 — analytics and observability | 2026-09-09 | Notes **§1.30**. **Three dependencies installed at their pins** (`posthog-js` 1.418.10, `@sentry/nextjs` 10.70.0, `@vercel/speed-insights` 2.0.0); GA4 is a script tag; no migration. **The taxonomy is a type**: `AnalyticsEvent` is a union of exactly §25.1a's seventeen names and `trackEvent` takes it, so a typo is a compile error rather than an empty dashboard column — and the internal names *are* the GA4 names for the ten that overlap, because a translation table is somewhere for the two to drift invisibly. **Money crosses the vendor boundary once**, in `toGa4Params`: a price field that is sometimes cents and sometimes dollars reports revenue a hundred times too high and is not recoverable, so the conversion is pure and asserted — including that a zero value is a real zero and an unknown value is absent. **Server Components stayed server components**: `ProductCard` gained two data attributes and `TrackList` delegates from the grid wrapper in the capture phase, rather than an `onClick` converting the most-rendered component in the shop and everything it renders. **Every event is emitted where it is true, not where it was clicked** — `addToBagAction` can refuse, and an `add_to_cart` on the click would report adds that never happened; `useActionResult` fires on the action's result, guarded by reference identity. **`purchase` is gated on the webhook**, not on arrival (§17.1g), and deduped in `sessionStorage` by order number, because the success URL is refreshable and a double-count doubles reported revenue. **§25.1d is enforced on the way out**, on two independent grounds — by key and by value — with cookies and headers dropped rather than scrubbed, the user reduced to an id, and the URL keeping its route while losing its token; the whole-URL pattern runs before the email pattern, or a Postgres URL is left with its host and password intact. **Two of the seventeen events are deliberately not emitted**: `add_payment_info` (**DEV-73** — Stripe Checkout is hosted, this application never sees payment details, and firing it at redirect would report leaving for Stripe as entering a card) and `quick_view_opened` (**DEV-74** — no quick view exists). Sentry is wired into four entry points because Next has four kinds of failure; `global-error.tsx` renders `error.digest` and never `error.message`, per §4.1b. **`@sentry/cli`'s postinstall is denied** in `pnpm-workspace.yaml` — source-map upload is off, so **production stack traces will be minified**, stated rather than discovered. §25.1e honoured as the schedule it is: Speed Insights renders in production only, and a second gate lives in the Vercel dashboard. New harness `pnpm verify:analytics` — **89/89**, the second in this project that touches no database. What it cannot cover is the prompt's own *"verify events in local/preview"*: no account exists, and `TODO.md` §6 says so. New gap **G-17**: no consent gate in front of any vendor. |
 | Phase 26 — security and bot protection | 2026-09-09 | Notes **§1.31**. **No dependency added**; one upgraded, and that is the phase's most consequential change: `next@16.3.2` carried **two CRITICAL unauthenticated RCE advisories** — Windows-hosted servers, and the Image Optimization API with AVIF — both fixed in `16.3.3`, which is still inside `@payloadcms/next@3.88.0`'s range. Overrides added for `fast-uri` (2 SSRF, 2 host confusion), `js-yaml` and `sharp`. **`pnpm audit` went from 9 findings (2 critical, 6 high, 1 moderate) to 1 moderate** — and that one, Payload's default `unlock` access letting any authenticated user clear anyone's lockout, **was already closed in config two phases ago**: `Customers.ts` is staff-only and `Users.ts` admin-only. Verified by reading them, not assumed; the first instinct was to add the rules, which would have been a duplicate key. The named upgrade `payload@3.88.1` is unavailable because every `@payloadcms/*` package pins an exact peer on 3.88.0. **§26.1a's own sentence is the design**: delete the widget and every guarded form starts **refusing**, because `verifyTurnstile` reads the configured state from the **server** environment rather than taking a flag from its caller — no argument a call site can pass and no field a client can omit turns a required verification into a skipped one. Wired into newsletter, review submission, registration and **login** (§26.1a's *"where abuse warrants it"*, answered by what the form is rather than by whether abuse has been seen yet), each **before** validation so a refusal costs no query and no field-by-field critique. **DEV-75**: unconfigured skips, an outage **refuses** — the one control in this project that fails closed, because the cost of degrading here is no bot protection on exactly the forms being hammered, by an attacker who can cause the outage they benefit from. One sentence for every failure; the reason logged, never shown. **§26.1b's one real finding was API depth**: Payload defaults `maxDepth` to 10 on a public REST surface, which is an amplification primitive — capped at 3, one above the project's deepest read. Everything else in §26.1b was verified rather than changed. **§26.1c**: no `dangerouslySetInnerHTML` renders CMS content anywhere (the only one is `JsonLd`, which escapes first); uploads are a six-entry allowlist with no SVG and no PDF; `isSameSitePath` refuses control characters so a `Location:` cannot ride a newline. **§26.1d** is a committed scan rather than a grep somebody ran: `pnpm scan:secrets`, whose first Resend pattern matched **English** (`Structure_Current_…`, `figure_mobile_image_idx`) and whose four real hits were the redaction harness's own fixtures — resolved by marking them `EXAMPLE` rather than allowlisting `scripts/`, which would be a hole exactly where a real key gets pasted while debugging. Clean across 388 files. New harness `pnpm verify:security` — **51/51**, the third that opens no connection. Owed: Turnstile keys (`TODO.md` §7), the contact form (**G-08**, now owed by two phases), a browser pass over four forms that have never rendered a widget, and `payload@3.88.1` when its peers catch up. |
 | Phase 27 — testing strategy | 2026-09-09 | Notes **§1.32**. **Eight dependencies at exact pins**, no migration. **813 Vitest tests across 18 files, all green; 57 Playwright tests across 5 files, none ever executed.** Two Vitest projects rather than one — `unit` in Node, `components` in jsdom — so a module claiming to be pure **fails** if it reaches for `window` instead of passing by accident, which is the one place that boundary was otherwise invisible. `server-only` is aliased to an empty module for the same reason the Payload CLI cannot resolve it. **The tests found five defects, and that is the phase's actual output**: `invalidSelection` never fired for the case feature matrix §7 names by title (`?color=Cream&size=M` where Black/M exists — the live region explaining it said nothing); a merged cart line of quantity zero was reported **sold out while fully in stock**, because `clampQuantity` returns `clampedBy: null` for a request of none and the merge defaulted it; `combined` counted occurrences rather than bags, contradicting its own field doc; `canFulfillmentTransition` **threw a TypeError** on a status read from the database that the table does not contain; and the search panel could **take the whole overlay down** — `CSS.escape('')` is `''`, so the selector became `'#'`, which `querySelector` throws on, reachable by arrowing to a late option and clearing recent searches in another tab. `FULFILLMENT_COPY.notPaid` also told an operator something untrue about a refunded order. **One reported defect was deliberately not fixed** and the reasoning put in the source: `cartTotals` counting unpriced units is unreachable (`cart.ts` filters first) and the behaviour is a written §14.1e decision — making an unreachable path disagree with a documented decision is not a fix. **The quantity control's own tests were wrong instructively**: three failed and **two passed for entirely the wrong reason**, because a controlled `type="number"` snaps back between keystrokes and `clear()` + `type('8')` produces 18. **The E2E suite cannot run** — it creates customers, bags and Stripe sessions, and the only reachable database is production (D-10), which §27.1f's own *"where environment permits"* anticipates. Flow 4 (quick view) is skipped because the feature does not exist (**DEV-74**); flow 7 signs its events offline rather than speaking to Stripe; flow 6 is the retained real test-mode path. All fifteen §27.1d cases are enumerated even where four can only be skipped, because a list with a hole in it is how a case gets forgotten. **The CI pipeline would have skipped its own build**: `if: env.DATABASE_URL != ''` cannot see that step's own `env:` block, so the condition read an empty string and the build never ran — a skipped step reporting success, invisible until somebody reads a log. New gap: five latent `Math.max(1, …)` traps, all currently unreachable, recorded rather than changed. |
+| Phase 28 — admin experience | 2026-09-09 | Notes **§1.33**. **No dependency and no migration** — `migrate:create` reports no schema changes, because everything here is admin metadata, field access, a hook or a validation; the one new field, `promotions.liveNow`, is `virtual`. **Two findings were bugs, not missing config.** `admin.readOnly` on `products.derived` was decorative — Payload's readOnly is a widget attribute and the value stays in the submit body — so the ordinary flow (open product → add sizes in the drawer → save) **wrote back the pre-variant copy of `derived`**, nulled `priceFromMinor` and withdrew the product from the shop on a save the editor thought was a no-op. And every money column on an order was freely editable by staff, in the panel and over REST, on a record with no version history: the closest thing to a fake refund this admin permitted was typing a smaller total. **§28.1d's one missing guardrail** was publishing a product with no active priced variant — the save succeeded, the sidebar said Published, and `publishedProductWhere` then hid it from the shop, search and the sitemap with no message anywhere, because the rule that hid it lives in a query an editor never sees. Now refused on the transition, reading the same column that query reads. Duplicate deliberately slips past it (verified against Payload's source: a duplicate saves immediately, so refusing leaves an error with no form to act on it), and a missing image is deliberately not malformed, because §8.1d answers one with a placeholder. The other four guardrails already existed and were **verified rather than assumed**, including that Postgres refuses negative stock (23514) and duplicate SKUs (23505) past validation entirely. **No `admin.components` were added at all** — the prompt forbids unnecessary dashboard complexity, and everything is description, access, validate, filterOptions or a hook. **Sweep 1: the footer pointed at eight routes and none of them existed** — every Help and legal link, on every page. Three are now real and their content had been in the CMS for phases (`/help/faq` renders a collection that rendered NOWHERE — Phase 23's defect again); the rest are removed rather than faked, and Privacy/Terms are refused on principle because inventing privacy copy is a false statement about personal data on the page a regulator reads first (gap **G-19**). Also: `seoField()`'s `publishedAt` description was true of products and false for the four editorial collections, and a moderator could rewrite a customer's review body and rating — §21.1b defines moderation as three states, not as authoring. **Sweep 2** verified the Duplicate escape against Payload's own source rather than a report, and found the hole in the **harness**: it proved the payment axis could not be typed and never touched the amounts Phase 28 had just locked. New harness `pnpm verify:admin` — **87/87**. |
 > **Append this table, and the sections above it, at the end of every phase.**

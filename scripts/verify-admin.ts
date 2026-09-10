@@ -720,6 +720,68 @@ try {
           user: adminUser,
         }),
     )
+
+    /**
+     * **The money on an order, locked in Phase 28's own sweep.**
+     *
+     * Section B above proves the payment *axis* cannot be typed. It did not cover the amounts, and
+     * those were freely editable by staff — in the panel and over REST, on a record with no version
+     * history. The nearest thing to a fake refund this admin ever permitted was not a status: it
+     * was typing a smaller total.
+     *
+     * Every one of these is a **snapshot of what was actually charged**, recalculated server-side at
+     * checkout and frozen (§18.1d). An order whose stored total disagrees with what Stripe took is
+     * a reconciliation nobody can win.
+     *
+     * Field access removes the key rather than throwing, so — as in B — the assertion is the stored
+     * value, and a legitimate field riding along in the same write is what tells a working denial
+     * apart from an update that failed for another reason.
+     */
+    {
+      const order = await makeOrder('B-money', 'paid')
+      const before = await orderNow(order.id)
+
+      await payload.update({
+        collection: 'orders',
+        data: {
+          currency: 'EUR',
+          discountCode: 'FORGED',
+          discountMinor: 99_999,
+          shippingMinor: 99_999,
+          subtotalMinor: 1,
+          taxMinor: 99_999,
+          totalMinor: 1,
+          /* The control: a field staff genuinely own, in the same write. */
+          trackingNumber: `${PREFIX}-money-probe`,
+        },
+        id: order.id,
+        overrideAccess: false,
+        user: adminUser,
+      })
+
+      const after = await orderNow(order.id)
+
+      for (const field of [
+        'currency',
+        'discountCode',
+        'discountMinor',
+        'shippingMinor',
+        'subtotalMinor',
+        'taxMinor',
+        'totalMinor',
+      ] as const) {
+        check(
+          `B: **an admin cannot rewrite \`${field}\`** — the charge is a snapshot, not an opinion`,
+          after[field] === before[field],
+          `${String(before[field])} -> ${String(after[field])}`,
+        )
+      }
+
+      check(
+        'B: …and the write itself landed, so the denial is the field and not a failed update',
+        after.trackingNumber === `${PREFIX}-money-probe`,
+      )
+    }
   }
 
   /* ============================================ C — §28.1d(3) negative inventory, both layers */
