@@ -5,22 +5,39 @@
  * pnpm seed
  * ```
  *
- * **Content only.** Plan §6's brief is *"seed only representative demo content"*, and this script
- * reads that word strictly: categories, size guides, products, variants, collections, Edits, a
- * campaign, a lookbook, journal articles, FAQs, promotions, the homepage composition, and the
- * three globals. It creates **no
- * customers, carts, orders, reviews or wishlist rows**, because those are not content — they are
- * records of things people did, and inventing them produces an admin panel full of purchases nobody
- * made and reviews nobody wrote. A commerce demo whose order list is fiction is worse than one whose
- * order list is empty, and plan §0.1.17's rule against functionality that "looks real but silently
- * does nothing" points the same way. Those tables fill up when Phases 7, 14, 17 and 21 make them
- * fillable.
+ * **What it writes.** Categories, size guides, products, variants, collections, Edits, a campaign,
+ * lookbooks, journal articles, FAQs, promotions, the homepage composition, the three globals — and,
+ * since **Phase 29**, demo customers, orders and reviews.
  *
- * **No media.** Every image field in the schema is optional and every one is left empty, because
- * media is **Phase 8** — Cloudinary, `sharp`, responsive variants — and committing placeholder
- * binaries to stand in for it would be a different kind of fiction. Plan §8.1d already specifies the
- * result: a deliberate neutral placeholder that preserves layout dimensions. This seed is what the
- * storefront looks like against that path, which is worth seeing early.
+ * ### That last clause reverses an argument this file used to make, so here is the argument
+ *
+ * Phase 6 wrote: *"it creates no customers, carts, orders, reviews or wishlist rows, because those
+ * are not content — they are records of things people did, and inventing them produces an admin panel
+ * full of purchases nobody made and reviews nobody wrote. A commerce demo whose order list is fiction
+ * is worse than one whose order list is empty."*
+ *
+ * That was correct, and §29 is the phase it was written against. The prompt asks for content
+ * *"sufficient to demonstrate every feature"*, and four features cannot be demonstrated empty: the
+ * review block, the moderation queue, the account order history, and the admin's order list. An empty
+ * table does not show a reviewer that reviews work; it shows them a page with nothing on it.
+ *
+ * What keeps it honest rather than a reversal:
+ *
+ * - Every seeded person is on **`@example.test`**, a reserved TLD that cannot receive mail. That is
+ *   not decoration: Phase 19's queue will happily try to email a seeded customer.
+ * - A **`verifiedPurchase` badge is set only where the customer genuinely has a paid order for that
+ *   product** — the same question `hasPaidOrderFor` asks. A fabricated badge would be the exact lie
+ *   §21.1a's gate exists to prevent.
+ * - Ratings and states **vary**, including a 2-star with a specific criticism, a `pending` and a
+ *   `rejected`, because a wall of five stars demonstrates nothing and reads as fake to anyone who has
+ *   seen a real product page.
+ * - Passwords are in `docs/DEMO_ACCOUNTS.md`, which is **git-ignored** — §29.1d: *"never commit real
+ *   credentials."*
+ *
+ * **No media, still.** Every image field is left empty here, because media is `pnpm generate:media`'s
+ * job and committing placeholder binaries would be a different kind of fiction. Plan §8.1d specifies
+ * the result of an empty library — a deliberate neutral placeholder that preserves layout dimensions
+ * — and this seed is what the storefront looks like against that path, which is worth seeing.
  *
  * **Idempotent.** Everything is keyed by slug, code or question and updated in place if it already
  * exists, so running it twice changes nothing and running it after an edit re-seeds the demo values.
@@ -35,6 +52,11 @@
 import config from '../src/payload.config'
 
 import { developmentDatabase } from '../src/lib/env.core'
+import { seedCommerce } from './seed/commerce'
+import { seedExtraEditorial } from './seed/editorial'
+import { ACCESSORY_PRODUCTS } from './seed/products-accessories'
+import { LOWER_PRODUCTS } from './seed/products-lower'
+import { TOPS_PRODUCTS } from './seed/products-tops'
 import { rich, upsert, type ProductSpec } from './seed/shared'
 
 /**
@@ -492,6 +514,27 @@ try {
       sizes: [{ size: 'ONE SIZE', sizeSortOrder: 10 }],
       sortOrder: 100,
     },
+    /*
+     * **Phase 29's eighteen** — §29.1b asks for twenty to thirty products across ten categories, and
+     * this array held ten across seven. They live in their own modules because the data is long and
+     * the orchestration below is not, and because three people could then write them at once without
+     * fighting over one file.
+     *
+     * `sortOrder` bands are disjoint by agreement rather than by accident: the ten above hold 10–100,
+     * tops 110–170, lower 175–200, accessories 210–250. The column is `required` but not unique, so a
+     * collision would not error — it would just make the merchandised order arbitrary between the
+     * colliding rows, which is the kind of bug that shows up as "the shop looks shuffled" months later.
+     *
+     * The tops all want the tops size guide and cannot know its runtime id, so it is injected here.
+     * Two of the lower six are waist-sized and want the bottoms guide; the rest are apparel-sized and
+     * take the tops guide. Accessories set none — there is nothing to measure on a card holder.
+     */
+    ...TOPS_PRODUCTS.map((spec) => ({ ...spec, sizeGuide: topsGuideId })),
+    ...LOWER_PRODUCTS.map((spec) => ({
+      ...spec,
+      sizeGuide: spec.sizes.some((size) => /^\d+$/.test(size.size)) ? bottomsGuideId : topsGuideId,
+    })),
+    ...ACCESSORY_PRODUCTS,
   ]
 
   const productIds = new Map<string, number>()
@@ -958,6 +1001,20 @@ try {
 
   payload.logger.info(`FAQs: ${faqSpecs.length}`)
 
+  // ------------------------------------------------- editorial, the Phase 29 half
+  //
+  // A second lookbook so `/lookbook` is an index rather than a page with one card, three more journal
+  // articles carrying real related products and collections (§23.1c's "avoid an editorial dead end",
+  // demonstrated rather than asserted), and enough FAQs to fill more than two of the six topics that
+  // `/help/faq` groups by. It runs here because it resolves products and collections by slug through
+  // the two maps above, and a link it cannot resolve is dropped silently rather than raised.
+  const extraEditorial = await seedExtraEditorial(payload, { collectionIds, productIds })
+
+  payload.logger.info(
+    `Extra editorial — lookbooks: ${extraEditorial.lookbooks}, journal: ${extraEditorial.journal}, ` +
+      `FAQs: ${extraEditorial.faqs}, edits: ${extraEditorial.edits}`,
+  )
+
   // -------------------------------------------------------------- promotions
   //
   // Inactive on purpose. A live discount code in seed data is a live discount code.
@@ -987,6 +1044,27 @@ try {
       active: false,
     },
   })
+
+  // ------------------------------------------- customers, orders and reviews
+  //
+  // **Phase 29, and it reverses this file's own opening argument.** The docblock at the top said this
+  // seed creates no customers, orders or reviews, on the grounds that they "are not content — they
+  // are records of things people did, and inventing them produces an admin panel full of purchases
+  // nobody made". That was right when it was written, and §29 is the phase it was written against:
+  // a demo has to *demonstrate*, and the reviews block, the account area, the order list and the
+  // moderation queue cannot be demonstrated empty.
+  //
+  // What makes it honest rather than a reversal is that every record is labelled demo data, every
+  // address is on `@example.test` — a reserved TLD that cannot receive mail, which matters because
+  // Phase 19 will happily try — and a `verifiedPurchase` badge is set only where the customer really
+  // does have a paid order for that product, which is the same question `hasPaidOrderFor` asks.
+  // See `scripts/seed/commerce.ts`.
+  const commerce = await seedCommerce(payload, { productIds })
+
+  payload.logger.info(
+    `Commerce — customers: ${commerce.customers}, orders: ${commerce.orders}, ` +
+      `reviews: ${commerce.reviews}`,
+  )
 
   // ----------------------------------------------------------------- globals
   await payload.updateGlobal({

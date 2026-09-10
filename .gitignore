@@ -25,6 +25,11 @@ next-env.d.ts
 # The local Payload admin credential. A password in a tracked file is a password on the remote.
 docs/LOCAL_ADMIN.md
 
+# The seeded demo shopper accounts — plan §29.1d, "never commit real credentials". Same rule, same
+# reason: `pnpm seed` writes these passwords into the development database and this is where they are
+# written down. Committing them would put working credentials on the remote.
+docs/DEMO_ACCOUNTS.md
+
 # ---- testing ----
 /coverage/
 /test-results/
