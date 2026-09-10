@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/nextjs'
 
-import { publicEnv } from '@/lib/env.public'
+import { publicAppEnv, publicEnv } from '@/lib/env.public'
 import { sentryOptions } from '@/lib/observability/sentry-options'
 
 /**
@@ -18,7 +18,14 @@ if (publicEnv.NEXT_PUBLIC_SENTRY_DSN) {
   Sentry.init(
     sentryOptions({
       dsn: publicEnv.NEXT_PUBLIC_SENTRY_DSN,
-      environment: process.env.NODE_ENV,
+      /*
+       * `publicAppEnv()`, **not** `NODE_ENV`. Every built deployment has `NODE_ENV === 'production'`,
+       * so a preview's browser errors were landing in the production Sentry environment beside real
+       * ones — while the same deployment's *server* errors, which read `VERCEL_ENV`, landed in
+       * `preview`. One deployment, split across two environments, with the halves that mattered in
+       * the wrong one.
+       */
+      environment: publicAppEnv(),
     }),
   )
 }

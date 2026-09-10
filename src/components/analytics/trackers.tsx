@@ -119,7 +119,12 @@ export function TrackList({
     viewed.current = true
 
     trackEvent('view_item_list', { items: latest.current, listId, listName })
-  }, [listId, listName])
+    /*
+     * `items.length` is a dependency so a list that renders empty and fills later still reports
+     * once. Without it the effect never re-runs, and the `viewed` ref keeps it firing exactly once
+     * whatever the length becomes.
+     */
+  }, [items.length, listId, listName])
 
   useEffect(() => {
     const node = container.current

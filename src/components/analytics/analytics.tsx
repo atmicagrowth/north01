@@ -64,8 +64,31 @@ export function Analytics() {
          * settled rather than after React has re-rendered.
          */
         capture_pageview: 'history_change',
-        /* §25.1d's redaction rule applies to PostHog too — see `sentry.config.ts`. */
-        mask_all_text: false,
+
+        /*
+         * **Autocapture off, and this is a §25.1a decision as much as a §25.1d one.**
+         *
+         * PostHog's autocapture records every click and input interaction on the page, along with
+         * element text. Two problems, and the first is the plan's:
+         *
+         * - §25.1a asks for *"a single internal naming convention"*. Autocapture invents its own,
+         *   from the DOM, and fills the project with `$autocapture` events nobody named — beside
+         *   seventeen that somebody did. The taxonomy stops being the answer to "what do we measure".
+         * - §25.1d says avoid *"raw personal data where not necessary"*. This shop has a checkout, an
+         *   address book and an account settings form; capturing element text across them is
+         *   precisely that.
+         *
+         * Session recording is disabled for the same reason, and explicitly rather than by default:
+         * a project-level toggle in someone's PostHog dashboard should not be able to start
+         * recording this storefront's forms.
+         *
+         * (The first version of this file set `mask_all_text: false` under a comment claiming §25.1d
+         * was being honoured. It is a session-recording option, it was set to the value that
+         * *disables* masking, and the file it pointed at does not exist. Deleted rather than
+         * corrected — the settings below are what the comment was claiming.)
+         */
+        autocapture: false,
+        disable_session_recording: true,
         person_profiles: 'identified_only',
       })
 

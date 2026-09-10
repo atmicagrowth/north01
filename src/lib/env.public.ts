@@ -84,6 +84,20 @@ export function parseEnv<T extends z.ZodType>(
  * chose them, and the choice is recorded in the notes and deviations document as **DEV-26**.
  */
 export const PublicEnvSchema = z.object({
+  /**
+   * Phase 25 — which deployment this is, **in the browser**.
+   *
+   * Vercel exposes it automatically when *"Automatically expose System Environment Variables"* is
+   * on, which is the same setting `resolveAppEnv` already depends on server-side. Nobody sets it by
+   * hand.
+   *
+   * It exists because the browser and the server were reporting **different Sentry environments for
+   * the same deployment**: the server resolves `preview` from `VERCEL_ENV`, and the browser had only
+   * `NODE_ENV`, which is `production` for every built deployment. A preview's errors therefore
+   * landed in the production project beside real ones.
+   */
+  NEXT_PUBLIC_VERCEL_ENV: z.enum(['development', 'preview', 'production']).optional(),
+
   /** Phase 8 — Cloudinary. The delivery cloud name is public by design; it appears in URLs. */
   NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
 
@@ -126,6 +140,7 @@ export type PublicEnv = z.infer<typeof PublicEnvSchema>
  * this file for what happens otherwise.
  */
 const publicEnvSource = {
+  NEXT_PUBLIC_VERCEL_ENV: process.env.NEXT_PUBLIC_VERCEL_ENV,
   NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
   NEXT_PUBLIC_ALGOLIA_APP_ID: process.env.NEXT_PUBLIC_ALGOLIA_APP_ID,
   NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY: process.env.NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY,
@@ -145,3 +160,25 @@ const publicEnvSource = {
  * *is* set (a GA id that is not a GA id) is caught rather than shipped.
  */
 export const publicEnv: PublicEnv = parseEnv(PublicEnvSchema, publicEnvSource, 'browser-safe')
+
+/**
+ * **The deployment this browser is talking to** — the client-side mirror of `appEnv`.
+ *
+ * The mapping is deliberately identical to `resolveAppEnv`'s, including that Vercel's
+ * `development` means *"a local `vercel dev`"* and is reported as `local`. Two functions naming the
+ * same three environments differently would be worse than one that is only mostly right.
+ *
+ * The fallback is `NODE_ENV`, which is what a `pnpm dev` or a self-hosted build has.
+ */
+export function publicAppEnv(): 'local' | 'preview' | 'production' {
+  switch (publicEnv.NEXT_PUBLIC_VERCEL_ENV) {
+    case 'production':
+      return 'production'
+    case 'preview':
+      return 'preview'
+    case 'development':
+      return 'local'
+    default:
+      return process.env.NODE_ENV === 'production' ? 'production' : 'local'
+  }
+}

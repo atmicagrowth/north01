@@ -27,43 +27,88 @@
 export const REDACTED = '[redacted]'
 
 /**
- * Keys whose **value** is sensitive regardless of what it looks like.
+ * Key **segments** whose value is sensitive regardless of what it looks like.
  *
- * Deliberately broad, and deliberately substring-matched: `stripeSecretKey`, `STRIPE_SECRET_KEY`
- * and `secret` all have to match, and the cost of matching something harmless is a redacted field in
- * an error report — which is nearly free, while the cost of missing one is a credential in a
- * third-party system.
+ * ### This was a raw substring match, and it was wrong in both directions
+ *
+ * The first version tested the whole key against `/auth|card|…|pin|…/i`. Measured, on this
+ * project's own field names:
+ *
+ * | key | matched | why |
+ * |---|---|---|
+ * | `shipping` | **yes** | `shi-PP-IN-g` contains `pin` |
+ * | `author` | **yes** | a journal byline contains `auth` |
+ * | `company` | **yes** | contains `pan` |
+ *
+ * Every one of those is a field an operator needs in order to read a report, and losing them makes
+ * the report worse without protecting anything. The docblock claimed the trade was "nearly free";
+ * it was not, and the substring was doing the damage rather than the breadth.
+ *
+ * So the key is split into its **segments** — camelCase boundaries, then any non-alphanumeric — and
+ * each segment is matched **whole**, or against a short list of prefixes where a prefix is genuinely
+ * what identifies the family (`passw` covers `password` and `passwd`; `api_key` becomes the segments
+ * `api` and `key`, so `key` is listed outright).
+ *
+ * That keeps `stripeSecretKey`, `STRIPE_SECRET_KEY`, `payment_method` and `sessionToken` all
+ * matching, and stops `shippingMinor` from being one.
  *
  * `card`, `cvc`, `cvv`, `pan` and `iban` are here even though this application **never sees a card
  * number** — Stripe Checkout is hosted, and §17 keeps it that way. A key named `cardNumber` reaching
  * this function means something has gone wrong that is worth not making worse.
  */
-export const SENSITIVE_KEY = new RegExp(
-  [
-    'auth',
-    'card',
-    'connection',
-    'cookie',
-    'credential',
-    'cvc',
-    'cvv',
-    'database_?url',
-    'dsn',
-    'iban',
-    'jwt',
-    'pan',
-    'passw',
-    'payment_?method',
-    'pin',
-    'secret',
-    'session',
-    'signature',
-    'ssn',
-    'token',
-    'api_?key',
-  ].join('|'),
-  'i',
-)
+const SENSITIVE_SEGMENTS: ReadonlySet<string> = new Set([
+  'auth',
+  'authorization',
+  'card',
+  'cookie',
+  'cookies',
+  'credential',
+  'credentials',
+  'cvc',
+  'cvv',
+  'dsn',
+  'iban',
+  'jwt',
+  'key',
+  'pan',
+  'password',
+  'passwd',
+  'pin',
+  'secret',
+  'session',
+  'signature',
+  'ssn',
+  'token',
+])
+
+/** Two-segment families that only mean something together. Compared against the joined key. */
+const SENSITIVE_PHRASES: readonly string[] = ['connectionstring', 'databaseurl', 'paymentmethod']
+
+/** Split `STRIPE_SECRET_KEY` and `stripeSecretKey` alike into `['stripe', 'secret', 'key']`. */
+function segmentsOf(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .map((part) => part.toLowerCase())
+    .filter((part) => part.length > 0)
+}
+
+export function isSensitiveKey(key: string): boolean {
+  const segments = segmentsOf(key)
+
+  if (segments.some((segment) => SENSITIVE_SEGMENTS.has(segment))) {
+    return true
+  }
+
+  /* `passw` is a prefix rather than a segment: `password`, `passwd`, `passwordHash`. */
+  if (segments.some((segment) => segment.startsWith('passw'))) {
+    return true
+  }
+
+  const joined = segments.join('')
+
+  return SENSITIVE_PHRASES.some((phrase) => joined.includes(phrase))
+}
 
 /**
  * Values that are sensitive whatever they are called.
@@ -111,13 +156,18 @@ const MAX_STRING = 2_000
  * the whole URL goes.
  */
 export function redactString(value: string): string {
-  let output = value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…` : value
+  let output = value
 
   for (const pattern of SENSITIVE_VALUE) {
     output = output.replace(pattern, REDACTED)
   }
 
-  return output
+  /*
+   * **Truncated after replacing, not before.** The first version cut at 2 000 characters first,
+   * which meant a secret straddling that boundary was left as a fragment too short to match — a
+   * partial credential kept, by the very step meant to bound the payload.
+   */
+  return output.length > MAX_STRING ? `${output.slice(0, MAX_STRING)}…` : output
 }
 
 /**
@@ -180,7 +230,7 @@ export function redact(value: unknown, depth = 0): unknown {
   const output: Record<string, unknown> = {}
 
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    output[key] = SENSITIVE_KEY.test(key) ? REDACTED : redact(entry, depth + 1)
+    output[key] = isSensitiveKey(key) ? REDACTED : redact(entry, depth + 1)
   }
 
   return output

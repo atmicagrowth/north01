@@ -342,6 +342,7 @@ the key to a single index is a reasonable tightening and is not done here.
 | `EMAIL_FROM` | server | 19 | Resend → Domains. The verified sending identity, `you@domain` or `Name <you@domain>` |
 | `EMAIL_DEV_ALLOWLIST` | server | 19 | Yours to choose. **The dev safeguard** — outside production, mail goes only to these addresses; empty means none |
 | `NEXT_PUBLIC_SENTRY_DSN` | **public** | 25 | Sentry → Project Settings → Client Keys. A DSN is public by design |
+| `NEXT_PUBLIC_VERCEL_ENV` | **public** | 25 | **Set by Vercel, never by hand.** Present when *Automatically expose System Environment Variables* is on — the same setting `appEnv` depends on. Without it the browser reports `production` for a preview, splitting one deployment across two Sentry environments |
 | `SENTRY_AUTH_TOKEN` | server | 25 | Sentry → Auth Tokens. Build-time only, for source-map upload |
 | `NEXT_PUBLIC_POSTHOG_KEY` **†** | **public** | 25 | PostHog → Project Settings |
 | `NEXT_PUBLIC_POSTHOG_HOST` **†** | **public** | 25 | PostHog region host, e.g. `https://eu.i.posthog.com` |

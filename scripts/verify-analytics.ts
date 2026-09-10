@@ -33,6 +33,7 @@ import { cardToAnalyticsItem, variantLabel } from '../src/lib/analytics/items'
 import { IGNORED_ERRORS } from '../src/lib/observability/sentry-options'
 import {
   REDACTED,
+  isSensitiveKey,
   redact,
   redactEvent,
   redactString,
@@ -352,6 +353,50 @@ const has = (haystack: unknown, needle: string) => JSON.stringify(haystack).incl
   )
 }
 
+/* ============================================ G2 — the key matcher matches segments, not substrings */
+{
+  for (const key of [
+    'password',
+    'passwordHash',
+    'STRIPE_SECRET_KEY',
+    'stripeSecretKey',
+    'apiKey',
+    'api_key',
+    'authorization',
+    'sessionToken',
+    'payment_method',
+    'databaseUrl',
+    'connectionString',
+    'cardNumber',
+    'cvv',
+    'set-cookie',
+  ]) {
+    check(`G2: \`${key}\` is sensitive`, isSensitiveKey(key))
+  }
+
+  /*
+   * **The regression this section exists for.** The first version tested the whole key as a
+   * substring, so `shipping` matched `pin`, `author` matched `auth` and `company` matched `pan` —
+   * three field names an operator needs in order to read a report at all.
+   */
+  for (const key of [
+    'shipping',
+    'shippingMinor',
+    'shippingMethodLabel',
+    'author',
+    'company',
+    'expanded',
+    'orderNumber',
+    'productName',
+    'discardedAt',
+  ]) {
+    check(
+      `G2: **\`${key}\` is NOT sensitive** — it was, and that was the bug`,
+      !isSensitiveKey(key),
+    )
+  }
+}
+
 /* ============================================ H — §25.1d, a whole event */
 {
   const event = redactEvent({
@@ -406,6 +451,11 @@ const has = (haystack: unknown, needle: string) => JSON.stringify(haystack).incl
   check(
     'H: a URL that is not a URL is still scrubbed as a string',
     redactUrl('not a url sk_live_abcd1234').includes(REDACTED),
+  )
+
+  check(
+    'H: **a secret near the truncation boundary goes whole** — replaced before the string is cut',
+    !redactString(`${'x'.repeat(1_995)}sk_live_abcdefghijkl`).includes('sk_live'),
   )
 
   check(

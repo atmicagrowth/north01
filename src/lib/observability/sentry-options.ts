@@ -1,4 +1,4 @@
-import { redact, redactEvent, type ScrubbableEvent } from './redact'
+import { redact, redactEvent, redactString, type ScrubbableEvent } from './redact'
 
 /**
  * **The Sentry options every runtime shares** — plan §25.1d.
@@ -71,11 +71,20 @@ export function sentryOptions(input: SentryOptionsInput) {
      * `beforeSend` along with everything else, and this hook scrubs them individually as well so
      * that a breadcrumb attached to an event that is never sent is still clean in the buffer.
      */
-    beforeBreadcrumb: <T extends { data?: Record<string, unknown> }>(breadcrumb: T): T => ({
+    beforeBreadcrumb: <T extends { data?: Record<string, unknown>; message?: string }>(
+      breadcrumb: T,
+    ): T => ({
       ...breadcrumb,
       ...(breadcrumb.data === undefined
         ? {}
         : { data: redact(breadcrumb.data) as Record<string, unknown> }),
+      /*
+       * The message as well as the data. A `console` breadcrumb's message is whatever was logged,
+       * and the first version scrubbed only `data` while claiming the buffer was clean.
+       */
+      ...(typeof breadcrumb.message === 'string'
+        ? { message: redactString(breadcrumb.message) }
+        : {}),
     }),
 
     dsn: input.dsn,
