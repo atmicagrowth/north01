@@ -10,7 +10,14 @@ import { readOrderForConfirmation } from '@/lib/checkout/confirmation'
 import { formatMinorUnits } from '@/lib/money'
 import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = privateMetadata('Order confirmed')
+/*
+ * **'Your order', not 'Order confirmed'.** §17.1g is the whole point of this page: reaching it is not
+ * payment. The heading below says *Order confirmed* only when the webhook has marked the order paid,
+ * *Order received* while it has not, and *We could not find that order* when there is nothing to
+ * show — and a static `<title>` claiming confirmation would contradict all three from the browser
+ * tab. A neutral title costs nothing here, because the page is `noindex` either way.
+ */
+export const metadata: Metadata = privateMetadata('Your order')
 
 /**
  * **Plan §17.1g — the success URL, which is not evidence of anything.**

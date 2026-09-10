@@ -26,7 +26,7 @@
  * - `/login`, `/register`, `/forgot-password`, `/reset-password` — **the doors, not the rooms.** A
  *   password-reset URL carries a single-use token; a crawler that fetched one would burn it.
  * - `/design-system` — an internal specimen sheet. Real, useful, and nobody's search result.
- * - `/order` and `/search` — see the notes below.
+ * - `/search` — see the note inside the list.
  */
 export const NON_INDEXABLE_PREFIXES: readonly string[] = [
   '/account',

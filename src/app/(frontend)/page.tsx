@@ -96,6 +96,13 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function HomePage() {
   const { content, siteName } = await getHome()
 
+  /* The guard comes first, before any other work — see the note above on `degraded`. */
+  if (content.degraded) {
+    throw new Error(
+      'The homepage could not be read. Refusing to render an empty page that would be cached in its place.',
+    )
+  }
+
   /*
    * The shop itself, once, on the front page — and deliberately minimal. Every extra field an
    * `Organization` can declare is a claim, and this shop is online-only with no address, no hours
@@ -114,12 +121,6 @@ export default async function HomePage() {
       })}
     />
   )
-
-  if (content.degraded) {
-    throw new Error(
-      'The homepage could not be read. Refusing to render an empty page that would be cached in its place.',
-    )
-  }
 
   if (content.sections.length === 0) {
     return (

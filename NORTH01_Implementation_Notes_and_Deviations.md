@@ -6898,7 +6898,29 @@ where `privateMetadata` is right, and `EMPTY_DOCUMENT_SEO` — handed out by ide
 with no overrides — was an unfrozen shared object. `pnpm verify:seo` is **94/94**, four checks added
 for the cases above that a pure harness can reach.
 
-### 1.29.12 What is now owed
+### 1.29.12 Sweep 2 — a title that claimed what the page refuses to claim
+
+**`/checkout/success` had `<title>Order confirmed</title>`.** The page beneath it renders one of three
+headings — *Order confirmed* when the webhook has marked the order paid, *Order received* while it has
+not, and *We could not find that order* when there is nothing to show. §17.1g is the entire reason
+that distinction exists: *"reaching the success page is not payment."* A static title claiming
+confirmation contradicted the page in two of its three states, from the browser tab, on the one screen
+in the shop where the difference is money. It is `Your order` now — neutral, and free, because the
+page is `noindex` either way.
+
+**The homepage's `degraded` guard had drifted below other work.** Adding the organisation JSON-LD put
+two awaits between reading the homepage and refusing to render an empty one. The throw still fired,
+but an invariant that is not the first thing after its read is an invariant a later edit steps over.
+Moved back up.
+
+Three smaller ones. The product route's `generateMetadata` docblock still credited `getProduct` for
+the memoisation that is now `getProductRecord`'s — the exact claim sweep 1 existed to correct, left
+stale one file away. `product.shortDescription ?? product.description` used `??` where `||` is right:
+an editor who **cleared** the short description left an empty string, not a decision to publish no
+description, and `??` walked straight past the full one. And `routes.ts` promised a note about an
+`/order` prefix that is neither in the list nor anywhere in this application.
+
+### 1.29.13 What is now owed
 
 - **`/collections` and `/edits` index pages**, still — they are in the sitemap only as detail URLs.
 - **`generateStaticParams`** on the document routes. A Phase 30 question, and not obviously right for

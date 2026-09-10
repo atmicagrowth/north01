@@ -48,10 +48,13 @@ import { breadcrumbStructuredData, productStructuredData } from '@/lib/seo/struc
 /**
  * §24.1a for the page that matters most, and §24.1b's structured data below it.
  *
- * `getProduct` is React-`cache`d, so this and the render are **one read**. The variant selection is
- * deliberately not passed: metadata describes the product, and the canonical URL has no query — a
- * `?size=m` variant of a page is the same document, and saying otherwise asks an index to hold one
- * entry per size.
+ * **`getProductRecord`, not `getProduct`.** The reads are memoised by **slug**, so this call and the
+ * render below are one query — which `getProduct(slug, selection)` could not have given, because
+ * React's `cache` compares its object argument with `Object.is` and two identical-looking selections
+ * are not the same object. See `lib/product/product.ts`.
+ *
+ * The selection is not passed here in any case: metadata describes the product, and the canonical URL
+ * has no query — `?size=m` is a variant of a page, not a page.
  */
 export async function generateMetadata({
   params,
@@ -68,7 +71,11 @@ export async function generateMetadata({
   const { product } = record
 
   return pageMetadata({
-    description: product.shortDescription ?? product.description,
+    /*
+     * `||`, not `??`. An editor who cleared the short description left an empty string, not a
+     * decision to publish no description — so it falls through to the full one rather than past it.
+     */
+    description: product.shortDescription || product.description,
     image: firstGalleryImage(product.gallery),
     path: `/product/${slug}`,
     seo: documentSeo(product.seo),
@@ -83,6 +90,7 @@ function firstGalleryImage(gallery: unknown): Media | null {
 
   return typeof image === 'object' && image !== null && 'id' in image ? (image as Media) : null
 }
+
 export default async function ProductDetailPage({
   params,
   searchParams,
