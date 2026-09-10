@@ -1,95 +1,35 @@
 # TODO — things only the project owner can do
 
-## 1. Send a **development** Neon connection string
+## 1. ~~Send a development Neon connection string~~ — DONE
 
-**Status as of 2026-09-09: production works, development does not.**
+**Resolved 2026-09-09.** The `development` branch exists on endpoint `ep-green-boat-axabhusu`,
+`.env` points at it, and `DATABASE_PUSH_TARGET` names the same database — so decision **D-10** is
+satisfied and every harness is free to run. Its migration chain matches production's twelve, batch
+for batch.
 
-The string supplied on 2026-09-09 authenticates against the **production** endpoint
-`ep-delicate-waterfall-axjoiwvz`, and everything that needs a database now works with it — `pnpm
-build` prerenders, `/sitemap.xml` is generated from real data, and Phases 24 and 25 were gated in
-full.
+Production remains `ep-delicate-waterfall-axjoiwvz` and is what Vercel's `DATABASE_URL` holds.
+Nothing local points at it any more.
 
-The **development** endpoint `ep-winter-bird-ax9ouwid` still refuses the same password:
+### What is still owed against it
 
-```
-CONNECT FAILED: password authentication failed for user 'neondb_owner'  (SQLSTATE 28P01)
-```
+The five harnesses blocked since Phase 19, and the 57 Playwright tests, have **not been run yet** —
+deliberately deferred so the phase work could continue. In rough order of value:
 
-### What is still blocked
+| Harness | Checks | Why it matters most |
+| --- | --- | --- |
+| `pnpm verify:access` | 48 | **First.** Phase 26 changed `customers.create` and could not re-verify it |
+| `pnpm verify:email` | 85 | |
+| `pnpm verify:account` | 40 | |
+| `pnpm verify:reviews` | 30 | |
+| `pnpm verify:lookbook` | 20 | |
+| `pnpm verify:editorial` | 24 | |
+| `pnpm test:e2e` | 57 | Needs `pnpm exec playwright install --with-deps chromium` once, and `E2E_START_SERVER=1` |
 
-Five harnesses, and only these five. They **create and delete documents**, so decision **D-10**
-refuses to run them unless `DATABASE_PUSH_TARGET` names the database `DATABASE_URL` reaches — which
-is the guard working exactly as intended, because the only reachable database is production.
+### Rotate the role anyway
 
-| Harness | Checks |
-| --- | --- |
-| `pnpm verify:email` | 85 |
-| `pnpm verify:account` | 40 |
-| `pnpm verify:reviews` | 30 |
-| `pnpm verify:lookbook` | 20 |
-| `pnpm verify:editorial` | 24 |
-
-And, since Phase 27, the **whole Playwright suite** — 57 tests across five files. It creates
-customers, adds to bags and opens Stripe Checkout sessions, so it is the most destructive harness
-here. Once a disposable database exists:
-
-```bash
-pnpm exec playwright install --with-deps chromium   # once per machine
-DATABASE_URL='postgresql://…/disposable' E2E_START_SERVER=1 pnpm test:e2e
-```
-
-The 813 Vitest tests need none of this and run today (`pnpm test:run`).
-
-`pnpm verify:seo` (94) and `pnpm verify:analytics` (89) are unaffected: they open no connection at
-all.
-
-`.env` is currently pointed at **production with `DATABASE_PUSH_TARGET` empty**, so Drizzle push
-cannot touch the live schema and the five harnesses refuse themselves. Do not set that variable to a
-production database.
-
-### What to send — and it is not the production string
-
-**The string supplied on 2026-09-09 was production, twice.** Endpoint
-`ep-delicate-waterfall-axjoiwvz` is the branch the deployed shop reads and writes. It already works,
-it is already in `.env`, and sending it again changes nothing — because the problem is not that the
-harnesses lack a password. It is that they must not point at a database with real customers in it.
-
-Running them against production would create and delete **customers, orders, reviews, products and
-collections in the live shop**. That is what decision D-10 exists to prevent, and it is why they
-refuse themselves rather than trusting anyone to remember.
-
-### What is needed instead: a Neon branch, which takes about thirty seconds
-
-Neon branches are copy-on-write, so this costs almost nothing and is instant:
-
-1. Neon console → your project → **Branches** → **Create branch**
-2. Name it `development`. Parent: `production`. Include data: **yes** — a branch with the real
-   catalogue in it is what makes the harnesses meaningful.
-3. Once it exists: **Connect** (top right) → set **Branch** to `development` → **Connection pooling
-   OFF** (local work wants the direct endpoint) → copy.
-
-It will look like this — a **different** endpoint id from the production one above:
-
-```
-postgresql://neondb_owner:<password>@ep-<something-else>.c-4.us-east-2.aws.neon.tech/neondb?sslmode=verify-full
-```
-
-**Check the endpoint id differs from `ep-delicate-waterfall-axjoiwvz` before sending it.** If it does
-not, the branch selector was still on production.
-
-### What happens once it arrives
-
-- `.env` repointed at it, with `DATABASE_PUSH_TARGET` set to the same database so D-10 is satisfied
-- the five blocked harnesses run — 199 checks, `verify:access` first, because Phase 26 changed
-  `customers.create` and could not re-run it
-- Playwright's browsers installed, and the **57 E2E tests run for the first time**
-- anything they find gets fixed
-
-### Rotate the role
-
-The password has appeared in a chat transcript twice and should be treated as exposed. Neon →
-**Roles** → `neondb_owner` → **Reset password**, then update both this and the Vercel
-`DATABASE_URL`.
+`neondb_owner`'s password has now appeared in a chat transcript **three times** and should be treated
+as exposed. Neon → **Roles** → `neondb_owner` → **Reset password**, then update `.env` and Vercel's
+`DATABASE_URL`. The branch above shares that role, so one reset covers both.
 
 ---
 
