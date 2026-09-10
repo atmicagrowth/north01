@@ -128,21 +128,27 @@ export async function subscribe(
    * write. It runs before validation too: a bot's malformed payload should not get a free field-by-
    * field critique of the form it is attacking.
    */
+  const submitted = formData.get('newsletterEmail')
+  const values: Record<string, string> =
+    typeof submitted === 'string' && submitted !== '' ? { newsletterEmail: submitted } : {}
+
   const refused = await publicFormRefusal(formData)
 
   if (refused) {
+    /*
+     * `values` is echoed, which the first version did not do — it returned `{}` and wiped the address
+     * the customer had just typed. Verification failing is the case where they are *most* likely to
+     * try again, and making them retype is a punishment for a challenge that expired while they read
+     * the page. `echo` in `lib/auth/actions.ts` makes the same argument for the same reason.
+     */
     return {
       fieldErrors: {},
       message: refused,
       status: 'error',
       submissionCount: previous.submissionCount + 1,
-      values: {},
+      values,
     }
   }
-
-  const submitted = formData.get('newsletterEmail')
-  const values: Record<string, string> =
-    typeof submitted === 'string' && submitted !== '' ? { newsletterEmail: submitted } : {}
 
   const parsed = parse(formData)
 

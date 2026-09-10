@@ -25,6 +25,7 @@
  */
 
 import { isSameSitePath } from '../src/lib/same-site-path'
+import { SKIPPED_FILES, findSecrets } from '../src/lib/security/secret-patterns'
 import { ACCEPTED_MIME_TYPES, MAX_IMAGE_DIMENSION, MAX_UPLOAD_BYTES } from '../src/lib/media/limits'
 import {
   TURNSTILE_FAILURE_MESSAGE,
@@ -265,6 +266,107 @@ function stubVerifier(success: boolean, errorCodes: string[] = []) {
       !(ACCEPTED_MIME_TYPES as readonly string[]).includes(type),
     )
   }
+}
+
+/* ============================================ G — §26.1d, the scanner itself */
+{
+  const finds = (line: string) => findSecrets(line).map((entry) => entry.name)
+
+  /**
+   * **Every credential-shaped fixture below is assembled, never written whole.**
+   *
+   * This harness has to contain strings the scanner flags — that is what it is asserting — so a
+   * literal would make `pnpm scan:secrets` fail on this file, permanently, and the tempting fix is
+   * to allowlist `scripts/`. That would be a hole exactly where somebody is most likely to paste a
+   * real key while debugging.
+   *
+   * `verify-analytics.ts` solves the same problem by marking its fixtures `EXAMPLE`, which works
+   * there because it is testing *redaction* and redaction does not care. It cannot work here: half
+   * of these assertions are that a credential **is** found, and `EXAMPLE` is a placeholder marker.
+   *
+   * So the prefix and the body are separate string literals, joined at runtime. The line in this
+   * file contains no contiguous match; the value passed to `findSecrets` does.
+   */
+  const join = (...parts: string[]) => parts.join('')
+
+  const stripeLive = join('sk_', 'live_', '51QQAbCdEfGhIjKlMnOp')
+  const stripeTest = join('sk_', 'test_', '51QQAbCdEfGhIjKlMnOp')
+  const awsKey = join('AKIA', 'IOSFODNN7ZZZZZZZ')
+  const privateKey = join('-----BEGIN ', 'RSA ', 'PRIVATE ', 'KEY-----')
+  const pg = (user: string, password: string) =>
+    join('postgres://', user, ':', password, '@db.internal/app')
+
+  check(
+    'G: a live-looking Stripe secret key is found',
+    finds(`const k = "${stripeLive}"`).includes('stripe-secret-key'),
+  )
+
+  check(
+    'G: a Postgres URL with a password is found',
+    finds(pg('dbowner', 's3cretpw1234')).includes('postgres-url-with-password'),
+  )
+
+  check('G: an AWS access key id is found', finds(awsKey).length > 0)
+
+  /*
+   * **The check that caught a self-inflicted hole.** `PLACEHOLDER_EXACT` briefly listed `SECRET` and
+   * `KEY`, which meant a PEM private-key header was excused as an illustration — the single
+   * most serious thing this scanner exists to find, silently ignored by the rule meant to reduce
+   * noise. It failed on the first run of this assertion.
+   */
+  check('G: **a private key block is found**', finds(privateKey).length > 0)
+
+  /*
+   * **The sweep's other finding.** The placeholder rule was case-insensitive, so the letters `user`
+   * inside a real username excused the whole credential. A scanner with a hole shaped like the most
+   * common username in the world is worse than none, because it is trusted.
+   */
+  check(
+    'G: **a real credential whose username contains "user" is still found**',
+    finds(pg('dbuser', 'aRealPassword1')).length > 0,
+  )
+
+  check(
+    "G: …and the documentation's shouted placeholder is still excused",
+    finds(join('postgresql://', 'USER', ':', 'PASSWORD', '@HOST.neon.tech/DATABASE')).length === 0,
+  )
+
+  check(
+    'G: an angle-bracket placeholder is excused',
+    finds(pg('neondb_owner', '<new-password>')).length === 0,
+  )
+
+  /*
+   * The Resend pattern used to match prose. These two strings are a real filename and a real
+   * database index from this repository.
+   */
+  check(
+    'G: **prose is not a secret** — a filename that happens to contain `re_`',
+    finds('03_NORTH01_Website_Structure_and_User_Flow_Current_OnlineOnly.md').length === 0,
+  )
+
+  check(
+    'G: …nor is a database index name',
+    finds('collections_blocks_figure_mobile_image_idx').length === 0,
+  )
+
+  check(
+    'G: **every match on a line is reported, not only the first**',
+    findSecrets(`a ${stripeLive} b ${stripeTest}`).length === 2,
+  )
+
+  check(
+    'G: ordinary prose finds nothing',
+    finds('The jacket is cut from a dense cotton twill.').length === 0,
+  )
+
+  check('G: an empty line finds nothing', finds('').length === 0)
+
+  check(
+    'G: the lockfile and generated types are skipped by name',
+    SKIPPED_FILES.some((pattern) => pattern.test('pnpm-lock.yaml')) &&
+      SKIPPED_FILES.some((pattern) => pattern.test('src/payload-types.ts')),
+  )
 }
 
 const failed = results.filter((result) => !result.ok)

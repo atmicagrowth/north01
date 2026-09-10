@@ -7425,7 +7425,46 @@ injected, so every branch is driven without a network or an account. The phase p
 sentence — *"do not weaken security to make a test pass"* — is why each assertion states the rule
 rather than the current behaviour: there is nothing here to relax.
 
-### 1.31.10 What is now owed
+### 1.31.10 Sweep 1 — the scanner had a hole shaped like the word "user"
+
+**`PLACEHOLDER` was case-insensitive.** `docs/DATABASE.md` writes a connection string as
+`postgresql://USER:PASSWORD@HOST…`, and those shouted words are what make it obviously an
+illustration — so they were excluded. Matching them with `/i` excluded something else as well:
+**every real credential whose username contains the letters `user`.**
+`postgres://dbuser:<a real password>@…` was classified as documentation and never reported.
+
+A scanner with a hole shaped like the most common username in the world is worse than no scanner,
+because it is trusted. Shouted placeholders are now matched **exactly**, and only the genuinely
+case-insensitive markers — `example`, `your-`, `<…>` — stay loose.
+
+**Then the fix created a second hole, and the harness caught it in one run.** Adding `SECRET` and
+`KEY` to the exact list looked harmless and meant that a PEM private-key header — which contains the
+word `KEY` — was excused as an illustration. The single most serious thing the scanner exists to
+find, silently ignored by the rule meant to reduce noise. It failed the first time
+`pnpm verify:security` ran, which is the entire argument for the change that made it testable at all:
+the matching moved out of `scripts/` and into `lib/security/secret-patterns.ts`, because **a scanner
+that cannot be driven by a harness is a scanner nobody finds out has stopped matching.**
+
+Two smaller findings from the same extraction:
+
+- **Only the first match on a line was reported.** A `.env` pasted into a document would surface one
+  line and hide the rest, which defeats the point of a report somebody is meant to clean up in one
+  pass. `matchAll` now, per pattern.
+- **The harness's own fixtures tripped the scanner**, as `verify-analytics.ts`'s did. The fix there —
+  marking them `EXAMPLE` — cannot work here, because half of these assertions are that a credential
+  **is** found and `EXAMPLE` is a placeholder marker. So the prefix and the body are separate string
+  literals joined at runtime: the line in the file contains no contiguous match, the value passed to
+  `findSecrets` does. Allowlisting `scripts/` was the tempting third option and is a hole exactly
+  where a real key gets pasted while debugging.
+
+One unrelated fix: **the newsletter's Turnstile refusal wiped the address the customer had just
+typed.** Verification failing is the case where somebody is *most* likely to try again, and making
+them retype is a punishment for a challenge that expired while they read the page. `values` is echoed
+now, as `lib/auth/actions.ts` already did for the same reason.
+
+`pnpm verify:security` is **64/64**, up from 51.
+
+### 1.31.11 What is now owed
 
 - **Turnstile keys.** Until `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` exist, the
   widget is not rendered and nothing is verified — by design, and stated in `TODO.md` §7 rather than
