@@ -7464,7 +7464,52 @@ now, as `lib/auth/actions.ts` already did for the same reason.
 
 `pnpm verify:security` is **64/64**, up from 51.
 
-### 1.31.11 What is now owed
+### 1.31.11 Sweep 2 — the form was guarded and the door beside it was not
+
+**`POST /api/customers` created accounts with no challenge at all.**
+
+Phase 26 put Turnstile on the registration *form*. `customers.create` was `() => true`, and Payload's
+REST surface is public — so a bot never had to load the form. The same write was one unauthenticated
+request away, with no widget, no token and no round trip to Cloudflare.
+
+That is §26.1a's own warning one level further out than the sentence is usually read. *"Client-side
+widget alone is not security"* is about the widget; this is about the **set of paths to the write**.
+Verifying in the Server Action is necessary and, on its own, still not sufficient.
+
+The fix keeps the property Phase 7 deliberately built. `register` writes with `overrideAccess: false`
+because *"the storefront gets no privilege the REST API does not have… one rule, auditable in one
+file"*, and switching to `overrideAccess: true` would delete that rather than enforce it. So the rule
+itself got stricter and stayed one rule: **staff, or a request carrying verification evidence.**
+
+The evidence is `req.context`, and the reason it works is an asymmetry in Payload itself:
+`createLocalReq` is the only thing that populates `context`, and the REST route never does. **It is a
+value the network cannot supply.** The storefront still holds no privilege the REST API lacks — the
+REST API simply cannot produce the evidence.
+
+When Turnstile is unconfigured the guard skips and the action sets the flag anyway. That is correct
+and is the point: the flag means *"this went through the guard"*, not *"a challenge was solved"*. The
+guard decides whether a challenge was required.
+
+**Two harness consequences, and the second is the interesting one.** `verify-access.ts` has two
+checks asserting the password policy on registration; they now have to carry the evidence to reach
+the thing they are testing, or they would keep passing while testing the new gate instead. And a new
+check asserts the gate itself. **Neither could be run** — `verify:access` writes documents, and D-10
+still holds it until a development connection string exists. `verify:security` covers the rule as a
+pure function instead, which is six of the seventy checks.
+
+**What is still open, stated rather than implied: `POST /api/customers/login` is not guarded.** It is
+Payload's own auth endpoint and access control does not reach it, so the login form's Turnstile
+protects the form and not that route. The mitigation is real but narrower than a challenge: the
+five-failure lockout applies to REST logins too. Recorded as gap **G-18**.
+
+The other public writes were checked rather than assumed: `newsletter-subscribers.create` is
+`isStaff` — the Server Action writes with `overrideAccess: true`, so the guarded action is the only
+public path — and `reviews.create` is `isActiveCustomer`, which needs an account before it needs a
+challenge.
+
+`pnpm verify:security` is **70/70**.
+
+### 1.31.12 What is now owed
 
 - **Turnstile keys.** Until `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` exist, the
   widget is not rendered and nothing is verified — by design, and stated in `TODO.md` §7 rather than
@@ -7473,6 +7518,9 @@ now, as `lib/auth/actions.ts` already did for the same reason.
 - **A browser pass over the four guarded forms**, which have never rendered a widget.
 - **`payload@3.88.1`** when the `@payloadcms/*` packages catch up, so the advisory leaves the audit
   rather than being explained in it.
+- **`verify:access`, first**, once a development connection string exists: this phase changed
+  `customers.create` and could not run it. That is the one owed item with a security consequence.
+- **`POST /api/customers/login`** — gap **G-18**, above.
 - **The five database harnesses**, still held by D-10.
 
 # 2. Deviations

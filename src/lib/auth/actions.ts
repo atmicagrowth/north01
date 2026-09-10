@@ -252,6 +252,17 @@ export async function register(
   try {
     created = await payload.create({
       collection: 'customers',
+      /*
+       * **The evidence that this write came through the guard** — Phase 26's second sweep.
+       *
+       * `customers.create` is `verifiedPublicWrite`, which accepts staff or a request carrying this
+       * key. `context` is a local-API concept that Payload's REST route never populates, so
+       * `POST /api/customers` cannot forge it — which is what closes the door this form's Turnstile
+       * was never in front of.
+       *
+       * It is set **after** `publicFormRefusal` above, and only reachable past it.
+       */
+      context: { turnstileVerified: true },
       overrideAccess: false,
       data: {
         email: parsed.data.email,

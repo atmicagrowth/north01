@@ -187,6 +187,46 @@ export const isActiveCustomer: Access = ({ req: { user } }) => activeCustomer(us
 export const isStaffOrActiveCustomer: Access = ({ req: { user } }) =>
   staffUser(user) !== null || activeCustomer(user) !== null
 
+/**
+ * **The key a Server Action sets once it has verified a Turnstile challenge.**
+ *
+ * Local API only. Payload populates `req.context` from the `context` option on a *local* call —
+ * `createLocalReq` is the only thing that writes it — and the REST route never sets it. That
+ * asymmetry is the whole mechanism: a value the network cannot supply.
+ */
+export const VERIFIED_PUBLIC_WRITE = 'turnstileVerified' as const
+
+/**
+ * **Plan §26.1a, closed on the door the form does not use — Phase 26, second sweep.**
+ *
+ * Registration is guarded by Turnstile in `lib/auth/actions.ts`. It was **not** guarded at
+ * `POST /api/customers`, because `create` was `() => true` and Payload's REST surface is public.
+ * A bot never had to load the form: the same write was one unauthenticated request away, with no
+ * challenge, no widget and no round trip to Cloudflare.
+ *
+ * That is exactly the shape §26.1a warns about — *"client-side widget alone is not security"* — one
+ * level further out than the sentence is usually read. Verifying in the Server Action is necessary
+ * and, on its own, still not sufficient: what matters is whether **every** path to the write is
+ * covered.
+ *
+ * ### Why a context flag rather than staff-only plus `overrideAccess: true`
+ *
+ * `register` deliberately writes with `overrideAccess: false`, and `Customers.ts` records why: *"the
+ * storefront gets no privilege the REST API does not have… one rule, auditable in one file."* That
+ * is worth keeping. Switching to `overrideAccess: true` would delete the property rather than
+ * enforce it.
+ *
+ * So the rule itself gets stricter, and stays one rule: **a request that has passed verification, or
+ * staff.** The storefront still has no privilege the REST API lacks — the REST API simply cannot
+ * produce the evidence, because `context` is not part of an HTTP request.
+ *
+ * When Turnstile is unconfigured `verifyTurnstile` skips and the action sets the flag anyway. That
+ * is correct and is the point: the flag means *"this went through the guard"*, not *"a challenge was
+ * solved"*. The guard is what decides whether a challenge was required.
+ */
+export const verifiedPublicWrite: Access = ({ req }) =>
+  staffUser(req.user) !== null || req.context?.[VERIFIED_PUBLIC_WRITE] === true
+
 /* -------------------------------------------------------------------------------------------------
  * Field-level rules
  * ---------------------------------------------------------------------------------------------- */

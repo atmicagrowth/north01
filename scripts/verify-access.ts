@@ -830,6 +830,13 @@ try {
     () =>
       payload.create({
         collection: 'customers',
+        /*
+         * **The Turnstile evidence — Phase 26.** `customers.create` is `verifiedPublicWrite`, so an
+         * unauthenticated create without this key is refused *before* validation runs. These two
+         * checks are about the **password policy**, so they have to get past the new gate to reach
+         * the thing they are testing — otherwise they would keep passing while testing nothing.
+         */
+        context: { turnstileVerified: true },
         overrideAccess: false,
         data: {
           email: `${PREFIX}-weak@example.test`,
@@ -847,6 +854,7 @@ try {
     () =>
       payload.create({
         collection: 'customers',
+        context: { turnstileVerified: true },
         overrideAccess: false,
         data: {
           email: `${PREFIX}-echo@example.test`,
@@ -857,6 +865,24 @@ try {
         },
       }),
     ['ValidationError'],
+  )
+  /* ---- Phase 26: the REST door the registration form's Turnstile is not in front of ---- */
+
+  await denied(
+    'an unauthenticated create with no Turnstile evidence is refused — §26.1a at `POST /api/customers`',
+    () =>
+      payload.create({
+        collection: 'customers',
+        overrideAccess: false,
+        data: {
+          email: `${PREFIX}-unverified@example.test`,
+          password: 'A-strong-passphrase-9',
+          firstName: 'Un',
+          lastName: 'Verified',
+          accountStatus: 'active',
+        },
+      }),
+    ['Forbidden'],
   )
 } finally {
   await cleanup()

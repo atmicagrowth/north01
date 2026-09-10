@@ -2,7 +2,14 @@ import type { CollectionConfig } from 'payload'
 import { AuthenticationError, ValidationError } from 'payload'
 
 import { checkPassword } from '../../lib/password-policy'
-import { ACCOUNT_STATUS_OPTIONS, activeCustomer, isAdmin, isStaffField, staffUser } from '../access'
+import {
+  ACCOUNT_STATUS_OPTIONS,
+  activeCustomer,
+  isAdmin,
+  isStaffField,
+  staffUser,
+  verifiedPublicWrite,
+} from '../access'
 import { resetPasswordEmail } from '../email/resetPasswordEmail'
 import { normaliseEmail } from '../fields/slug'
 import { cascadeDelete } from '../hooks/cascadeDelete'
@@ -131,7 +138,16 @@ export const Customers: CollectionConfig = {
       return customer ? { id: { equals: customer.id } } : false
     },
 
-    create: () => true,
+    /**
+     * **Verified, or staff — Phase 26's second sweep.**
+     *
+     * This was `() => true`, which made `POST /api/customers` an unauthenticated account-creation
+     * endpoint with no challenge in front of it — so Phase 26's Turnstile on the registration *form*
+     * protected the door a bot does not use. See `verifiedPublicWrite` for why the fix is a stricter
+     * rule rather than `overrideAccess: true`, and for why the storefront still holds no privilege
+     * the REST API lacks.
+     */
+    create: verifiedPublicWrite,
 
     update: ({ req: { user } }) => {
       if (staffUser(user)) {

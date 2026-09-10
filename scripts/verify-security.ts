@@ -24,6 +24,7 @@
  * Cloudflare call. The third harness in this project that opens no connection.
  */
 
+import { VERIFIED_PUBLIC_WRITE, verifiedPublicWrite } from '../src/payload/access'
 import { isSameSitePath } from '../src/lib/same-site-path'
 import { SKIPPED_FILES, findSecrets } from '../src/lib/security/secret-patterns'
 import { ACCEPTED_MIME_TYPES, MAX_IMAGE_DIMENSION, MAX_UPLOAD_BYTES } from '../src/lib/media/limits'
@@ -366,6 +367,41 @@ function stubVerifier(success: boolean, errorCodes: string[] = []) {
     'G: the lockfile and generated types are skipped by name',
     SKIPPED_FILES.some((pattern) => pattern.test('pnpm-lock.yaml')) &&
       SKIPPED_FILES.some((pattern) => pattern.test('src/payload-types.ts')),
+  )
+}
+
+/* ============================================ H — §26.1a at the REST door */
+{
+  const as = (context: Record<string, unknown>, user: unknown = null) =>
+    verifiedPublicWrite({ req: { context, user } } as never)
+
+  check(
+    'H: **an unauthenticated create with no evidence is refused** — `POST /api/customers` cannot forge `context`',
+    as({}) === false,
+  )
+
+  check(
+    'H: …and a forged-looking value that is not `true` is refused',
+    as({ turnstileVerified: 'yes' }) === false,
+  )
+  check(
+    'H: …and a missing context object is refused',
+    verifiedPublicWrite({ req: { user: null } } as never) === false,
+  )
+
+  check(
+    'H: a request carrying the verification key passes',
+    as({ [VERIFIED_PUBLIC_WRITE]: true }) === true,
+  )
+
+  check(
+    'H: staff pass without it — the admin panel creates customers',
+    as({}, { collection: 'users', role: 'admin' }) === true,
+  )
+
+  check(
+    'H: **a signed-in customer is not staff** and still needs the evidence',
+    as({}, { collection: 'customers', accountStatus: 'active' }) === false,
   )
 }
 
