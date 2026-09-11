@@ -58,6 +58,19 @@ export const CATALOG_IMAGE_SIZES = {
    */
   productCardGrid: `(min-width: 1440px) 244px, (min-width: 1280px) calc(23vw - 88px), (min-width: 1024px) calc(30.667vw - 109px), ${TWO_UP_IN_CONTAINER}`,
   /**
+   * **The same grid with no filter rail beside it** — collections, edits, journal articles and the
+   * search landing. Phase 30's sweep found all five using `productCardGrid`, which subtracts a 353px
+   * rail that is not there, so every card was **under**-fetched: 205px declared for a 298px card at
+   * 1024, and a 1024@2x screen served `w_430` where 596 was needed. Under-fetching upscales, which
+   * the table above calls worse than over-fetching.
+   *
+   * Derived from `ProductGrid`'s own `grid-cols-2 gap-x-m lg:grid-cols-3 xl:grid-cols-4` inside
+   * `PageContainer`, and matching the measured 310 / 313 / 276 / 298 / 341 / 128 at 1920, 1440,
+   * 1280, 1024, 768 and 320. The 1440–1600 tier is the band where `max-w-page` caps the container
+   * before the padding `clamp` does (`lib/media/grid.ts`).
+   */
+  productCardGridFull: `(min-width: 1600px) 310px, (min-width: 1440px) calc(342px - 2vw), (min-width: 1280px) calc(23vw - 18px), (min-width: 1024px) calc(30.667vw - 16px), ${TWO_UP_IN_CONTAINER}`,
+  /**
    * The category header image on `/shop/<category>`: full container width, no sidebar beside it.
    * Identical to the homepage's contained figure, because that is what it is.
    */

@@ -1,6 +1,7 @@
 import type { EditView } from '@/lib/editorial/read'
 
 import { ProductGrid } from '@/components/catalog/product-grid'
+import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import { EditorialBody } from '@/components/editorial/editorial-body'
 import { Prose } from '@/components/editorial/prose'
 import { PageContainer } from '@/components/layout/page-container'
@@ -33,6 +34,7 @@ export function EditPage({ edit }: { edit: EditView }) {
           <MediaImage
             context="heroDesktop"
             media={edit.hero}
+            mobileContext="heroMobile"
             priority
             sizes={HOME_IMAGE_SIZES.figureFullBleed}
           />
@@ -68,7 +70,11 @@ export function EditPage({ edit }: { edit: EditView }) {
               </p>
             ) : null}
 
-            <ProductGrid cards={group.products} list={{ id: 'edit', name: 'Edit' }} />
+            <ProductGrid
+              sizes={CATALOG_IMAGE_SIZES.productCardGridFull}
+              cards={group.products}
+              list={{ id: 'edit', name: 'Edit' }}
+            />
           </PageContainer>
         </Section>
       ))}

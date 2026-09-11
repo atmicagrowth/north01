@@ -1,6 +1,7 @@
 import type { JournalView } from '@/lib/editorial/read'
 
 import { ProductGrid } from '@/components/catalog/product-grid'
+import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import { Prose } from '@/components/editorial/prose'
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
@@ -41,6 +42,7 @@ export function JournalArticlePage({ article }: { article: JournalView }) {
           <MediaImage
             context="heroDesktop"
             media={article.heroImage}
+            mobileContext="heroMobile"
             priority
             sizes={HOME_IMAGE_SIZES.figureFullBleed}
           />
@@ -73,6 +75,7 @@ export function JournalArticlePage({ article }: { article: JournalView }) {
           <PageContainer>
             <SectionHeading className="mb-l">In this story</SectionHeading>
             <ProductGrid
+              sizes={CATALOG_IMAGE_SIZES.productCardGridFull}
               cards={article.relatedProducts}
               list={{ id: 'journal_related', name: 'Journal related products' }}
             />

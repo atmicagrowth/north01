@@ -1,6 +1,5 @@
 'use client'
 
-import * as Sentry from '@sentry/nextjs'
 import { useEffect } from 'react'
 
 /**
@@ -31,7 +30,19 @@ export default function GlobalError({
   reset: () => void
 }) {
   useEffect(() => {
-    Sentry.captureException(error)
+    /*
+     * **Loaded on the error, not on every page.** A static `import * as Sentry` at the top of this
+     * file put the SDK into the root client bundle, because Next ships this boundary with every
+     * route in case it is needed — so every visitor downloaded it whether or not anything failed,
+     * and whether or not a DSN was configured. See `instrumentation-client.ts` for the measurement.
+     *
+     * With no DSN at build time this is `if (!undefined) return` and the import is unreachable. With
+     * one, the dynamic import resolves to the same module instance `instrumentation-client.ts`
+     * initialised, so the capture goes to the configured client.
+     */
+    if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return
+
+    void import('@sentry/nextjs').then((sdk) => sdk.captureException(error))
   }, [error])
 
   return (

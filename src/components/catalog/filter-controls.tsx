@@ -66,12 +66,13 @@ export function SortControl({ value }: { value: CatalogSort }) {
 
   return (
     /*
-     * `min-w-0 flex-1` on a phone and `flex-none` from `sm` up. A flex item's default `min-width` is
-     * `auto`, which refuses to shrink below its content — so a fixed `min-w-[11rem]` on the select
-     * pushed the whole control row past a 320px viewport rather than narrowing. The select keeps its
-     * comfortable width wherever there is room and gives it up where there is not.
+     * `flex-1 basis-48` on a phone and `flex-none` from `sm` up, inside a row that WRAPS. This was
+     * `min-w-0 flex-1` in a row that could not wrap, which kept 320px free of overflow by letting the
+     * select shrink below its own label: Phase 30 measured a 100px select showing "Featurec" and
+     * "Price: lov". A 12rem basis is the label plus the native arrow; where the row cannot give it
+     * that, Sort takes its own line instead of truncating.
      */
-    <div className="flex min-w-0 flex-1 items-center gap-s sm:flex-none">
+    <div className="flex flex-1 basis-48 items-center gap-s sm:flex-none sm:basis-auto">
       <Label htmlFor={id} className="whitespace-nowrap text-meta uppercase text-foreground-muted">
         Sort
       </Label>

@@ -33,7 +33,8 @@ import { utilityNav } from '@/lib/navigation/utility'
  * viewport, once when it comes back — and costs nothing in between.
  *
  * The compaction itself is 72px to 56px and nothing else: no colour change, no shadow appearing, no
- * shrinking type. Visual guide §11 lists *"excessive animation"* under Avoid, and the transition
+ * shrinking type — and, since Phase 30, **no movement of the page beneath it**: the bar's margin grows
+ * by what its height loses, so the document never reflows (see the `<header>` below). Visual guide §11 lists *"excessive animation"* under Avoid, and the transition
  * runs on the `--duration-base` token, which the one reduced-motion block in `globals.css` collapses
  * to 1ms — so a customer who asked for less motion gets the compact bar with no animation rather
  * than a bar that never compacts.
@@ -78,7 +79,18 @@ export function HeaderBar({
       <header
         data-slot="site-header"
         data-compact={compact || undefined}
-        className="sticky top-0 z-40 w-full border-b border-border bg-canvas"
+        className={cn(
+          'sticky top-0 z-40 w-full border-b border-border bg-canvas',
+          /*
+           * **Flow-neutral.** The bar shrinks 16px and its bottom margin grows 16px, on the same
+           * token and the same curve, so its footprint in the document is 72px at every frame. Phase
+           * 30 measured the old version — height only — moving `<main>` on every return to the top
+           * (0.010 CLS a time at 375) and making scroll anchoring snap any scroll of 1–16px back to
+           * 0. The margin is empty space under a stuck bar; nothing is drawn there.
+           */
+          'transition-[margin] duration-(--duration-base) ease-entrance',
+          compact && 'mb-4',
+        )}
       >
         <div
           className={cn(

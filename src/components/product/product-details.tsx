@@ -114,7 +114,12 @@ export function ProductDetails({
               </p>
             ) : null}
 
-            {sizeGuide ? <SizeGuideDialog guide={sizeGuide} /> : null}
+            {sizeGuide ? (
+              <SizeGuideDialog
+                fitNotes={sizeGuide.fitNotes ? <Prose value={sizeGuide.fitNotes} /> : null}
+                guide={sizeGuide}
+              />
+            ) : null}
           </div>
         ) : null,
       id: 'size-fit',

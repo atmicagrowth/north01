@@ -42,7 +42,8 @@ export const THREE_UP_IN_CONTAINER = 'calc(30.667vw - 16px)'
  * All four shipped with `HOME_IMAGE_SIZES.figureContained`, which promises the **entire** container —
  * 1312px at 1920 — for a card that is 411px wide there. Correct for a full-bleed-within-gutters
  * editorial figure, which is what that constant is named for and what `editorial-body`, `-blocks`,
- * `collection-page` and `lookbook-page` still correctly use it for. Inside a grid it makes the
+ * `collection-page` and `lookbook-page`'s chapter hero still correctly use it for — but not the
+ * lookbook's chapter *gallery*, which is a grid too (`EDITORIAL_GALLERY_TWO_UP`, below). Inside a grid it makes the
  * browser fetch a **3.2×** candidate: measured `natural=1177` against `rendered=366`.
  *
  * Both strings below are derived from `C(v)` — the container inner width, whose three regimes the
@@ -65,3 +66,12 @@ export const EDITORIAL_GRID_TWO_UP =
 /** Three across at `lg`, two at `sm`, one below it, `gap-l`. `/journal`. */
 export const EDITORIAL_GRID_THREE_UP =
   '(min-width: 1600px) 411px, (min-width: 1440px) calc(453.333px - 2.667vw), (min-width: 1024px) calc(30.667vw - 26.667px), (min-width: 640px) calc(46vw - 20px), (min-width: 500px) 92vw, calc(100vw - 2.5rem)'
+
+/**
+ * **A lookbook chapter's gallery** — two across at `sm` with `gap-m` (24px), not `gap-l`, so it is
+ * not `EDITORIAL_GRID_TWO_UP`. It claimed `figureContained`: 1312px for a 644px tile at 1920 and
+ * 707 for 341 at 768, about 2x. Matches 644 / 650.4 / 459 / 341.3 / 282.4 / 335 at 1920, 1440,
+ * 1024, 768, 640 and 375 — sweep 1's measurement, taken by the same arithmetic as the two above.
+ */
+export const EDITORIAL_GALLERY_TWO_UP =
+  '(min-width: 1600px) 644px, (min-width: 1440px) calc(708px - 4vw), (min-width: 640px) calc(46vw - 12px), (min-width: 500px) 92vw, calc(100vw - 2.5rem)'

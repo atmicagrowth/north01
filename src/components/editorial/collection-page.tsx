@@ -1,6 +1,7 @@
 import type { CollectionView } from '@/lib/editorial/read'
 
 import { ProductGrid } from '@/components/catalog/product-grid'
+import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import { EditorialBody } from '@/components/editorial/editorial-body'
 import { Prose } from '@/components/editorial/prose'
 import { PageContainer } from '@/components/layout/page-container'
@@ -50,6 +51,7 @@ export function CollectionPage({ collection }: { collection: CollectionView }) {
           <MediaImage
             context="heroDesktop"
             media={collection.heroMedia}
+            mobileContext="heroMobile"
             priority
             sizes={HOME_IMAGE_SIZES.figureFullBleed}
           />
@@ -90,6 +92,7 @@ export function CollectionPage({ collection }: { collection: CollectionView }) {
           <PageContainer>
             <SectionHeading className="mb-l">Featured</SectionHeading>
             <ProductGrid
+              sizes={CATALOG_IMAGE_SIZES.productCardGridFull}
               cards={collection.featured}
               list={{ id: 'collection_featured', name: 'Collection featured' }}
             />
@@ -103,6 +106,7 @@ export function CollectionPage({ collection }: { collection: CollectionView }) {
 
           {collection.products.length > 0 ? (
             <ProductGrid
+              sizes={CATALOG_IMAGE_SIZES.productCardGridFull}
               cards={collection.products}
               list={{ id: 'collection', name: 'Collection' }}
             />

@@ -548,8 +548,8 @@ check(
  *
  * So a link is checked against what exists, derived from `src/app` on every run, rather than against
  * a list somebody has to remember to update. Each pattern is a list of segments: a literal, `*` for
- * one dynamic segment, `**` for a catch-all and `**?` for an optional one. Route groups, private
- * folders and parallel slots are not in the URL, so they are not in the pattern.
+ * one dynamic segment, `**` for a catch-all and `**?` for an optional one. Route groups and parallel
+ * slots are not in the URL, so they are not in the pattern; private folders are not routes at all.
  */
 function pagePatterns(): string[][] {
   const out: string[][] = []
@@ -559,8 +559,14 @@ function pagePatterns(): string[][] {
       const name = entry.name
 
       if (entry.isDirectory()) {
-        const invisible =
-          (name.startsWith('(') && name.endsWith(')')) || name.startsWith('_') || name.startsWith('@')
+        /*
+         * A `_private` folder opts itself **and every subfolder** out of routing (Next 16, project
+         * structure), so its subtree is skipped — not walked as if it were transparent, which would
+         * register a page Next answers with 404. Route groups and `@slots` are transparent.
+         */
+        if (name.startsWith('_')) continue
+
+        const invisible = (name.startsWith('(') && name.endsWith(')')) || name.startsWith('@')
 
         walk(path.join(dir, name), invisible ? segments : [...segments, name])
       } else if (name === 'page.tsx' || name === 'page.ts') {

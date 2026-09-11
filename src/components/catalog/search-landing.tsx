@@ -1,4 +1,5 @@
 import { ProductGrid } from '@/components/catalog/product-grid'
+import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section, SectionHeading } from '@/components/layout/section'
@@ -84,7 +85,11 @@ export function SearchLanding({
         {curated.length > 0 ? (
           <div className="mt-xl">
             <SectionHeading className="mb-l">Worth a look</SectionHeading>
-            <ProductGrid cards={curated} list={{ id: 'search_curated', name: 'Search landing' }} />
+            <ProductGrid
+              sizes={CATALOG_IMAGE_SIZES.productCardGridFull}
+              cards={curated}
+              list={{ id: 'search_curated', name: 'Search landing' }}
+            />
           </div>
         ) : null}
       </PageContainer>

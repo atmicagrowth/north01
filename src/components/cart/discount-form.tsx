@@ -100,7 +100,8 @@ export function DiscountForm({ discount }: { discount: null | ResolvedPromotion 
           autoComplete="off"
           className={cn(
             'h-11 min-w-0 flex-1 rounded-sm border border-border-control bg-transparent px-3',
-            'font-sans text-body-sm uppercase text-foreground placeholder:text-foreground-disabled',
+            /* 16px, not 14: iOS Safari zooms the whole page on focus of any smaller input. */
+            'font-sans text-body uppercase text-foreground placeholder:text-foreground-disabled',
             'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-strong',
           )}
           id={fieldId}

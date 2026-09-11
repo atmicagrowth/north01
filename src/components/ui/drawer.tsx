@@ -128,7 +128,12 @@ export function DrawerContent({
           </div>
           {hideCloseButton ? null : (
             <DialogPrimitive.Close asChild>
-              <IconButton label="Close" size="sm" className="-mr-2 -mt-1.5">
+              {/*
+                44px, the size of every other primary control in a drawer. The negative margins keep
+                the X optically on the title line and the panel edge; `-mb-1` stops the larger box
+                growing the header row, which it sets on the mobile menu.
+              */}
+              <IconButton label="Close" size="md" className="-mb-1 -mr-3 -mt-2.5">
                 <X aria-hidden />
               </IconButton>
             </DialogPrimitive.Close>

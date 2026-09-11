@@ -2,9 +2,11 @@
 
 import { useRef, useState } from 'react'
 
-import { MediaImage } from '@/components/media/media-image'
+import { MediaImage, toAsset } from '@/components/media/media-image'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { cn } from '@/lib/cn'
+import { publicEnv } from '@/lib/env.public'
+import { buildCloudinaryUrl } from '@/lib/media/cloudinary-url'
 import { isRovingKey, rovingIndex } from '@/lib/product/roving'
 import { PRODUCT_IMAGE_SIZES } from '@/lib/product/sizes'
 import type { Media } from '@/payload-types'
@@ -96,6 +98,25 @@ export function ProductGallery({
           'flex snap-x snap-mandatory gap-2 overflow-x-auto',
           'lg:snap-none lg:flex-col lg:gap-m lg:overflow-visible',
         )}
+        /*
+         * **A swipe moves the thumbnails too.** `active` was set only by `show()` — a thumbnail click
+         * or an arrow key — so a customer who swiped to the second photograph saw the first
+         * thumbnail still selected, and a screen reader was told the same. The frame width is the
+         * scroller's `clientWidth`, so the nearest index is a division. The desktop stack never
+         * scrolls sideways and returns at once.
+         */
+        onScroll={(event) => {
+          const scroller = event.currentTarget
+
+          if (scroller.scrollWidth <= scroller.clientWidth) return
+
+          const nearest = Math.min(
+            shown.length - 1,
+            Math.round(scroller.scrollLeft / scroller.clientWidth),
+          )
+
+          if (nearest !== active) setActive(nearest)
+        }}
         ref={scrollerRef}
         role="group"
         tabIndex={0}
@@ -114,7 +135,16 @@ export function ProductGallery({
         {shown.map((frame, index) => (
           <button
             className="relative w-full shrink-0 snap-start lg:cursor-zoom-in"
-            key={frame?.id ?? index}
+            /*
+             * **Keyed by position, not by media id.** Choosing a size prepends the variant's own
+             * photograph (`product-page.tsx`), and it arrives with the server render about a second
+             * after the tap — outside the 500ms input window, so it counts as layout shift. Keyed by
+             * id, React inserted a NEW leading frame and pushed the rest down: one entry of **0.36
+             * CLS** at 1440, on the most important interaction on the page. Keyed by index, the
+             * leading 4:5 box is the same node and only its image changes; the displaced frame lands
+             * at the end, below the fold on desktop and off-screen in the phone scroller.
+             */
+            key={index}
             onClick={() => {
               openedFrom.current = index
               setZoomed(index)
@@ -170,7 +200,8 @@ export function ProductGallery({
                   ? 'border-border-strong'
                   : 'border-transparent hover:border-border',
               )}
-              key={frame?.id ?? index}
+              /* By position, for the reason on the frames above. */
+              key={index}
               onClick={() => show(index)}
               ref={(node) => {
                 thumbnails.current[index] = node
@@ -210,7 +241,7 @@ export function ProductGallery({
           className="w-full"
           controls
           preload="none"
-          poster={shown[0]?.url ?? undefined}
+          poster={posterUrl(shown[0])}
           src={video.url ?? undefined}
         />
       ) : null}
@@ -237,4 +268,25 @@ export function ProductGallery({
       </Dialog>
     </div>
   )
+}
+
+/**
+ * **The video's poster, through the CDN like every other image.** It was `media.url` — the untransformed
+ * Cloudinary original, which for the seeded field jacket is a **696 KB PNG** where the `f_auto`
+ * derivative at a gallery width is 21 KB of WebP. A browser fetches `poster` eagerly even with
+ * `preload="none"`, so the first product given a video would have put the PNG on its page. Latent
+ * today — no seeded product has a video — and one line to get wrong later.
+ *
+ * Without Cloudinary the stored same-origin URL is the only thing there is, which is `MediaImage`'s
+ * own fallback.
+ */
+function posterUrl(frame: Media | null | undefined): string | undefined {
+  if (!frame) return undefined
+
+  const cloudName = publicEnv.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+  const asset = toAsset(frame)
+
+  return cloudName && asset
+    ? buildCloudinaryUrl({ asset, cloudName, context: 'productGallery', width: 1024 })
+    : (frame.url ?? undefined)
 }

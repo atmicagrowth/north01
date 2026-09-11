@@ -527,17 +527,30 @@ const indexOf = async (
 ): Promise<EditorialCard[]> => {
   const payload = await getPayloadClient()
 
-  const { docs } = await payload
-    .find({
-      collection,
-      depth: 1,
-      limit: 100,
-      sort: 'title',
-      ...STOREFRONT_ACCESS,
-    })
-    .catch(() => ({ docs: [] as { id: number }[] }))
+  /*
+   * **Only the four fields a card shows.** Without a `select`, `depth: 1` also populated every member
+   * product of every collection, every related collection, and every edit's product groups and
+   * lookbooks — measured by sweep 1 at 86,576 bytes for `/api/collections` against 4,905 with this
+   * select, and roughly twice the time. `depth: 1` stays, so the cover still arrives as a media record.
+   *
+   * **And no `.catch`.** This shipped turning a failed read into `docs: []`, which the index renders as
+   * *"No collections are published yet."* — a false statement about the catalogue, made on the one
+   * occasion the page cannot know it. `getLookbookIndex` and `getJournalIndex` let the error reach the
+   * boundary; so does this. What that boundary says is Phase 31's.
+   */
+  const { docs } = await payload.find({
+    collection,
+    depth: 1,
+    limit: 100,
+    select:
+      collection === 'collections'
+        ? { description: true, heroMedia: true, slug: true, title: true }
+        : { hero: true, intro: true, slug: true, title: true },
+    sort: 'title',
+    ...STOREFRONT_ACCESS,
+  })
 
-  return (docs as Record<string, unknown>[])
+  return (docs as unknown as Record<string, unknown>[])
     .filter((doc) => typeof doc.slug === 'string' && doc.slug.length > 0)
     .map((doc) => ({
       /*

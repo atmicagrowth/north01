@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { PublicEnvSchema, parseEnv } from './env.public'
+import { PublicEnvSchema, parseEnv } from './env.schema'
 
 /**
  * The server-side environment: schemas, validation, the §4.1c environment discriminator, and the

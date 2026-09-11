@@ -20,7 +20,7 @@ import type { ShellNavigation } from '@/lib/navigation/resolve'
  * `/shop?sort=newest` (see `scripts/seed.ts`), and this copy invented a route instead of repeating
  * that one. Neither was visible, because this list renders only when the CMS read fails — which is
  * why `verify:shell` now resolves every href here against the route tree rather than trusting it.
-  *
+ *
  * **No mega menu, no featured panel, no social links.** Those *are* merchandising — a column of
  * categories or a campaign image is a choice someone made in the CMS — and fabricating them would
  * put words in an editor's mouth. When the database is unreachable the header degrades to five plain

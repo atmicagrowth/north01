@@ -101,6 +101,51 @@ const config = [
       'no-restricted-syntax': 'off',
     },
   },
+  {
+    // **Phase 30: two dependencies that must never be in the browser's first download again.**
+    //
+    // `env.public.ts` is reached by client components (MediaImage alone is rendered by four), so
+    // anything it imports as a VALUE ships on every route. It imported Zod, and every storefront
+    // route carried 65 KB gzip of it to re-check ten strings the server had already validated at
+    // boot. The schema now lives in `env.schema.ts`; this file may take its TYPE and nothing else.
+    //
+    // `instrumentation-client.ts` and `global-error.tsx` are in every route's client graph by
+    // construction. A static `@sentry/nextjs` import in either put ~58 KB gzip of SDK on every page
+    // with no DSN configured. They load it with `import()` behind the build-time DSN check instead.
+    //
+    // `@typescript-eslint/no-restricted-imports` rather than the core rule, because it can allow
+    // `import type` — which is erased and costs nothing — and because configuring the core rule here
+    // would REPLACE the env.core ban above for these files rather than add to it.
+    files: ['src/lib/env.public.ts', 'src/instrumentation-client.ts', 'src/app/global-error.tsx'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'zod',
+              message:
+                'Zod may not be imported here: this file is in every client bundle. Validate in env.schema.ts, which only env.core.ts imports.',
+            },
+            {
+              name: '@sentry/nextjs',
+              allowTypeImports: true,
+              message:
+                'Load the Sentry SDK with import() behind the NEXT_PUBLIC_SENTRY_DSN check. A static import ships it to every visitor, configured or not.',
+            },
+          ],
+          patterns: [
+            {
+              group: ['**/env.schema', './env.schema'],
+              allowTypeImports: true,
+              message:
+                'env.schema.ts imports Zod. Take the PublicEnv type with `import type`; never a value.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]
 
 export default config

@@ -68,7 +68,13 @@ export default async function CartPage() {
               </Button>
             </div>
           ) : (
-            <div className="grid gap-l lg:grid-cols-12">
+            <div className="grid grid-cols-1 gap-l lg:grid-cols-12">
+              {/*
+                `grid-cols-1` is `minmax(0, 1fr)`, and that is the fix. An implicit single track sizes
+                to its items' min-content, so at 320px the summary's discount row (315px) widened a
+                280px container and the whole bag scrolled sideways — a phone renders that page
+                zoomed out.
+              */}
               <div className="lg:col-span-7">
                 {cart.drifted ? (
                   <p

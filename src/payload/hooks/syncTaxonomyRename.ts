@@ -33,8 +33,9 @@ import { collectProductRecords } from '@/lib/catalog/indexer'
  * hooks. The index is derived; it is always reconstructible.
  *
  * The environment arrives through a dynamic import for the reason `syncSearchIndex.ts` documents at
- * length: a collection hook is loaded by the Payload CLI, outside Next, where `server-only` cannot
- * resolve.
+ * length: a collection hook is loaded by the Payload CLI, outside Next. That import no longer fails
+ * there — Phase 29's tsconfig stub made `server-only` resolve — which is why `reindexWhere` now refuses
+ * CLI writes explicitly rather than relying on the import to fail.
  */
 
 type Renameable = {
@@ -48,6 +49,28 @@ type Renameable = {
 const labelOf = (doc: Renameable): null | string => doc.name?.trim() ?? doc.title?.trim() ?? null
 
 async function reindexWhere(payload: Payload, where: Where, req?: PayloadRequest): Promise<void> {
+  /*
+   * **A CLI write does not reach the index — the same guard `syncSearchIndex.ts` carries, and the one
+   * this hook was missing.**
+   *
+   * Phase 29 made `server-only` resolvable under the Payload CLI (a tsconfig stub), which meant the
+   * dynamic import below stopped failing there — and a harness renaming a fixture category started
+   * writing that fixture's products to the index from the CLI. The product hook was guarded then; this
+   * one was not. So the CLI could ADD a record and never REMOVE it: `verify:search` renames its
+   * fixture taxonomy, the rename indexed its fixture product, and its cleanup's delete went through the
+   * guarded product hook and did nothing. One orphaned "Verify Parka" per run — three by Phase 30,
+   * found when `verify:catalog` saw the index return three products Postgres did not have.
+   *
+   * Symmetry is the point: every index write happens in the server or through `pnpm reindex`, so what
+   * the CLI adds and what it deletes can never disagree.
+   */
+  if (!process.env.NEXT_RUNTIME) {
+    payload.logger.debug(
+      'Search index not updated — a CLI write does not sync. `pnpm reindex` rebuilds it.',
+    )
+    return
+  }
+
   try {
     const { appEnv, integrationStatus, serverEnv } = await import('@/lib/env.server')
 

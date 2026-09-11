@@ -243,6 +243,70 @@ try {
       note.relatedProducts.length === 0,
     'the page renders a fallback exit for exactly this case',
   )
+
+  /*
+   * **Phase 30, sweep 1: narrowing what a populated product carries must not narrow what a page
+   * resolves.**
+   *
+   * `PRODUCT_CARD_POPULATE` shipped without `status` and `publishedAt`. `resolveProductTile` asks
+   * `isPublicDocument` before it links a product, that asks `status === 'published'`, and so every
+   * hotspot in every lookbook resolved to *unpublished* and vanished. The before-and-after DOM diff
+   * meant to prove the change safe missed it — the one lookbook it rendered had no hotspots to lose.
+   *
+   * So this does not trust a count written down today. It resolves every published lookbook twice
+   * through the SAME resolver: once from a full read with nothing narrowed, once through `getLookbook`,
+   * and requires the two to agree. A field the select forgets is a hotspot that goes missing here.
+   */
+  const { getLookbook } = await import('../src/lib/editorial/read')
+  const { getCatalogSettings } = await import('../src/lib/catalog/catalog')
+  const { currency, locale } = await getCatalogSettings()
+
+  const { docs: lookbooks } = await payload.find({
+    collection: 'lookbooks',
+    depth: 2,
+    limit: 50,
+    overrideAccess: false,
+    user: null,
+  })
+
+  let expectedHotspots = 0
+  let resolvedHotspots = 0
+  const short: string[] = []
+
+  for (const lookbook of lookbooks) {
+    const full = (lookbook.chapters ?? []).reduce((sum, chapter, index) => {
+      const section = resolveEditorialSection(
+        {
+          blockType: 'shopTheLook',
+          heading: null,
+          hotspots: chapter.hotspots ?? [],
+          image: chapter.heroImage,
+        } as never,
+        index,
+        { currency, locale },
+      )
+
+      return sum + (section?.type === 'shopTheLook' ? section.hotspots.length : 0)
+    }, 0)
+
+    const view = await getLookbook(String(lookbook.slug))
+    const got = (view?.chapters ?? []).reduce((sum, chapter) => sum + chapter.hotspots.length, 0)
+
+    expectedHotspots += full
+    resolvedHotspots += got
+
+    if (got !== full) short.push(`${String(lookbook.slug)}: ${got} of ${full}`)
+  }
+
+  check(
+    'C: **the populate select drops no hotspot** — every published lookbook resolves as many as a full read',
+    expectedHotspots > 0 && short.length === 0,
+    expectedHotspots === 0
+      ? 'no published lookbook has a resolvable hotspot, so this proves nothing — seed the development database'
+      : short.length > 0
+        ? short.join('; ')
+        : `${resolvedHotspots} hotspot(s) across ${lookbooks.length} lookbook(s)`,
+  )
 } finally {
   await cleanup()
 }

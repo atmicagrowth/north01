@@ -111,7 +111,8 @@ export function CartLineRow({
           <RemoveButton currency={currency} line={line} />
         </div>
 
-        <div className="flex items-center justify-between gap-s">
+        {/* `flex-wrap`: at 320px the price wraps under the stepper instead of into the gutter. */}
+        <div className="flex flex-wrap items-center justify-between gap-s">
           {buyable ? (
             <Stepper atCeiling={atCeiling} line={line} shown={shown} />
           ) : (
@@ -168,6 +169,7 @@ function Stepper({
 
         <IconButton
           label={shown === 1 ? `Remove ${line.productName}` : `One fewer ${line.productName}`}
+          className="max-lg:size-11"
           size="sm"
           type="submit"
           variant="ghost"
@@ -197,6 +199,7 @@ function Stepper({
            */
           disabled={atCeiling}
           label={`One more ${line.productName}`}
+          className="max-lg:size-11"
           size="sm"
           type="submit"
           variant="ghost"
@@ -253,7 +256,13 @@ function RemoveButton({ currency, line }: { currency: string; line: CartLineView
     <form action={action}>
       <input name="lineId" type="hidden" value={line.id} />
 
-      <IconButton label={`Remove ${line.productName}`} size="sm" type="submit" variant="ghost">
+      <IconButton
+        className="max-lg:size-11"
+        label={`Remove ${line.productName}`}
+        size="sm"
+        type="submit"
+        variant="ghost"
+      >
         <X aria-hidden />
       </IconButton>
     </form>

@@ -116,7 +116,7 @@ export function RecentlyViewed({ exclude }: { exclude?: number }) {
         <ul className="mt-m grid grid-cols-2 gap-m sm:grid-cols-3 lg:grid-cols-4">
           {visible.map((card) => (
             <li key={card.id}>
-              <ProductCard card={card} sizes={HOME_IMAGE_SIZES.productTileGrid} />
+              <ProductCard card={card} sizes={HOME_IMAGE_SIZES.recentlyViewed} />
             </li>
           ))}
         </ul>

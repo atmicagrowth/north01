@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 
-import { Prose } from '@/components/editorial/prose'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog'
 import { sizeGuideTable } from '@/lib/product/size-guide'
@@ -33,7 +32,14 @@ import type { SizeGuide } from '@/payload-types'
  * box, never make the page scroll sideways — the invariant every browser pass in this project
  * asserts at eight widths.
  */
-export function SizeGuideDialog({ guide }: { guide: SizeGuide }) {
+/**
+ * `fitNotes` arrives **rendered**, from the server. This component is `'use client'`, and it used to
+ * import `Prose` to render the guide's rich-text notes itself — which put the Lexical converters into
+ * the product page's client bundle on every product, including the ones with no size guide at all.
+ * The server already renders `Prose` for the description; it renders the notes too and hands them
+ * across the boundary as children, the pattern `Reveal` uses.
+ */
+export function SizeGuideDialog({ fitNotes, guide }: { fitNotes?: ReactNode; guide: SizeGuide }) {
   const [open, setOpen] = useState(false)
 
   /* The rule is in `lib/product/size-guide.ts`, where a harness can reach it. */
@@ -98,7 +104,7 @@ export function SizeGuideDialog({ guide }: { guide: SizeGuide }) {
             </div>
           ) : null}
 
-          {guide.fitNotes ? <Prose value={guide.fitNotes} /> : null}
+          {fitNotes}
 
           {guide.modelNote ? (
             <p className="font-sans text-body-sm text-foreground-muted">{guide.modelNote}</p>

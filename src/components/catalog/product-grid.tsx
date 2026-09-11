@@ -40,6 +40,7 @@ export function ProductGrid({
   list,
   savedIds,
   signedIn = false,
+  sizes,
 }: {
   cards: ProductCardModel[]
   /**
@@ -57,6 +58,12 @@ export function ProductGrid({
    */
   savedIds?: readonly number[]
   signedIn?: boolean
+  /**
+   * The card image's `sizes`. Omitted, `ProductCard` uses `productCardGrid` — the shop grid **beside
+   * the filter rail**. A grid with no rail beside it must pass `productCardGridFull`, or every card is
+   * under-fetched by the width of a rail that is not there.
+   */
+  sizes?: string
   /**
    * Whether the first card may be the LCP element. True only on page 1 of an unfiltered shop, where
    * the grid is the first thing below the header — plan §10.1d's rule that *"proper priority"*
@@ -77,6 +84,7 @@ export function ProductGrid({
             savedForCustomer={savedIds?.includes(card.id) ?? false}
             showWishlist
             signedIn={signedIn}
+            sizes={sizes}
           />
         </li>
       ))}

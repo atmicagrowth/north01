@@ -9,6 +9,7 @@ import { PageTitle } from '@/components/layout/page-title'
 import { Section, SectionHeading } from '@/components/layout/section'
 import { MediaImage } from '@/components/media/media-image'
 import { HOME_IMAGE_SIZES } from '@/lib/home/sizes'
+import { EDITORIAL_GALLERY_TWO_UP } from '@/lib/media/grid'
 
 /**
  * **The lookbook** — structure §11's flow: Lookbook, Chapter, full-screen content, shop a look,
@@ -89,7 +90,7 @@ export function LookbookPage({ lookbook }: { lookbook: LookbookView }) {
                         <MediaImage
                           context="editorial"
                           media={frame.media}
-                          sizes={HOME_IMAGE_SIZES.figureContained}
+                          sizes={EDITORIAL_GALLERY_TWO_UP}
                         />
 
                         {frame.caption ? (

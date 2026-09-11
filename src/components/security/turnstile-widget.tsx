@@ -79,7 +79,13 @@ export function TurnstileWidget({ submissionCount = 0 }: { submissionCount?: num
       />
 
       <div
-        className="cf-turnstile"
+        /*
+         * `min-h` reserves the widget's box before `api.js` renders into it (after hydration). With a
+         * bare div the 73px iframe arrived late and pushed the submit button down — measured with
+         * Cloudflare's always-pass test key: 0.022 CLS at 375 on /login. The component returns null
+         * without a site key, so the space is reserved only when a widget will actually render.
+         */
+        className="cf-turnstile min-h-[73px]"
         data-response-field-name={TURNSTILE_FIELD}
         data-sitekey={siteKey}
         data-theme="light"

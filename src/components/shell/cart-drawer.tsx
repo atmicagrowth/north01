@@ -71,16 +71,6 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
         footer={
           lines.length > 0 && cart ? (
             <div className="flex flex-col gap-m">
-              <CartSummary
-                currency={cart.currency}
-                discount={cart.discount}
-                locale={cart.locale}
-                shipping={cart.shipping}
-                shippingQuote={cart.shippingQuote}
-                tax={cart.tax}
-                totals={cart.totals}
-              />
-
               {/*
                 **DEV-57 paid.** Phase 14 pinned "View bag" because `/checkout` did not exist. Both
                 are here now, with Checkout as the primary action — a drawer that can only send you
@@ -158,6 +148,27 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
                 <CartLineRow compact currency={currency} key={line.id} line={line} />
               ))}
             </ul>
+
+            {/*
+              **The summary scrolls with the lines; only the two actions are pinned.** It sat in the
+              pinned footer, which measured 332px — at 320x568 that left 157px for the lines (one and a
+              bit), and in landscape on a phone it left **none**, with Checkout pushed below the fold.
+              A drawer that shows the total and hides the bag is the wrong way round. Now the footer is
+              the two buttons, and the total is the last thing in the list it totals.
+            */}
+            {cart ? (
+              <div className="mt-m">
+                <CartSummary
+                  currency={cart.currency}
+                  discount={cart.discount}
+                  locale={cart.locale}
+                  shipping={cart.shipping}
+                  shippingQuote={cart.shippingQuote}
+                  tax={cart.tax}
+                  totals={cart.totals}
+                />
+              </div>
+            ) : null}
           </div>
         )}
       </DrawerContent>
@@ -180,7 +191,7 @@ export function CartTrigger({ className, count }: { className?: string; count: n
        * every page of the site. Found by measuring the bag page at seven widths; invisible in a
        * screenshot, because two pixels of white look like nothing at all.
        */
-      className={cn('relative', className)}
+      className={cn('relative max-lg:size-11', className)}
       {...overlayTriggerProps('cart', isOpen('cart'))}
       onClick={(event) => {
         registerTrigger(event.currentTarget)

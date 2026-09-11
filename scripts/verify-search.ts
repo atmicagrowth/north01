@@ -1157,6 +1157,45 @@ try {
   await cleanup()
 }
 
+/*
+ * **Nothing this harness wrote is left in the index — checked AFTER the cleanup, which is where the
+ * leak was.**
+ *
+ * Phase 30 found three orphaned "Verify Parka" records in the development index, one per run of this
+ * harness since Phase 29: renaming the fixture taxonomy went through `syncTaxonomyRename`, which wrote
+ * the fixture product to the index from the CLI, and the cleanup's delete went through the product
+ * hook, which (correctly) refuses CLI writes. The CLI could add and never remove. `verify:catalog`
+ * noticed only because its engine-parity check saw three extra products.
+ *
+ * Both hooks now refuse CLI writes. This check is the tripwire if either stops.
+ */
+if (integrationStatus('algolia') === 'configured') {
+  const credentials = requireIntegration('algolia')
+  const client = createSearchClient({
+    apiKey: credentials.NEXT_PUBLIC_ALGOLIA_SEARCH_API_KEY,
+    appId: credentials.NEXT_PUBLIC_ALGOLIA_APP_ID,
+  })
+  const indexName = catalogIndexName(appEnv)
+  const fixtureIds = created
+    .filter((doc) => doc.collection === 'products')
+    .map((doc) => String(doc.id))
+
+  const { results: remaining } = await client.getObjects<{ objectID: string }>({
+    requests: fixtureIds.map((objectID) => ({ indexName, objectID })),
+  })
+  const orphans = remaining
+    .filter((record): record is NonNullable<typeof record> => record !== null)
+    .map((record) => record.objectID)
+
+  check(
+    'N: **a run leaves no record behind in the index** — the CLI can neither add nor orphan one',
+    fixtureIds.length > 0 && orphans.length === 0,
+    orphans.length > 0
+      ? `orphaned in ${indexName}: ${orphans.join(', ')}`
+      : `${fixtureIds.length} fixture product(s) checked after cleanup`,
+  )
+}
+
 /* -------------------------------------------------------------------------------------------------
  * Report
  * ---------------------------------------------------------------------------------------------- */

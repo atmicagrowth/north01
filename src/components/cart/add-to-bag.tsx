@@ -125,7 +125,8 @@ export function AddToBag({
             aria-describedby={blocked ? undefined : `${quantityId}-max`}
             className={cn(
               'h-11 w-16 rounded-sm border border-border-control bg-transparent px-2',
-              'text-center font-sans text-body-sm text-foreground',
+              /* 16px, not 14: iOS Safari zooms the whole page on focus of any smaller input. */
+              'text-center font-sans text-body text-foreground',
               'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-strong',
               'disabled:text-foreground-disabled',
             )}

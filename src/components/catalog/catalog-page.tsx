@@ -3,7 +3,8 @@ import { Suspense } from 'react'
 
 import { ActiveFilters } from '@/components/catalog/active-filters'
 import { CatalogToolbar } from '@/components/catalog/catalog-toolbar'
-import { FilterPanel } from '@/components/catalog/filter-controls'
+import { FilterPanel, SortControl } from '@/components/catalog/filter-controls'
+import { FilterDrawer } from '@/components/catalog/filter-drawer'
 import {
   CatalogEmpty,
   CatalogPagination,
@@ -146,11 +147,38 @@ export async function CatalogPage({
           </aside>
 
           <div className="min-w-0">
+            {/*
+              **The controls live OUTSIDE the keyed boundary, and that is the fix for a drawer that
+              closed after every tick.** They sat in `CatalogToolbar`, inside `<Suspense key=
+              {canonicalHref}>` — and every filter or sort write changes `canonicalHref`, so React
+              unmounted the boundary and mounted a new one. The mobile filter drawer's `open` state
+              went with it: ticking one size closed the drawer and dropped focus to `<body>`, the
+              opposite of what `filter-drawer.tsx` promises. The sort select was replaced the same way
+              and lost focus mid-keyboard. Both are client islands that read the URL, not the results,
+              so they belong above the boundary with the title — which is where this page's docblock
+              already said the filter panel was.
+
+              `flex-wrap`: at 320px the Filter button and a readable sort select cannot share 280px,
+              so Sort takes its own line rather than truncating its label ("Featurec").
+            */}
+            <div className="mb-m flex flex-wrap items-center gap-m lg:justify-end">
+              <div className="lg:hidden">
+                <FilterDrawer routeCategory={routeCategory} vocabulary={vocabulary} />
+              </div>
+
+              <SortControl value={canonical.sort} />
+            </div>
+
             <Suspense
               key={canonicalHref}
               fallback={
                 <div className="flex flex-col gap-m">
-                  <div className="h-[3.25rem] border-b border-border" />
+                  {/*
+                    The count row, which is all of the toolbar that is left inside the boundary —
+                    measured at 41.8px at 375 and 1440. It was `3.25rem` while the controls lived
+                    here too.
+                  */}
+                  <div className="h-[2.625rem] border-b border-border" />
                   <ProductGridSkeleton />
                 </div>
               }
@@ -236,9 +264,7 @@ async function CatalogResults({
         exhaustive={result.exhaustive}
         ignored={ignored}
         params={params}
-        routeCategory={routeCategory}
         total={result.totalProducts}
-        vocabulary={vocabulary}
       />
 
       <ActiveFilters

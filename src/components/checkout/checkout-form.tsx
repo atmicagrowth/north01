@@ -55,7 +55,8 @@ export function CheckoutForm({
 
   const field = cn(
     'h-11 w-full rounded-sm border border-border-control bg-transparent px-3',
-    'font-sans text-body-sm text-foreground placeholder:text-foreground-disabled',
+    /* 16px, not 14: iOS Safari zooms the whole page on focus of any smaller input. */
+    'font-sans text-body text-foreground placeholder:text-foreground-disabled',
     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-strong',
   )
 

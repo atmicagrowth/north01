@@ -145,7 +145,8 @@ function asRecord(media: MediaValue): Media | null {
   return typeof media === 'object' && media !== null ? media : null
 }
 
-function toAsset(record: Media): CloudinaryAsset | null {
+/** Exported for the one delivery that is not an `<img>`: the product video's `poster`. */
+export function toAsset(record: Media): CloudinaryAsset | null {
   if (!record.cloudinaryPublicId) {
     return null
   }

@@ -76,6 +76,13 @@ export const HOME_IMAGE_SIZES = {
    * describing a different component's grid.
    */
   productTileGrid: `(min-width: 1440px) 301px, (min-width: 1024px) calc(23vw - 30px), ${TWO_UP_IN_CONTAINER}`,
+  /**
+   * **Recently viewed** — `grid-cols-2 gap-m sm:grid-cols-3 lg:grid-cols-4`. It used `productTileGrid`,
+   * whose docblock says *no three-column tier*, so across the whole 640–1023 band it declared a
+   * two-up width for a three-up tile: 341px for a 220px tile at 768, a 1.75x fetch. Matches the
+   * measured 155.5 / 219.5 / 217.5 / 313.2 / 310 at 375, 768, 1024, 1440 and 1920.
+   */
+  recentlyViewed: `(min-width: 1600px) 310px, (min-width: 1440px) calc(342px - 2vw), (min-width: 1024px) calc(23vw - 18px), (min-width: 640px) ${THREE_UP_IN_CONTAINER}, ${TWO_UP_IN_CONTAINER}`,
   /** A horizontal rail runs full-bleed, so its tiles really are a fraction of the viewport. */
   productTileRail: '(min-width: 1024px) 22vw, (min-width: 640px) 40vw, 72vw',
   /**

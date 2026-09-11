@@ -1,7 +1,5 @@
-import { FilterDrawer } from '@/components/catalog/filter-drawer'
-import { SortControl } from '@/components/catalog/filter-controls'
 import { Link } from '@/components/ui/link'
-import { catalogHref, type CatalogParams, type CatalogVocabulary } from '@/lib/catalog/query'
+import { catalogHref, type CatalogParams } from '@/lib/catalog/query'
 import { productCountLabel } from '@/lib/catalog/resolve'
 import type { IgnoredFilter } from '@/lib/catalog/query'
 
@@ -23,22 +21,18 @@ export function CatalogToolbar({
   exhaustive = true,
   ignored,
   params,
-  routeCategory,
   total,
-  vocabulary,
 }: {
   basePath: string
   /** False when the engine stopped counting precisely — the label then says "About …". */
   exhaustive?: boolean
   ignored: IgnoredFilter[]
   params: CatalogParams
-  routeCategory?: null | string
   total: number
-  vocabulary: CatalogVocabulary
 }) {
   return (
     <div className="flex flex-col gap-m" data-slot="catalog-toolbar">
-      <div className="flex flex-wrap items-center justify-between gap-m border-b border-border pb-m">
+      <div className="border-b border-border pb-m">
         {/*
           `aria-live="polite"` so the count is announced after a filter changes. Without it a
           keyboard or screen-reader user ticks "Black", the grid silently replaces itself, and
@@ -50,20 +44,10 @@ export function CatalogToolbar({
         </p>
 
         {/*
-          `w-full sm:w-auto` is load-bearing at 320px, which is the narrowest of the eight widths
-          §30.1a names. The count, the Filter trigger and the sort select cannot share one 280px line
-          — measured, before the fix, at a 376px scrollWidth against a 320px viewport, i.e. a page
-          that scrolls sideways. Giving the controls their own row below the count on a phone, and
-          letting the select shrink inside it, is what removes the overflow without shortening the
-          sort labels.
+          The Filter trigger and the sort select are not here any more: they are client islands that
+          read the URL, and inside the results' keyed boundary every filter write remounted them —
+          the mobile drawer closed after each tick. `CatalogPage` renders them above the boundary.
         */}
-        <div className="flex w-full items-center gap-m sm:w-auto">
-          <div className="lg:hidden">
-            <FilterDrawer routeCategory={routeCategory} vocabulary={vocabulary} />
-          </div>
-
-          <SortControl value={params.sort} />
-        </div>
       </div>
 
       <IgnoredNotice basePath={basePath} ignored={ignored} params={params} />

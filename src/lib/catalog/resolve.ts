@@ -266,10 +266,22 @@ export function resolveProductCard(
  * the nested products; this does. Measured against the development branch: 890ms to 675ms on a
  * collection, 900 to 720 on a journal article, 480 to 380 on an edit.
  *
- * The list is the union of what `resolveProductCards` (above) and `resolveProductTile`
- * (`lib/home/resolve.ts`) read. Add to it when either starts reading a new field — a field missing
- * here arrives `undefined`, and a card treats `undefined` as *unknown*, so the failure is a card that
- * quietly says less rather than one that errors.
+ * The list is the union of what `resolveProductCards` (above), `resolveProductTile` **and
+ * `isPublicDocument`** (both `lib/home/resolve.ts`) read. Add to it when any of them starts reading a
+ * new field — a field missing here arrives `undefined`, and nothing errors.
+ *
+ * **This list shipped without `status` and `publishedAt`, and every lookbook lost its hotspots.**
+ * `resolveProductTile` asks `isPublicDocument` before it will link a product, and that asks
+ * `status === 'published'` — so with `status` absent, every tile in a lookbook chapter, a
+ * `productGroup` and a `shopTheLook` block resolved to `null` and was dropped as *unpublished*. The
+ * before-and-after DOM diff that was meant to prove this change safe did not catch it, because the
+ * card path (`resolveProductCard`) never checks `status`, and the one lookbook it rendered had no
+ * hotspots to lose. Sweep 1 found it; `verify:lookbook` now asserts a seeded lookbook resolves its
+ * hotspots through this exact read.
+ *
+ * `publishedAt` is not optional either: `isPublicDocument` skips its scheduled-drop gate when the key
+ * is *absent*, so selecting `status` alone would have let a product scheduled for next week link from
+ * a lookbook today.
  *
  * Direct reads use `joins: false` instead, for the same reason and with the same measurement behind
  * it: no storefront code reads either join field. The product page reads its variants with an
@@ -281,7 +293,13 @@ export const PRODUCT_CARD_POPULATE = {
   isLimitedEdition: true,
   isNew: true,
   name: true,
+  /*
+   * `status` and `publishedAt` are read by `isPublicDocument`, not by either card — and leaving them
+   * out emptied every lookbook of its hotspots. See the docblock.
+   */
+  publishedAt: true,
   slug: true,
+  status: true,
 } as const
 
 export const resolveProductCards = (
