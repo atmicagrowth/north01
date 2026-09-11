@@ -803,6 +803,27 @@ describe('CheckoutForm — the refusal, and the submit that cannot fire twice', 
     expect(await screen.findByRole('alert')).toHaveTextContent('We do not deliver to that address.')
   })
 
+  it('marks the address fields invalid and points them at the refusal when the server names the address', async () => {
+    const user = userEvent.setup()
+    vi.mocked(startCheckoutAction).mockImplementation(async () => ({
+      error: 'We do not deliver to that address.',
+      field: 'address',
+    }))
+
+    renderCheckoutForm()
+
+    await fillAddress(user)
+    await user.click(screen.getByRole('button', { name: 'Continue to payment' }))
+
+    const alert = await screen.findByRole('alert')
+    const country = screen.getByLabelText('Country')
+
+    expect(country).toHaveAttribute('aria-invalid', 'true')
+    expect(country).toHaveAttribute('aria-describedby', alert.id)
+    /* The contact field is not what was refused. */
+    expect(screen.getByLabelText('Email')).not.toHaveAttribute('aria-invalid')
+  })
+
   it('swaps the submit label while the handoff is in flight, so the wait is accounted for', async () => {
     const user = userEvent.setup()
     let settle: (state: CheckoutActionState) => void = () => {}
@@ -888,7 +909,7 @@ describe('CheckoutForm — DEV-62, and the half of it that is not this component
 
     /*
      * The other half of DEV-62 lives in `/checkout/page.tsx`, which holds the only call to
-     * `isStripeConfigured()` and renders this form or the *"Payment is not connected yet"* panel —
+     * `isStripeConfigured()` and renders this form or the *"Online checkout isn't open yet"* panel —
      * never both. A form that also tried to say it would be a second source of that truth, drifting
      * from the first the moment keys were added.
      */

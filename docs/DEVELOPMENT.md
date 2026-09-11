@@ -95,7 +95,7 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm migrate:fresh` | Drop every table and re-run every migration. **Development only** |
 | `pnpm generate:types` | Regenerate `src/payload-types.ts` from the Payload config |
 | `pnpm generate:importmap` | Regenerate the admin import map. **Required after adding a rich-text feature or any custom admin component** — the Lexical editor's field, cell and feature components are all resolved through it |
-| `pnpm seed` | Representative demo content — catalogue, editorial, globals. Idempotent, local only, and deliberately creates no customers, orders or media. See `scripts/seed.ts` |
+| `pnpm seed` | Representative demo content: the catalogue, editorial, globals, media records, and (since Phase 29) the demo customers and their orders (`scripts/seed/commerce.ts`). Idempotent and local only. See `scripts/seed.ts` |
 | `pnpm payload run scripts/baseline-migrations.ts <name…>` | Put a push-built development database onto the migration chain without destroying it. [`DATABASE.md`](DATABASE.md) §10 |
 | `pnpm verify:media` | The Phase 8 media rules — the mime allowlist and magic-byte sniffing, the hostile-upload set, the dimension cap, the delivery-URL grammar and the reserved-box geometry. Adds a live Cloudinary round trip when credentials exist. Generates its own fixtures; local database only |
 | `pnpm verify:shell` | The Phase 9 shell rules — the document route map (including that it is *total* over the linkable collections), href validation, and every one of feature matrix §1’s navigation edge cases. Runs the publication cases against **real** Payload documents, then removes them; local database only |
@@ -114,6 +114,7 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm verify:seo` | The Phase 24 SEO rules — canonical URLs, the metadata ladder, the sitemap exclusions, and §24.1b's four prohibitions on product structured data. **Opens no database connection** |
 | `pnpm verify:analytics` | The Phase 25 taxonomy and the two things that fail silently forever: the GA4 reshaping (minor units to decimals, zero-based indices to one-based) and the Sentry redaction. **No database** |
 | `pnpm verify:security` | The Phase 26 rules — every branch of Turnstile verification with an injected verifier, the open-redirect validator, the upload allowlist, the REST create gate, and the secret scanner's own patterns. **No database, no network** |
+| `pnpm verify:email`, `verify:account`, `verify:reviews`, `verify:lookbook`, `verify:editorial`, `verify:admin` | The Phase 19, 20, 21, 22, 23 and 28 rules respectively. Each script's header docblock lists what it asserts |
 | `pnpm scan:secrets` | §26.1d. Walks `git ls-files` for credential shapes. Exits non-zero on a finding, and never quotes the value it found |
 | `pnpm test` | Vitest, watch mode |
 | `pnpm test:run` | Vitest once — **this is the CI command**. Both projects |
@@ -278,13 +279,15 @@ is a surprise worth knowing about in development; use a private window for the s
 
 ### Where the password-reset link goes
 
-There is no email transport until **Phase 19**. Until then `src/payload/email/logEmailAdapter.ts`
-writes the whole message to the server log, so the reset flow is genuinely completable:
+Since Phase 19 every message goes through `src/payload/email/serviceEmailAdapter.ts` and the one
+send service in `lib/email/send.ts`. With Resend configured, the reset email is delivered. **With
+Resend unconfigured**, local development writes the whole message to the server log, so the reset
+flow is still completable (this replaced Phase 7's `logEmailAdapter`):
 
 ```
 pnpm dev
 # submit /forgot-password, then look for this in the terminal:
-#   Email (not sent — no transport before Phase 19): Reset your NORTH / 01 password
+#   Email (not sent): Reset your NORTH / 01 password
 #   body: … http://localhost:3000/reset-password?token=<40 hex characters> …
 ```
 
@@ -292,7 +295,7 @@ The link's origin comes from `SITE_URL` — never from the request's `Host` head
 reset token deliverable to whoever forged it. If you run the dev server on a port other than 3000, set
 `SITE_URL` or the link will point at the wrong one.
 
-Outside local development the same adapter logs at `error` level on every send, because a deployed
+Outside local development, with Resend unconfigured, the adapter logs at `error` level on every send, because a deployed
 storefront whose password resets land in a log file is a broken storefront and should say so.
 
 ### The local admin account
@@ -374,7 +377,7 @@ expressed through the **focal point**, which the delivery layer genuinely reads.
 
 Accepted: JPEG, PNG, WebP, AVIF, MP4, WebM. **Not** SVG (a script-execution context, and Payload's own
 `validateSvg` can be stepped around with an `<?xml` prefix) and **not** GIF (`file-type` reads magic
-bytes at offset 0 only, so `GIF89a` followed by an executable is detected as an image). 25 MB, 12,000
+bytes at offset 0 only, so `GIF89a` followed by an executable is detected as an image). 4 MB (Vercel caps a request body at about 4.5 MB — notes §1.41), 12,000
 pixels on a side. `pnpm verify:media` proves each of those refusals against a real hostile file.
 
 ## Tests
@@ -387,17 +390,30 @@ Three layers, and they answer three different questions.
 | Component | `pnpm test:components` | Does this control behave — and stay accessible — in every state a customer can reach? |
 | End-to-end | `pnpm test:e2e` | Does the whole journey work in a browser? |
 
-The eleven `verify:*` harnesses are a fourth thing and are **not** replaced by any of these: they
-assert decisions against the live Payload access layer and the real database. Vitest cannot reach
-either. Four of them — `verify:seo`, `verify:analytics`, `verify:security`, `scan:secrets` — open no
-connection at all and therefore run in CI.
+The twenty-two `verify:*` harnesses are a fourth thing and are **not** replaced by any of these:
+they assert decisions against the live Payload access layer and the real database. Vitest cannot
+reach either. Three of them — `verify:seo`, `verify:analytics`, `verify:security` — and
+`scan:secrets` open no connection at all and therefore run in CI.
 
-### The E2E suite has never been executed
+### The E2E suite
 
-There is no development database. The only reachable one is **production**, and an E2E suite writes:
-it creates customers, adds to bags and opens Stripe Checkout sessions. Decision **D-10** exists to
-stop a writing harness reaching production, and this is the most destructive harness in the
-repository.
+**It first ran in Phase 35** (notes §1.40.7): **43 passed, 0 failed, 14 skipped**, against a local
+production build (`pnpm build && pnpm start`) on the development database. The 14 skips are written
+into the specs: flows that need a server-side mutation mid-test, or Stripe keys this environment does
+not have. The command used against the already-running server:
+
+```bash
+E2E_BASE_URL=http://localhost:<port> pnpm exec playwright test --workers=1
+```
+
+The spec files' own docblocks still say the suite has never been executed. That is stale; this
+section is the current record.
+
+**Never point it at production.** An E2E suite writes: it creates customers, adds to bags and opens
+Stripe Checkout sessions. Decision **D-10** exists to stop a writing harness reaching production, and
+this is the most destructive harness in the repository. Since Phase 30 the development database is
+a branch on a separate Neon account from production (notes §1.35.8), rebuilt by the project's own
+seed and media scripts rather than copied.
 
 So `playwright.config.ts` starts no server unless you say so explicitly:
 

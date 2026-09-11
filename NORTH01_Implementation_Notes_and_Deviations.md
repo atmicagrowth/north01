@@ -800,7 +800,7 @@ Required by the append rule, step 4.
 | **DEV-14** — substantial work uses feature branches | ongoing | **Confirmed again.** Phase 3 ran on `phase-3-design-system`, not `main`. |
 | **DEV-16** — route-group topology insulates the admin | Phase 2 onward | **Confirmed under load.** Phase 3 is the first phase that could plausibly have broken it: it added a full token layer, two self-hosted typefaces and eighteen components. Re-verified two ways — no admin build manifest references the Tailwind chunk, and `/admin`'s live `<body>` computes to Payload's own colours and font stack. |
 | **DEV-01** — Essentials is a Collection | Phases 9, 11, 23 | **Encoded**, and **exercised in Phase 9** — the seeded navigation puts Essentials under Collections, the Edit set is four, and the resolved header was read in a browser. See §1.14.10. |
-| **DEV-07** — six primary nav items, including NEW | Phase 9 | **Encoded**, and **discharged in Phase 9** — rendered as NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT and asserted against both the resolved data and the DOM. See §1.14.10. |
+| **DEV-07** — six primary nav items, including NEW | Phase 9 | **Encoded**, and **discharged in Phase 9** — rendered as NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT and asserted against both the resolved data and the DOM. See §1.14.10. **Amended in Phase 30:** five items, ABOUT withdrawn because `/about` has no page (DEV-07's amendment, §1.35.5). |
 | DEV-05 — Cloudinary first-party adapter | Phase 8 | Still pending. Not due. |
 | DEV-03 — order state as two axes | Phase 18 | Still pending. Not due. |
 | DEV-06 — hosted vs embedded Checkout | Phase 17 | Still open. Not due. |
@@ -6577,8 +6577,8 @@ purchasable.
 ## 1.28 Phase 23 — editorial, collections, journal
 
 Plan §23.1a–§23.1c. **No dependency and no migration** — the fourth phase running. Six new routes:
-`/collections/[slug]`, `/edits/[slug]`, `/lookbook`, `/lookbook/[slug]`, `/journal`,
-`/journal/[slug]`.
+`/collections/[slug]`, `/edits/[slug]` (renamed `/edit/[slug]` in Phase 30, §1.35.1), `/lookbook`,
+`/lookbook/[slug]`, `/journal`, `/journal/[slug]`.
 
 ### 1.28.1 Two blocks had been authorable for seventeen phases and rendered nothing
 
@@ -9188,6 +9188,97 @@ The 14 skips are written into the specs themselves — flows that need a server-
 or Stripe keys this environment does not have — and are listed with their reasons in Phase 36's
 testing document.
 
+## 1.41 Phase 36 — the three review passes
+
+Plan §36.0 and §36.1a–§36.1c. Feature development stopped; the work was to find what the build itself
+had missed and fix it. The input was the earlier audit (`docs/PHASE_35_36_AUDIT.md`, untracked working
+input, never committed), **re-checked item by item against the code first**, because Phases 31–35 had
+already fixed a large share of it. The three required reports are `docs/REVIEW_1_ARCHITECTURE.md`,
+`docs/REVIEW_2_UX_ACCESSIBILITY.md` and `docs/REVIEW_3_PRODUCTION_READINESS.md`; this section is what
+changed and why. One migration (`phase_36_order_fulfilment_hold`).
+
+### 1.41.1 Review Pass 1 — the shop could not safely take money
+
+None of the checkout or webhook code had been touched since Phase 18, and five High findings were
+still open in it. All five are fixed; `verify:webhook` went from 38 checks to 67.
+
+- **The webhook paid whatever order the metadata named (R1-01).** An old Stripe session could pay for
+  an order preflight had since rewritten — a different bag, a different total. Paying is now a
+  conditional claim on the order's *current* session id, total and currency; anything else is a
+  `mismatch`, recorded on the event row, reported to Sentry, answered 200 (a retry cannot fix it) and
+  never applied. Preflight expires a reused order's previous session first and refuses if it was
+  already paid. Sessions expire after 31 minutes — Stripe's 30-minute floor is measured from its own
+  clock, so exactly 30 is refused.
+- **`completed` is not `paid` (R1-05).** The session's `payment_status` now decides: `unpaid` waits at
+  `pending_payment` for the async result; `no_payment_required` is a mismatch, because this shop has no
+  free orders.
+- **A failed webhook was acknowledged and lost (R1-04).** Every insert error was treated as a duplicate
+  and answered 200; a database error during the order lookup became "ignored". Now only a unique
+  violation is a duplicate; a failed or stale row is reclaimed atomically and reprocessed exactly once;
+  a fresh in-flight row is answered 409 so Stripe retries; anything else is 500.
+- **An expired session stranded the bag (R1-03)** by reusing a `cancelled` order into a terminal
+  state. Cancelled orders are never reused; `pending_payment` ones are, safely.
+- **Every checkout was refused (R1-02).** The tax provider was still Phase 16's placeholder, so no
+  address ever produced a figure. It is now Stripe Tax (`tax.calculations`) whenever Stripe is
+  configured. `automatic_tax` on the Checkout Session is deliberately **not** used: Stripe would then
+  compute the total, and `amount_total` would stop matching the order's — breaking DEV-63 and the
+  R1-01 check. The owner must enable Stripe Tax; without registrations it returns zero (TODO.md §4).
+
+Also fixed in the same path: promotion limits enforced at payment (R1-07), a reused order taking the
+bag's current code (R1-08), cumulative partial refunds that leave the order paid (R1-09 — the demo
+order `N1-2607-DEMO05` was seeded as `refunded` and is now `paid`), and **oversold orders (R1-10,
+R3-19)**: stock decrements roll back to a savepoint, the order is marked `fulfilmentHold =
+stockShortfall`, and the confirmation says the order is being checked rather than that it is on its
+way. There is no staff-notification channel; a held order is found by the admin column and Sentry.
+A password reset or an admin password change now ends every session (R1-13); Resend calls time out
+after 8 seconds and the webhook sends email after responding (R1-21).
+
+### 1.41.2 Review Pass 2 — clarity and access
+
+Of twenty findings, five were already fixed (including the one High, R2-01). The rest are fixed except
+one Low by decision: checkout lists what is being bought; checkout buttons are primary; the
+payment-unavailable copy is written for shoppers; mobile menu rows meet the 44-pixel target; a guest's
+discount code survives sign-in; the bag distinguishes a per-order cap from stock; category filters are
+a tree; the skip link moves focus; form errors are tied to their fields. **Not built:** a one-time
+notice when sign-in reduces a guest's lines — it needs a new cookie and a clearing action (R2-03's
+second half).
+
+### 1.41.3 Review Pass 3 — failure and deployment
+
+Thirteen of twenty-six were already fixed by Phases 31–35. Fixed here: handled failures now reach
+Sentry (`reportFailure`, R3-13 — checkout, webhook, tax, catalogue, shell); uploads capped at 4 MB
+because Vercel Functions reject request bodies over about 4.5 MB and uploads stream through the
+function (R3-16); a failed image shows its reserved placeholder (R1-29); analytics can never throw into
+a page (R1-30); robots.txt's non-standard `Host:` line and Sentry's inert `disableLogger` removed
+(R3-23, R3-24). **Recorded rather than fixed:** every storefront page renders per request (DEV-83).
+Owner actions — search index, Preview, CI secrets, region, `SITE_URL`, queued builds — are unchanged
+in DEPLOYMENT.md §9 and TODO.md.
+
+### 1.41.4 §36.0 — the documents agree with the build
+
+Twelve DEV entries (DEV-73…84) and four gaps (G-17…20) recorded; DEV-45, DEV-50, DEV-52, DEV-55,
+DEV-59, DEV-61, DEV-62 amended; the canonical documents carry "as built" prefaces pointing at the
+entries that override them; README, ARCHITECTURE, DEVELOPMENT, DATABASE, STACK_VERSIONS, ENVIRONMENT
+and SEARCH corrected where they contradicted the code. The returns and contact copy no longer promises
+an online returns flow or names an undeliverable address (DOC-01, DOC-02 — the live wording is the
+owner's, TODO.md §12). Plan §38's missing documents now exist: `CMS.md`, `COMMERCE.md`, `EMAIL.md`,
+`ANALYTICS.md`, `TESTING.md` and the three review reports.
+
+### 1.41.5 What was verified
+
+| Check | Result |
+|---|---|
+| `pnpm typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
+| `pnpm test:run` | **927** (from 868: webhook decisions, Stripe Tax mapping, confirmation, courier reply-to, component tests) |
+| All 22 `verify:*` harnesses on a freshly reseeded development database | pass — `verify:webhook` 67 (from 38), `verify:orders` 83, `verify:checkout` 67, `verify:promotions` 69, `verify:email` 87, `verify:access` 50 |
+| `pnpm scan:secrets` | no secrets in 467 tracked files |
+| Playwright E2E, full suite, local production build | **43 passed, 0 failed, 14 skipped** |
+| Performance (Review Pass 3) | CLS 0.000 everywhere; homepage LCP 0.3–0.4 s; cached routes TTFB ~90 ms, per-request routes ~1 s from a laptop to `us-east-2` |
+
+**Not verified, and why:** nothing that needs Stripe keys has run — session creation, a Stripe Tax
+calculation, a real payment, a real refund. The code paths are harness-tested with signed events
+offline; the first test-mode purchase is the owner's first step once keys exist (docs/COMMERCE.md).
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -10358,7 +10449,8 @@ none of the three needs it re-plumbed — `ProductCard` takes one model, and the
 **What this costs:** a customer must open the product page to add to their bag, which is one
 navigation rather than none — and today that page 404s anyway.
 
-*Affects Phase 11. Discharged by Phases 13, 14 and 20.*
+*Affects Phase 11. ~~Discharged by Phases 13, 14 and 20.~~* **Only the wishlist heart was discharged,
+by Phase 20.** Quick Add and Quick View were never built, and **DEV-76** (Phase 36) withdraws them.
 
 ### DEV-46 — There is no rating sort, and there are five sort options rather than six
 
@@ -10479,6 +10571,9 @@ all.
 What this phase hands Phase 24 is **one** crawlable search namespace rather than two: `/shop?q=`
 redirects to `/search?q=`, composed into the canonical redirect so no URL redirects twice.
 
+**Discharged:** `/search` now exports `privateMetadata('Search')` (`robots: noindex, nofollow`), so
+results pages are not indexed.
+
 ---
 
 ### DEV-51 — No rate limiting on the search path
@@ -10507,6 +10602,9 @@ a text query, and `clickAnalytics` is deliberately not set.
 emission**: without it every faceted `/shop` request is recorded as a customer searching for the empty
 string, which is measurably what had already happened (`{search: '', count: 18}`, eighteen times the
 next entry). Stopping a metric from lying is not the same as collecting one.
+
+**Discharged in Phase 25:** `search_submitted` is emitted from `components/shell/search-panel.tsx` on
+the normalised term.
 
 ---
 
@@ -10574,6 +10672,9 @@ wait for Phase 21 together.
 
 `buildVariantMatrix` already resolves and exposes the exact variant id, price and stock a cart line
 needs, so Phase 14 adds controls beneath the selector rather than rebuilding the page.
+
+**Amended in Phase 36:** Quantity, Add to Bag, the wishlist and reviews were discharged by Phases 14,
+20 and 21. **Buy Now never was, and DEV-78 withdraws it.**
 
 ---
 
@@ -10668,6 +10769,12 @@ The `usageLimit` total is unaffected and does bind on guests, so a code with a g
 capped. A merchandiser who needs a per-customer limit to mean something should pair it with an
 account requirement, which is a decision for whoever writes the campaign rather than for this code.
 
+**Amended in Phase 36 (R1-07).** The per-customer count now includes `pending_payment` orders other
+than the one on the customer's active bag, so parallel checkouts count against the limit. `usageLimit`
+binds at payment: the `times_used` increment carries `usage_limit IS NULL OR times_used < usage_limit`.
+When it matches nothing the payment still stands — the money has moved at the discounted price — and
+the over-redemption is logged and reported to Sentry. Guests still count as zero.
+
 ---
 
 ### DEV-60 — A free-shipping code is validated and recorded, and does not yet change a price
@@ -10730,6 +10837,13 @@ dangerous than one that never worked, because nobody would be watching it.
 
 Phase 17 replaces one exported constant. Nothing that reads a `TaxResult` changes.
 
+**Closed in Phase 36 (R1-02).** `taxProvider` is Stripe Tax whenever Stripe is configured, and the
+deferral otherwise. `stripe.tax.calculations.create` receives one exclusive line (the discounted
+goods), `shipping_cost`, and the shipping address; `tax_amount_exclusive` becomes the amount and the
+calculation id the reference; zero is `not_required`; an error or a 5-second timeout is `unavailable`,
+which preflight refuses. Checkout's `automatic_tax` is deliberately not used, so the order's total
+stays the one we computed (DEV-63). An account with no registrations returns zero tax — TODO.md §4.
+
 ---
 
 ### DEV-62 — Checkout is complete and has never taken a payment
@@ -10768,6 +10882,18 @@ before it: say what is true, do not draw a control that cannot work.
 The webhook route answers **503** rather than 200 when unconfigured, which is the one place the
 degradation must not be quiet: a silent 200 would make Stripe discard real payment events during a
 misconfiguration.
+
+**Amended in Phase 36 — the webhook verifies the session, not only the order reference.** Paying
+requires the order's *current* session id, total and currency (R1-01); a mismatch is recorded, reported,
+answered 200 and never applied. `completed` is decided by `payment_status`: `unpaid` waits at
+`pending_payment`, `no_payment_required` is a mismatch (R1-05). `payment_intent.payment_failed` is
+recorded only — a declined card inside Checkout leaves the session payable. Only a unique violation is a
+duplicate event; failed rows, and `received` rows older than 60 seconds, are reclaimed atomically and
+reprocessed, and fresh ones are answered 409 (R1-04). Preflight reuses `pending_payment` orders, never
+`cancelled` ones, expires the previous session first and refuses if it was paid; sessions expire after
+31 minutes and are claimed conditionally. Partial refunds keep the order `paid` with a monotonic
+`refundedMinor` (R1-09). A stock shortfall rolls back to a savepoint, takes no stock, sets
+`fulfilmentHold = stockShortfall`, and still converts the bag and counts the code (R1-10, R3-19).
 
 ---
 
@@ -11038,6 +11164,269 @@ the popover offers, so the announcement is not a lie about where it goes.
 
 *Affects Phases 10 and 22.*
 
+---
+
+### DEV-73 — `add_payment_info` is in the taxonomy and is never emitted
+
+**Plan §25.1a lists** `add_payment_info` among the events, hedged *"where applicable"*.
+
+**We do:** keep it in the event union in `lib/analytics/events.ts` and emit it nowhere.
+
+**Why:** it is not applicable here. Stripe Checkout is **hosted** (§17, **DEV-06**), so this
+application never sees a card, a wallet or a payment-method choice, and no moment exists at which
+payment information is added. Firing it at the redirect would report the customer *leaving* for
+Stripe as entering their details, which is a different event and often a different outcome. Notes
+§1.30.7.
+
+*Affects Phase 25.*
+
+---
+
+### DEV-74 — `quick_view_opened` is in the taxonomy and is never emitted
+
+**Plan §25.1a lists** `quick_view_opened`.
+
+**We do:** keep it in the event union and emit it nowhere.
+
+**Why:** there is no quick view. `product-tile.tsx`'s docblock mentions §11.1c's quick view, quick
+add and wishlist, and only the wishlist was built. The event stays because §25.1a lists it and the
+taxonomy is the deliverable. **DEV-76** later withdrew the feature, so this one is permanent unless a
+quick view is built. Notes §1.30.7. E2E flow 4 (*"quick view → add to cart"*) is skipped for the same
+reason (§1.32).
+
+*Affects Phase 25.*
+
+---
+
+### DEV-75 — Turnstile is skipped when unconfigured and refuses when Cloudflare is down
+
+**Plan §26.1a says:** *"Server must verify Turnstile response. Client-side widget alone is not
+security."* It does not say what happens when verification is impossible.
+
+**We do:** two opposite answers for two situations that look alike.
+
+- **Unconfigured** (no site key or no secret, and a partial configuration counts as none): the
+  widget is not rendered and nothing is verified. Failing closed with no keys would leave an
+  unconfigured deployment where nobody can register. That is broken, not safer, and it is the trade
+  **DEV-62** already made for checkout.
+- **An outage** (Cloudflare unreachable, a 5xx, a timeout): the request is **refused**. It is the only
+  control in the project that fails closed. If it degraded, the forms an attacker is hammering would
+  have no bot protection, and an attacker can cause the outage they benefit from.
+
+**The cost, named:** while Cloudflare is unreachable, the guarded forms (newsletter, review,
+registration, login) accept nothing. `verifyTurnstile` reads the configured state itself, so no call
+site or client field can turn a required check into a skipped one. Notes §1.31.5.
+
+*Affects Phase 26.*
+
+---
+
+### DEV-76 — Quick View and Quick Add are withdrawn
+
+**Plan §11.1c, feature matrix §6 and structure §6** give the product card Quick View (a dialog) and
+Quick Add (variant selection where required). Plan §27.1c flow 4 and §36.1b flow 2 exercise them.
+
+**We do:** a product card (`components/catalog/product-card.tsx`) is a link to the product page plus
+the wishlist heart (`WishlistButton`). A customer adds to the bag on the product page, where Add to
+Bag is a real form re-checked on the server that opens the bag drawer when the server accepts the
+line.
+
+**Why:** **DEV-45** deferred both controls to the phases that own their services (13 and 14). Those
+phases shipped the product page and the cart, and no later phase picked up the card controls. Until
+now nothing recorded the decision not to build them, so they stayed an open deferral that DEV-45's
+closing line wrongly called discharged. This entry makes the decision explicit. The product page
+already enforces §11.1c's critical edge case (*"Quick Add must NOT guess an invalid variant"*),
+because its selector and `addToBagAction` are the only path that writes a line.
+
+**What this costs:** one navigation before adding, which is the cost DEV-45 named. Plan §27.1c flow 4
+is skipped in the E2E suite (notes §1.32) and `quick_view_opened` is never emitted (**DEV-74**).
+
+*Amends DEV-45. Affects Phases 11, 14 and 27.*
+
+---
+
+### DEV-77 — There is no public order-tracking lookup
+
+**Structure §2 and §18** list ORDER TRACKING as a global destination (*"Track Order → Order number /
+permitted lookup → Status → Shipment/tracking"*). Feature matrix §23 specifies order tracking.
+
+**We do:**
+
+- A **signed-in customer** sees status, carrier and tracking number (linked to `trackingUrl` when one
+  is stored) on `/account/orders/[order]`.
+- **Any customer, guest or not,** gets the tracking number and a *"Track this parcel"* link in the
+  OrderShipped email, which §18.1c's shipped transition queues.
+- A **guest** can read the confirmation page only in the browser session that placed the order
+  (`lib/checkout/confirmation.ts`).
+- No route answers an order number and email, and nothing links to one. The footer's Order Tracking
+  link was removed in Phase 28 rather than left as a 404 (notes §1.33).
+
+**Why:** no phase was assigned the public lookup. Phase 18 built the fields and Phase 20 the account
+view. A guest lookup is not a page with a form. It needs an enumeration-safe identifier check,
+Turnstile, a rate limit and one uniform not-found response, and none of that was built.
+
+**What this costs:** a guest who has lost the shipped email has no self-service way to see where the
+parcel is. That email depends on Resend, which is unconfigured today (TODO.md). **Owed:**
+`/order-tracking` (order number plus email, Turnstile, rate-limited, identical not-found, showing
+status and tracking but never the address or payment), linked from the footer Help column, the
+confirmation page and the shipped email. Audit DOC-05.
+
+*Affects Phases 18, 20 and 28.*
+
+---
+
+### DEV-78 — Buy Now is withdrawn
+
+**Structure §7, plan §13.1b and feature matrix §7** put a Buy Now control on the product page.
+
+**We do:** ship Add to Bag only. When the server accepts the line, the bag drawer opens
+(`add-to-bag.tsx`, `setOpen('cart', true)`), and the drawer carries a Checkout button.
+
+**Why:** **DEV-55** deferred Buy Now to Phase 17 along with the other purchase controls. Phase 17
+built checkout and did not add Buy Now, and nothing withdrew it. Add to Bag followed by the drawer's
+Checkout gets to the same place in one more click, through the one path that writes a cart line. A
+second submit that writes the line and then redirects would repeat the `disabledReason` rules in a
+second place.
+
+**What this costs:** one click between choosing a size and reaching `/checkout`.
+
+*Amends DEV-55. Affects Phases 13 and 17.*
+
+---
+
+### DEV-79 — Recommendations are one row: same category first, then the catalogue
+
+**Feature matrix §10 and structure §7** specify several recommendation types (Complete the Look,
+Trending, related collection) and a collection → category → best sellers → new arrivals fallback
+chain. Journey C runs *"Product → Complete the Look → Add to Bag"*.
+
+**We do:** one row, *"You may also like"*. `readRecommendations` (`lib/product/product.ts`) reads
+published products in the product's own categories, and falls back to the curated order across the
+whole catalogue when that returns nothing. It never shows Complete the Look, Trending, a
+related-collection row or the longer chain.
+
+**Why:** recommendations never had a phase of their own (**G-09**). Phase 13 shipped the minimum rule
+and documented it only in a code docblock, and no later phase reconciled the product page with §7.
+This records the scope instead of leaving it implied. The fallback exists so the row is never an empty
+heading.
+
+**What this costs:** a product never points at the look or edit it belongs to from its own page. Shop
+the Look runs in the other direction, from the look to the product (Phase 22).
+
+*Closes G-09. Affects Phase 13.*
+
+---
+
+### DEV-80 — Forms are Server Actions with `useActionState` and Zod, not React Hook Form
+
+**The tech stack lists** React Hook Form as *"Required"* for complex forms. Feature matrix §7 and §9
+name it in their *Uses* lines.
+
+**We do:** the storefront's write forms (sign-in, registration, password reset, address book,
+checkout, bag, discount code, newsletter, reviews, wishlist) post to React 19 Server Actions. The
+client side is `useActionState` (17 files under `src/`), and validation is the Zod installed in
+Phase 4, run on the server. Neither
+`react-hook-form` nor `@hookform/resolvers` is installed.
+
+**Why:** the rule that the browser is never authoritative means validation has to run on the server
+anyway, and a Server Action form works before hydration (the same reasoning as **DEV-72** and
+`AddToBag`'s real `<form>`). Phase 7 took this route and added no dependency (ARCHITECTURE §5,
+Phase 7). React Hook Form would have added a second, client-side validation path over the same
+schemas.
+
+**What this costs:** no client-side field-by-field validation as the customer types. Errors come back
+from the server on submit and are shown next to the field.
+
+*Affects Phase 7 onward.*
+
+---
+
+### DEV-81 — Husky and lint-staged are not adopted; CI enforces the gate
+
+**The tech stack lists** *"Git hooks: Husky + lint-staged — Local quality gates — Recommended"*.
+
+**We do:** install neither. `.github/workflows/ci.yml` runs install → typecheck → lint
+(`--max-warnings 0`) → format check → unit and component tests → the pure `verify:*` harnesses → the
+secret scan → build (when `DATABASE_URL` is configured) on every pull request and every push to
+`main`. The phase gate in AGENTS.md is the same `typecheck && lint && build`.
+
+**Why:** a local hook is per-machine and can be skipped with `--no-verify`, so it cannot be the
+enforcement point. CI can. The listing was *"Recommended"*, and the gate it recommends exists in the
+place that cannot be bypassed.
+
+**What this costs:** a formatting or lint slip is caught at push instead of at commit.
+
+*Affects Phase 27.*
+
+---
+
+### DEV-82 — The homepage social gallery renders only when there are three editorial images
+
+**Feature matrix §3** lists a *"Social/community gallery"* on the homepage.
+
+**We do:** the `socialGallery` block requires at least three items (`minRows: 3` in
+`payload/blocks/home.ts`), and `pnpm seed` composes it, headed *"Worn by"*, from the first four
+media records with role `editorial` only when at least three exist (`scripts/seed.ts`,
+`socialItems`). With fewer, the homepage has no gallery section and nothing stands in for it.
+
+**Why:** the images are brand photography credited to the brand's own handle. They are never
+presented as customer posts, and customer-submitted imagery has no entity and no moderation path
+(ARCHITECTURE §3.3). A gallery of one or two tiles would be a broken grid, so the block is dropped
+rather than shown thin.
+
+**What this costs:** the section is absent in any environment whose media library has fewer than three
+editorial-role images. The Phase 35 audit (DOC-24) found it absent locally and in production.
+
+*Affects Phases 10 and 29.*
+
+---
+
+### DEV-83 — Every storefront page is rendered per request
+
+**Plan §30.1c and §36.1c** ask for sound cache behaviour and fast server responses. ARCHITECTURE D-32
+and the Phase 10 table assumed `/` was prerendered.
+
+**We do:** render every storefront route dynamically. The root layout (`(frontend)/layout.tsx`) awaits
+`getShellSession()`, which reads the signed-in customer and the bag for the header badge and the bag
+drawer. Both are keyed by cookies, and reading `cookies()` in the shared layout makes every route
+under it dynamic.
+
+**The cost, measured by the Phase 35 audit (R3-06):** `.next/prerender-manifest.json` lists only
+`/_global-error`, `/robots.txt` and `/sitemap.xml`. Production pages answer
+`Cache-Control: private, no-cache, no-store` and `X-Vercel-Cache: MISS`, so anonymous traffic runs a
+function and several Postgres reads per page, and the `revalidateTag` hooks never reach an HTML cache.
+Median TTFB was about 260 ms for `/` and `/shop` and 520–650 ms for a product, a collection and an
+article, before the Phase 30 product-page fix. During a database outage `/` renders a signed-out shell
+(notes §1.36.2) because the shell degrades, not because anything was prerendered.
+
+**Why it is the current shape:** the bag badge, the bag drawer and the wishlist sync are per-visitor,
+and they were built as server reads in the shell before anyone measured the cost.
+
+**Owed:** move per-visitor state out of the server layout. The bag badge, drawer and account state
+would fetch from a no-store route handler after hydration, or become dynamic holes under Cache
+Components. Catalogue and editorial routes would then get revalidate windows so the existing tag hooks
+invalidate their HTML. `/cart`, `/checkout*`, `/account*` and `/search` stay dynamic. The bag must
+never leak between visitors.
+
+*Affects Phases 9, 14, 24 and 30. Recorded in Phase 36.*
+
+---
+
+### DEV-84 — A one-size product's only size is selected automatically
+
+**Plan §13.1c says** the product page must never pick a size on the customer's behalf.
+
+**We do:** when a colour has exactly one size, the server selects it, and the selector shows no
+*"Choose a size."* prompt (`variant-selector.tsx`: the prompt requires `sizes.length > 1`). A size in
+the URL that does not exist still selects nothing.
+
+**Why:** with one size there is nothing to choose, and feature matrix §6 asks for *"one unambiguous
+variant, add directly"*. Asking would also make the prompt flash while a colour change round-trips.
+The rule §13.1c protects, never adding a variant the customer did not choose, still holds: they chose
+the product and the colour, and the size had no alternative. Notes §1.40.2 (P35-31).
+
+*Affects Phases 13 and 35.*
+
 
 # 3. Append log
 
@@ -11088,7 +11477,7 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 20 — wishlist, account, recently viewed | 2026-09-09 | Notes **§1.25**. **No dependency and no migration**: `WishlistItems` was built to §6.1m in Phase 6 and already carried the compound unique index on `(customer, product)` with both columns required — so §20.1b's *"existing customer wishlist wins duplicates"* was already enforced by Postgres rather than by whichever code path ran first, the same mechanism as Phase 19's `dedupeKey` and Phase 17's event id. **The guest merge could not copy the cart's** (**DEV-68**): a guest cart is a database row named by a cookie, a guest wishlist is `localStorage`, and no server action can read a browser's storage — so the merge is client-initiated, has no parameter for whose list it is, validates every id against the published catalogue, is capped on the way in, and clears the device copy only on success. **`ProductCard` had to be restructured**: it was one `<Link>` around everything, and a heart in the obvious place would have put a `<button>` inside an `<a>` — invalid HTML that browsers recover from inconsistently, leaving the control unreachable by keyboard. It is now a wrapper, a link, and the control as its **sibling**, which is §11.1c's *"click wishlist → prevent card navigation"* solved structurally rather than with `stopPropagation`. The heart is **opt-in per call site**, because two of the five places the card renders are inside the bag drawer where each card sits in an `<li onClick={close}>`. One control, two mechanisms, and the customer is told which — a guest sees *"saved on this device"*, and the signed-out branch is deliberately not a form because there is no server for it to post to. Recently-viewed renders **nothing on the server**: its server snapshot is the empty list so hydration cannot flicker, and *"do not store sensitive personal information"* holds by construction because the parser can only represent a positive integer. `createLocalList` factors the `useSyncExternalStore` pattern out of `search-panel.tsx`, now that it is needed three times. The lint rule earned its keep: the rail's first version cleared its own state inside an effect and `react-hooks/set-state-in-effect` refused it, so the empty case is derived at render. Account: five navigable routes plus `[order]`, guard still per-page, and **the order route takes the order number rather than the database id** — an id is a running count of every order the shop has taken. A cross-account request is **not found, never forbidden**, because a 403 would confirm which order numbers are real. `/account/addresses` can add and remove because checkout snapshots onto the order and never writes to `addresses`, so a read-only screen would have been a page that looks like a feature and cannot do anything. **DEV-45 discharged.** New harness `pnpm verify:account` — 40 checks covering the two things the phase prompt names by title, cross-account access prevention and merge behaviour. **It has never been run**: the Neon password died during Phase 19's sweep, so `pnpm build` and all fifteen harnesses are blocked and only typecheck and lint could be gated. Recorded in `TODO.md` and in §1.25.8 rather than glossed. |
 | Phase 21 — reviews | 2026-09-09 | Notes **§1.26**. **No dependency and no migration** — `Reviews` was built to §6.1j in Phase 6 with every field, every bound, and the compound unique index on `(product, customer)` whose `customer` column was made **required** precisely so the index would bite, since Postgres treats NULLs as distinct. **The corpus disagrees with itself twice** and `AGENTS.md`'s precedence settled both (**DEV-69**): a purchase is a **badge, not a gate**, because the plan hedges twice while the matrix implies a gate — and a shop that only accepts reviews from buyers has none on a new product, which is when a customer most wants one; and the bar is **paid**, not the matrix's *"not delivered yet"*, with a refunded order still verifying because the customer did buy it. **Three things the browser cannot decide, each closed differently**: `status` defaults to pending *and* the field is staff-only, so a review lands pending through any door; `verifiedPurchase` is staff-only and set from an order lookup, because a badge the submitter can assert is not a badge; `customer` is *forced* by `enforceCustomerOwnership`, since `create: isActiveCustomer` alone would accept `POST /api/reviews` with somebody else's id. **The duplicate is caught by the index, not before it** — the newsletter action had already recorded that read-then-create is both a concurrency bug and a measurable timing oracle. §13.1f's *"do not show an empty star histogram"* is honoured literally: five bars at zero reads as five one-star reviews, so an unreviewed product gets one sentence and no chart, and the average is **`null`, never `0`** — the same distinction `lib/money.ts` makes for a price. Aggregates are computed from the same rows that render, because two queries can disagree and the failure is a page claiming forty-one reviews above a list of forty. Three deviations: **DEV-69** (badge not gate), **DEV-70** (no profanity filter — a word list publishes what it misses and rejects what it misreads, and a person already reads every review), **DEV-71** (no review photos — `media.create` is staff-only and **D-28** says media bytes are public the moment they are uploaded, so an unmoderated review photo would be fetchable before anyone saw it; the column stays, the upload path is a design question). Rate limiting is Phase 26's Turnstile and is recorded as owed without overclaiming. New harness `pnpm verify:reviews` — 30 checks covering the two tests the prompt names by title plus §21.1a's paid-order match and the cases that must NOT verify. **Never run**: the Neon password has been invalid since Phase 19's sweep, so only typecheck and lint could be gated. See `TODO.md`. |
 | Phase 22 — shop the look | 2026-09-09 | Notes **§1.27**. **No dependency, no migration, and no new component library** — `radix-ui@1.6.7` already ships `@radix-ui/react-popover`. §22 is unusually thin: no route, no test list, no acceptance gate. What it names is §22.1d's six numbered steps and a prohibition repeated twice — *"do not guess sizes silently"*, *"never silently guess unavailable or missing variants"* — and that prohibition is the phase. Phase 6 had already built §22.1a's fields (four coordinates as **percentages**, so *"do not hard-code hotspot coordinates in React"* was satisfied before this phase began) and Phase 10 had already shipped the marker, having named its own successor: *"a marker that opened an empty dialog would be §0.1.17's fake control."* **The naive upgrade would have broken the clause the plan did not have to state** (**DEV-72**): turning the marker into a button satisfies three of §22.1c's four clauses and breaks *"allow full PDP navigation"* — and breaks something §22.1c never mentions, because Phase 10's marker works with **no JavaScript**. So the trigger is still the anchor, wrapped in `Popover.Trigger asChild` with its default prevented: with JS the preview opens, without it the anchor navigates, and the preview **offers** the product page rather than replacing it. A **Popover, not a Dialog** — a preview is anchored to what opened it and does not deserve a focus trap, a scrim or a scroll lock; and the shell's `overlay-context` is deliberately not reused, because it exists for overlays with **no trigger in their own subtree** and would also enter a mutual-exclusion machine that closes the bag. Radix supplies the ARIA Phase 9 once got wrong by hand. **The preview is fetched when opened**, not when rendered: four blocks × eight markers would be thirty-two stock queries paid by everyone for a section most visitors never touch — and it means availability is resolved as it is *now*. §22.1d's step 3 is enforced by a **type**: products needing a size come back in a bucket carrying no variant to add, so a caller cannot guess by accident. One purchasable variant is not a guess (it is the single available thing); picking medium out of three in stock is. Step 6's report **separates the two reasons** — *"needs a size"* is a ten-second fix and *"not available"* is a dead end, and *"2 items skipped"* is neither. The count reported is what actually landed, since `addToCart` re-checks live stock. **`/lookbook` still 404s** and that is deliberate: §22 names no route, the page is Phase 23's, and building it here would be building a later phase early. New harness `pnpm verify:lookbook` — 20 checks asserting the prohibition, because §22 sets no tests of its own. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass on hotspot alignment, where `reserveBox`'s unguarded 16:9 fallback for a media record with no stored dimensions is the one path that could silently drift every marker. |
-| Phase 23 — editorial, collections, journal | 2026-09-09 | Notes **§1.28**. **No dependency and no migration** — the fourth phase running — and six new routes: `/collections/[slug]`, `/edits/[slug]`, `/lookbook`, `/lookbook/[slug]`, `/journal`, `/journal/[slug]`. **Two blocks had been authorable for seventeen phases and rendered nothing**: `gallery` and `pullQuote` have been on `collections.body` and `edits.body` since Phase 6 with no resolver case and no component anywhere, so an editor could compose one, publish, and find the section absent — §0.1.17's rule inverted, a CMS field that silently discards work. Invisible until now because no route rendered a body. **Two block resolvers now exist on purpose**: `home/resolve.ts`'s is module-private and typed to the Homepage union, and widening it would make the homepage's exhaustive `never` default reject two blocks the homepage can never receive. **A collection page is not a filterable grid** — DEV-09 ruled that out, and reusing `CatalogPage` would also have been a live defect: `requiresSearchIndex()` sends any collection query to Algolia, because membership is a Payload `join` with no column, so the page would have rendered **nothing at all** whenever the search service was down while every other listing survived. Reading the ordered id list through Postgres keeps it working with no search service and keeps the curator's order. **Featured products without a new field**: `Collections.products` is ordered and its own description says *"dragging a row is the curation"* — the front of a curated list is what featured means, resolved from the same cards as the grid so the two cannot disagree. **Products are never read through the relationship at depth**: `publishedOnly` checks `status` and explicitly not `publishedAt`, and knows nothing about `derived.priceFromMinor`, so a depth-populated grid would have shown scheduled drops and withdrawn garments. **The navigation has been broken since Phase 9 and is not any more** — `/lookbook` and `documentHref`'s `/lookbook/<slug>` both 404'd; building either alone would have left the other broken. §23.1c's *"avoid creating an editorial dead end"* is designed against rather than avoided: three exits per article, each resolved through the published rules so a withdrawn product is not offered rather than offered as a 404, and a fallback exit when an editor filled in none of them. New harness `pnpm verify:editorial` — 24 checks covering the four failure cases the prompt names by title. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass over six routes that have never rendered, `/collections` and `/edits` indexes, `generateMetadata` (Phase 24), and the contact form (**G-08**), which is still the missing caller for Phase 19's contact template. |
+| Phase 23 — editorial, collections, journal | 2026-09-09 | Notes **§1.28**. **No dependency and no migration** — the fourth phase running — and six new routes: `/collections/[slug]`, `/edits/[slug]` (renamed `/edit/[slug]` in Phase 30, §1.35.1), `/lookbook`, `/lookbook/[slug]`, `/journal`, `/journal/[slug]`. **Two blocks had been authorable for seventeen phases and rendered nothing**: `gallery` and `pullQuote` have been on `collections.body` and `edits.body` since Phase 6 with no resolver case and no component anywhere, so an editor could compose one, publish, and find the section absent — §0.1.17's rule inverted, a CMS field that silently discards work. Invisible until now because no route rendered a body. **Two block resolvers now exist on purpose**: `home/resolve.ts`'s is module-private and typed to the Homepage union, and widening it would make the homepage's exhaustive `never` default reject two blocks the homepage can never receive. **A collection page is not a filterable grid** — DEV-09 ruled that out, and reusing `CatalogPage` would also have been a live defect: `requiresSearchIndex()` sends any collection query to Algolia, because membership is a Payload `join` with no column, so the page would have rendered **nothing at all** whenever the search service was down while every other listing survived. Reading the ordered id list through Postgres keeps it working with no search service and keeps the curator's order. **Featured products without a new field**: `Collections.products` is ordered and its own description says *"dragging a row is the curation"* — the front of a curated list is what featured means, resolved from the same cards as the grid so the two cannot disagree. **Products are never read through the relationship at depth**: `publishedOnly` checks `status` and explicitly not `publishedAt`, and knows nothing about `derived.priceFromMinor`, so a depth-populated grid would have shown scheduled drops and withdrawn garments. **The navigation has been broken since Phase 9 and is not any more** — `/lookbook` and `documentHref`'s `/lookbook/<slug>` both 404'd; building either alone would have left the other broken. §23.1c's *"avoid creating an editorial dead end"* is designed against rather than avoided: three exits per article, each resolved through the published rules so a withdrawn product is not offered rather than offered as a 404, and a fallback exit when an editor filled in none of them. New harness `pnpm verify:editorial` — 24 checks covering the four failure cases the prompt names by title. **Never run**: the Neon password has been invalid since Phase 19's sweep. Owed: a browser pass over six routes that have never rendered, `/collections` and `/edits` indexes, `generateMetadata` (Phase 24), and the contact form (**G-08**), which is still the missing caller for Phase 19's contact template. |
 | Phase 24 — search engine optimization | 2026-09-09 | Notes **§1.29**. **No dependency and no migration** — the fifth phase running. **Three site-wide CMS fields and a nine-collection field group had been authorable since Phase 6 and read by nothing**: `defaultSeoTitle`, `defaultSeoDescription`, `defaultOgImage` and `seoField()`'s title/description/image. `SiteSettings.ts` and `seo.ts` both named Phase 24 as the phase that would read them; both promises are kept, and the precedence — document override, then page content, then site default, then built-in — is stated once in `pageMetadata`. An **emptied override is not an override**: a cleared field means *derive it*, never *publish an empty tag*. **§24.1b is enforced by shape, not by a check**: offers are built only from variants that are active, in stock and priced, so a sold-out size cannot set the price; nothing buyable emits `OutOfStock` **with no price at all**, because a price nobody can pay is the forbidden claim; a product with no variants emits no `offers` key; and `aggregateRating` appears only when a real approved review exists — no key, not a zero, not five stars from nobody. **`getProduct`'s memoisation did not apply to its second caller**: React's `cache` compares arguments with `Object.is`, so two callers passing `{ color: null, size: null }` both ran the queries — memoisation that silently does not apply is worse than none. Split into `getProductRecord(slug)`, keyed by a string, with the variant matrix built on top. **The canonical never comes from the request** (Phase 7's host-header argument) and never carries a query — `/shop`'s nine parameters and `/product/x?size=m` are one page each. **The homepage exported no metadata at all**, to dodge the *"NORTH / 01 · NORTH / 01"* title template — which cost the front page its canonical and its OG card; `absoluteTitle` is the answer, and the layout's metadata now reads the site name from the CMS. **`robots.txt` needs three rules per prefix**: `/account/` misses `/account`, `/account` blocks `/accounts-payable`, and an RFC 9309 matched path includes the query string, so neither touches `/search?q=` — the exclusion's whole point. One shared constant with the sitemap, because the two disagreeing is the classic SEO defect. **JSON-LD is escaped**: a raw-text element ends at the first literal `</script`, and every value in it comes from the database. New harness `pnpm verify:seo` — **90/90, and the first in this project that touches no database**, so no D-10 guard: everything §24 decides is a pure function. `pnpm build` passed — the first since Phase 18 — and `robots.txt` and `sitemap.xml` were read back out of the build output (35 URLs from real data) rather than assumed. Two stale docblock claims corrected: the homepage has **not** been statically prerendered since Phase 9 (the layout awaits `cookies()`), and four routes' *"SEO is Phase 24"* notes now say what was decided. Owed: `/collections` and `/edits` indexes, `generateStaticParams` (Phase 30), `priceValidUntil` and `shippingDetails` (neither claimable today), a browser pass, and the five harnesses D-10 still holds until a **development** connection string exists. |
 | Phase 25 — analytics and observability | 2026-09-09 | Notes **§1.30**. **Three dependencies installed at their pins** (`posthog-js` 1.418.10, `@sentry/nextjs` 10.70.0, `@vercel/speed-insights` 2.0.0); GA4 is a script tag; no migration. **The taxonomy is a type**: `AnalyticsEvent` is a union of exactly §25.1a's seventeen names and `trackEvent` takes it, so a typo is a compile error rather than an empty dashboard column — and the internal names *are* the GA4 names for the ten that overlap, because a translation table is somewhere for the two to drift invisibly. **Money crosses the vendor boundary once**, in `toGa4Params`: a price field that is sometimes cents and sometimes dollars reports revenue a hundred times too high and is not recoverable, so the conversion is pure and asserted — including that a zero value is a real zero and an unknown value is absent. **Server Components stayed server components**: `ProductCard` gained two data attributes and `TrackList` delegates from the grid wrapper in the capture phase, rather than an `onClick` converting the most-rendered component in the shop and everything it renders. **Every event is emitted where it is true, not where it was clicked** — `addToBagAction` can refuse, and an `add_to_cart` on the click would report adds that never happened; `useActionResult` fires on the action's result, guarded by reference identity. **`purchase` is gated on the webhook**, not on arrival (§17.1g), and deduped in `sessionStorage` by order number, because the success URL is refreshable and a double-count doubles reported revenue. **§25.1d is enforced on the way out**, on two independent grounds — by key and by value — with cookies and headers dropped rather than scrubbed, the user reduced to an id, and the URL keeping its route while losing its token; the whole-URL pattern runs before the email pattern, or a Postgres URL is left with its host and password intact. **Two of the seventeen events are deliberately not emitted**: `add_payment_info` (**DEV-73** — Stripe Checkout is hosted, this application never sees payment details, and firing it at redirect would report leaving for Stripe as entering a card) and `quick_view_opened` (**DEV-74** — no quick view exists). Sentry is wired into four entry points because Next has four kinds of failure; `global-error.tsx` renders `error.digest` and never `error.message`, per §4.1b. **`@sentry/cli`'s postinstall is denied** in `pnpm-workspace.yaml` — source-map upload is off, so **production stack traces will be minified**, stated rather than discovered. §25.1e honoured as the schedule it is: Speed Insights renders in production only, and a second gate lives in the Vercel dashboard. New harness `pnpm verify:analytics` — **89/89**, the second in this project that touches no database. What it cannot cover is the prompt's own *"verify events in local/preview"*: no account exists, and `TODO.md` §6 says so. New gap **G-17**: no consent gate in front of any vendor. |
 | Phase 26 — security and bot protection | 2026-09-09 | Notes **§1.31**. **No dependency added**; one upgraded, and that is the phase's most consequential change: `next@16.3.2` carried **two CRITICAL unauthenticated RCE advisories** — Windows-hosted servers, and the Image Optimization API with AVIF — both fixed in `16.3.3`, which is still inside `@payloadcms/next@3.88.0`'s range. Overrides added for `fast-uri` (2 SSRF, 2 host confusion), `js-yaml` and `sharp`. **`pnpm audit` went from 9 findings (2 critical, 6 high, 1 moderate) to 1 moderate** — and that one, Payload's default `unlock` access letting any authenticated user clear anyone's lockout, **was already closed in config two phases ago**: `Customers.ts` is staff-only and `Users.ts` admin-only. Verified by reading them, not assumed; the first instinct was to add the rules, which would have been a duplicate key. The named upgrade `payload@3.88.1` is unavailable because every `@payloadcms/*` package pins an exact peer on 3.88.0. **§26.1a's own sentence is the design**: delete the widget and every guarded form starts **refusing**, because `verifyTurnstile` reads the configured state from the **server** environment rather than taking a flag from its caller — no argument a call site can pass and no field a client can omit turns a required verification into a skipped one. Wired into newsletter, review submission, registration and **login** (§26.1a's *"where abuse warrants it"*, answered by what the form is rather than by whether abuse has been seen yet), each **before** validation so a refusal costs no query and no field-by-field critique. **DEV-75**: unconfigured skips, an outage **refuses** — the one control in this project that fails closed, because the cost of degrading here is no bot protection on exactly the forms being hammered, by an attacker who can cause the outage they benefit from. One sentence for every failure; the reason logged, never shown. **§26.1b's one real finding was API depth**: Payload defaults `maxDepth` to 10 on a public REST surface, which is an amplification primitive — capped at 3, one above the project's deepest read. Everything else in §26.1b was verified rather than changed. **§26.1c**: no `dangerouslySetInnerHTML` renders CMS content anywhere (the only one is `JsonLd`, which escapes first); uploads are a six-entry allowlist with no SVG and no PDF; `isSameSitePath` refuses control characters so a `Location:` cannot ride a newline. **§26.1d** is a committed scan rather than a grep somebody ran: `pnpm scan:secrets`, whose first Resend pattern matched **English** (`Structure_Current_…`, `figure_mobile_image_idx`) and whose four real hits were the redaction harness's own fixtures — resolved by marking them `EXAMPLE` rather than allowlisting `scripts/`, which would be a hole exactly where a real key gets pasted while debugging. Clean across 388 files. New harness `pnpm verify:security` — **51/51**, the third that opens no connection. Owed: Turnstile keys (`TODO.md` §7), the contact form (**G-08**, now owed by two phases), a browser pass over four forms that have never rendered a widget, and `payload@3.88.1` when its peers catch up. |

@@ -1,11 +1,14 @@
 import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
+import { reportFailure } from '@/lib/observability/report'
+
 import {
+  classifyUnclaimedSessionEvent,
   FINALISABLE_STATUSES,
-  intendedStatusFor,
-  needsPaymentFinalisation,
+  isFullRefund,
   planStockDecrements,
+  planStripeEvent,
   statusesThatCanReach,
   type PaymentStatus,
   type StockLine,
@@ -21,8 +24,8 @@ import {
  * **No `server-only` guard, and that is the same structural choice `lib/promotions/read.ts` made.**
  * It takes a `Payload` instance as an argument rather than reaching for one, and touches no cookie,
  * request or secret — so `pnpm verify:webhook` can drive it exactly as the route does, which is the
- * only way the two idempotency barriers, the transaction and the inventory race can be observed
- * rather than reasoned about. The guard sits on `stripe.ts`, which is where the key lives.
+ * only way the idempotency barriers, the transaction and the inventory race can be observed rather
+ * than reasoned about. The guard sits on `stripe.ts`, which is where the key lives.
  *
  * Third time this has come up: Phase 15 had the guard on a module the harness needed, Phase 16 had it
  * on the right module with the decision in the wrong place, and this is the rule both produced —
@@ -35,32 +38,51 @@ import {
  * > Webhook verified → Order marked paid → Inventory adjusted → Confirmation email
  *
  * Inventory is adjusted **inside the same transaction** that marks the order paid, not after it. The
- * plan's diagram reads as three steps because it is describing a sequence of events, but two of them
- * are one write or the shop can pay for a parcel it cannot send: an order marked paid whose stock
- * decrement then failed is precisely the *"impossible order"* §17.1f says must not exist.
+ * email is genuinely afterwards, and genuinely outside the transaction — a mail provider being slow
+ * or down must not roll back a payment that has already happened.
  *
- * The email is genuinely afterwards, and genuinely outside the transaction — it is **Phase 19**, and
- * a mail provider being slow or down must not roll back a payment that has already happened.
- *
- * ### The two barriers, both of them
+ * ### The barriers
  *
  * §17.1d: *"The unique Stripe event ID is the first idempotency barrier. Business-state guards are
- * the second."* The first is enforced by the database, in the webhook route, by inserting the event
- * id into a unique column. The second is `needsPaymentFinalisation`, here — because Stripe sends
- * `checkout.session.completed` **and** `payment_intent.succeeded` for a single payment, and those are
- * two different events with two different ids. The first barrier lets both through. Only the second
- * stops the inventory being decremented twice.
+ * the second."* The first is the unique `stripe-events.eventId`, in the route. The second is here:
+ * every transition is one conditional `UPDATE` whose `WHERE` carries the states it may move from, so
+ * a second event describing the same payment (`completed`, then `async_payment_succeeded`) matches
+ * nothing. `payment_intent.succeeded` is **not** handled — earlier docblocks said it was.
+ *
+ * ### Phase 36: which session, for how much — audit R1-01
+ *
+ * An order is reused across checkout attempts, so an event naming it proves only that *some* session
+ * for it completed. Every session-shaped event now carries that session's id, amount, currency and
+ * payment status (`SessionFacts`), and the claims require them: paying needs the order's **current**
+ * session at the order's **current** total and currency; expiring or failing needs the current
+ * session. A claim that matches nothing is then classified — a redelivery (`alreadyFinal`), an
+ * expected event for a replaced session (`superseded`), or money that moved against something this
+ * order no longer describes (`mismatch`), which is recorded and alerted and never applied.
  */
+
+/** The four facts about a Checkout Session the order is checked against. */
+export type SessionFacts = {
+  /** Minor units, as Stripe charged it. */
+  amountTotal: null | number
+  currency: null | string
+  id: string
+  /** `paid` | `unpaid` | `no_payment_required`. */
+  paymentStatus: null | string
+}
+
+export type ShortLine = { available: number; quantity: number; variantId: number }
 
 export type FulfilOutcome =
   | { orderId: number; outcome: 'finalised' }
-  | { orderId: number; outcome: 'alreadyFinal' }
+  /** `status` is the order's status as the event found it, so the route can re-queue a lost email. */
+  | { orderId: number; outcome: 'alreadyFinal'; status: null | PaymentStatus }
+  | { orderId: number; outcome: 'awaitingPayment' }
   | { orderId: number; outcome: 'transitioned'; status: PaymentStatus }
-  | {
-      orderId: number
-      outcome: 'outOfStock'
-      short: { available: number; quantity: number; variantId: number }[]
-    }
+  | { amountRefundedMinor: number; full: boolean; orderId: number; outcome: 'refunded' }
+  | { orderId: number; outcome: 'outOfStock'; short: ShortLine[] }
+  | { orderId: number; outcome: 'mismatch'; reason: string }
+  | { orderId: number; outcome: 'superseded' }
+  | { orderId: number; outcome: 'recorded' }
   | { orderId: null; outcome: 'noOrder' }
   | { orderId: null; outcome: 'ignored' }
 
@@ -100,16 +122,14 @@ const statusList = (statuses: readonly PaymentStatus[]) =>
  * Apply one verified event to one order.
  *
  * `paymentIntentId` is recorded when the event carries one, because `Orders.stripePaymentIntentId` is
- * unique and is what makes a duplicate finalisation detectable from the data alone, months later,
- * without replaying anything.
+ * unique and is what makes a duplicate finalisation detectable from the data alone, months later.
  *
- * **`orderId` may be `null`, and that is Phase 18's refund path.** §17.1b attaches an order reference
- * through Checkout Session metadata, and every session-shaped event carries it back. A
- * `charge.refunded` event does not: its `data.object` is a Charge, whose `metadata` is the charge's
- * own and is usually empty. The link that *does* survive is the payment intent, which Phase 17 already
- * stores on the order and which Stripe puts on the charge -- so an event with no usable reference
- * falls back to it rather than being discarded. Without that, a refund would be signed, correct, about
- * an order this shop holds, and silently ignored.
+ * **`orderId` may be `null`, and that is Phase 18's refund path.** A `charge.refunded` event's object
+ * is a Charge, whose `metadata` is the charge's own; the link that survives is the payment intent,
+ * which is stored on the order — so an event with no usable reference falls back to it.
+ *
+ * **`session` is required for every `checkout.session.*` event** (Phase 36, R1-01). One that
+ * arrives without it cannot be checked against the order, so it is a `mismatch`, never a payment.
  */
 export async function applyStripeEvent(
   payload: Payload,
@@ -118,11 +138,12 @@ export async function applyStripeEvent(
     eventType: string
     orderId: null | number
     paymentIntentId: null | string
+    session?: null | SessionFacts
   },
 ): Promise<FulfilOutcome> {
-  const intended = intendedStatusFor(input.eventType)
+  const plan = planStripeEvent(input.eventType, input.session?.paymentStatus ?? null)
 
-  if (intended === null) {
+  if (plan.kind === 'ignore') {
     return { orderId: null, outcome: 'ignored' }
   }
 
@@ -137,58 +158,67 @@ export async function applyStripeEvent(
     return { orderId: null, outcome: 'noOrder' }
   }
 
-  const current = order.paymentStatus as PaymentStatus
+  /* See `planStripeEvent`: a declined attempt inside Checkout does not end the session. */
+  if (plan.kind === 'record') {
+    return { orderId: order.id, outcome: 'recorded' }
+  }
 
-  if (intended === 'paid') {
-    if (!needsPaymentFinalisation(current)) {
-      /*
-       * **The second barrier.** Already paid, already refunded, or in a state from which payment is
-       * not reachable. Not an error and not a retry: a correct, expected outcome of the second event
-       * describing a payment that has already been applied.
-       */
-      return { orderId: order.id, outcome: 'alreadyFinal' }
+  if (plan.kind === 'refund') {
+    return applyRefund(payload, order, input.amountRefundedMinor)
+  }
+
+  const session = input.session ?? null
+
+  if (session === null) {
+    return {
+      orderId: order.id,
+      outcome: 'mismatch',
+      reason: 'A Checkout Session event arrived without its session.',
     }
+  }
 
-    return finalisePaidOrder(payload, order.id, input.paymentIntentId)
+  if (plan.kind === 'mismatch') {
+    return { orderId: order.id, outcome: 'mismatch', reason: plan.reason }
+  }
+
+  if (plan.kind === 'finalise') {
+    return finalisePaidOrder(payload, order.id, input.paymentIntentId, session)
   }
 
   /*
-   * **Every other transition is claimed, not checked** — the shape Phase 17's sweeps arrived at, now
-   * applied to the paths they did not cover. The one that mattered: a `payment_intent.payment_failed`
-   * for a superseded attempt, arriving at the same instant as the event that paid the order, read
-   * `pending_payment`, agreed the transition was legal, and wrote `payment_failed` over a payment
-   * that had already succeeded. The machine forbids `paid -> payment_failed`; the read simply never
-   * saw `paid`. Here the condition and the write are one statement, and Postgres serialises them.
+   * **Every other transition is claimed, not checked** — one statement whose `WHERE` carries both
+   * the states it may move from and the session it belongs to. The failure case that made claims
+   * necessary: a failure event for a superseded attempt, arriving at the same instant as the event
+   * that paid the order, read `pending_payment`, agreed the transition was legal, and wrote
+   * `payment_failed` over a payment that had already succeeded.
    *
-   * A refund also records **how much** and **when**. A status alone cannot tell a partial refund from
-   * a full one, and only the amount can.
+   * `awaitPayment` is `completed` with `payment_status: unpaid` — a delayed bank payment. The order
+   * stays (or becomes) `pending_payment`; no stock moves and no email is sent until
+   * `async_payment_succeeded` arrives.
    */
-  const refundExtras =
-    intended === 'refunded'
-      ? sql`, "refunded_at" = ${new Date().toISOString()}, "refunded_minor" = ${
-          typeof input.amountRefundedMinor === 'number' ? input.amountRefundedMinor : null
-        }`
-      : sql``
+  const to: PaymentStatus = plan.kind === 'awaitPayment' ? 'pending_payment' : plan.to
+  const from: readonly PaymentStatus[] =
+    plan.kind === 'awaitPayment'
+      ? ['checkout_started', 'pending_payment']
+      : statusesThatCanReach(to)
 
   const claim = await payload.db.drizzle.execute(
     sql`UPDATE "orders"
-        SET "payment_status" = ${STATUS_LITERAL[intended]}${refundExtras}
+        SET "payment_status" = ${STATUS_LITERAL[to]}
         WHERE "id" = ${order.id}
-          AND "payment_status" IN (${statusList(statusesThatCanReach(intended))})`,
+          AND "stripe_checkout_session_id" = ${session.id}
+          AND "payment_status" IN (${statusList(from)})`,
   )
 
   if ((claim.rowCount ?? 0) === 0) {
-    return { orderId: order.id, outcome: 'alreadyFinal' }
+    return classifyUnclaimed(payload, order.id, plan.kind, session)
   }
 
-  if (intended === 'cancelled') {
+  if (to === 'cancelled') {
     /*
-     * An expired session cancels the fulfilment half too. Separate from the claim above because the
-     * claim is what guarantees exactly one caller reaches here — by the time this runs the race is
-     * over.
-     *
-     * **Stock is deliberately not returned.** Phase 17 moves inventory only at confirmed payment, so
-     * a cancellation at this point has nothing to give back: the units were never taken.
+     * An expired session cancels the fulfilment half too. Separate from the claim because the claim
+     * is what guarantees exactly one caller reaches here. **Stock is deliberately not returned**:
+     * inventory moves only at confirmed payment, so there is nothing to give back.
      */
     await payload.update({
       collection: 'orders',
@@ -198,7 +228,59 @@ export async function applyStripeEvent(
     })
   }
 
-  return { orderId: order.id, outcome: 'transitioned', status: intended }
+  return plan.kind === 'awaitPayment'
+    ? { orderId: order.id, outcome: 'awaitingPayment' }
+    : { orderId: order.id, outcome: 'transitioned', status: to }
+}
+
+/** Re-read the order after a claim matched nothing, and say why — see `classifyUnclaimedSessionEvent`. */
+async function classifyUnclaimed(
+  payload: Payload,
+  orderId: number,
+  kind: 'awaitPayment' | 'finalise' | 'transition',
+  session: SessionFacts,
+): Promise<FulfilOutcome> {
+  const order = await payload.findByID({
+    collection: 'orders',
+    depth: 0,
+    id: orderId,
+    overrideAccess: true,
+  })
+
+  const status = order.paymentStatus as PaymentStatus
+
+  const verdict = classifyUnclaimedSessionEvent({
+    kind,
+    order: {
+      currency: String(order.currency),
+      sessionId: order.stripeCheckoutSessionId ?? null,
+      status,
+      totalMinor: order.totalMinor,
+    },
+    session,
+  })
+
+  return verdict.outcome === 'alreadyFinal'
+    ? { orderId, outcome: 'alreadyFinal', status }
+    : verdict.outcome === 'superseded'
+      ? { orderId, outcome: 'superseded' }
+      : { orderId, outcome: 'mismatch', reason: verdict.reason }
+}
+
+/**
+ * **Payload's `NotFound` is "no such order"; anything else is not** — Phase 36, audit R1-04.
+ *
+ * This was `.catch(() => null)`, so a dropped connection became `noOrder`, the event was recorded
+ * `ignored`, and the route answered 200: Stripe stopped retrying a payment the shop had never
+ * applied. Only a 404 is absence. Everything else is rethrown, the route records the row `failed`
+ * and answers 500, and Stripe's retry is reprocessed.
+ */
+function notFoundAsNull(error: unknown): null {
+  if ((error as { status?: unknown } | null)?.status === 404) {
+    return null
+  }
+
+  throw error
 }
 
 /**
@@ -214,7 +296,7 @@ async function resolveOrder(
   if (orderId !== null) {
     return payload
       .findByID({ collection: 'orders', depth: 0, id: orderId, overrideAccess: true })
-      .catch(() => null)
+      .catch(notFoundAsNull)
   }
 
   if (paymentIntentId === null) {
@@ -233,31 +315,95 @@ async function resolveOrder(
 }
 
 /**
+ * **A refund, recorded by amount** — §18.1b's `PAID → REFUNDED`, and Phase 36's audit R1-09.
+ *
+ * `charge.refunded` carries the **cumulative** `amount_refunded`, for partial refunds as well as full
+ * ones. So the statement:
+ *
+ * - raises `refunded_minor` to the new cumulative figure and never lowers it — `GREATEST`, because
+ *   two refund events can arrive out of order and the smaller one must not overwrite the larger;
+ * - moves the order to `refunded` only when the refund covers the total (`isFullRefund`); a partial
+ *   refund leaves it `paid`, so what remains can still be picked and sent;
+ * - matches only when the figure is **new** — so a redelivery changes nothing, and each new
+ *   cumulative amount is one outcome, which the route turns into one email (the dedupe key includes
+ *   the amount).
+ *
+ * `refunded` stays in the `WHERE` because a later event can still carry a larger cumulative figure
+ * than the one that first crossed the total, and the recorded amount should say what Stripe says.
+ */
+async function applyRefund(
+  payload: Payload,
+  order: { id: number; paymentStatus?: unknown; totalMinor: number },
+  amountRefundedMinor: null | number | undefined,
+): Promise<FulfilOutcome> {
+  if (
+    typeof amountRefundedMinor !== 'number' ||
+    !Number.isSafeInteger(amountRefundedMinor) ||
+    amountRefundedMinor <= 0
+  ) {
+    return {
+      orderId: order.id,
+      outcome: 'alreadyFinal',
+      status: (order.paymentStatus as PaymentStatus) ?? null,
+    }
+  }
+
+  const full = isFullRefund(amountRefundedMinor, order.totalMinor)
+
+  const claim = await payload.db.drizzle.execute(
+    sql`UPDATE "orders"
+        SET "refunded_minor" = GREATEST(COALESCE("refunded_minor", 0), ${amountRefundedMinor}),
+            "refunded_at" = ${new Date().toISOString()},
+            "payment_status" = ${full ? STATUS_LITERAL.refunded : sql`"payment_status"`}
+        WHERE "id" = ${order.id}
+          AND "payment_status" IN (${statusList(['paid', 'refunded'])})
+          AND COALESCE("refunded_minor", 0) < ${amountRefundedMinor}`,
+  )
+
+  if ((claim.rowCount ?? 0) === 0) {
+    return {
+      orderId: order.id,
+      outcome: 'alreadyFinal',
+      status: (order.paymentStatus as PaymentStatus) ?? null,
+    }
+  }
+
+  return { amountRefundedMinor, full, orderId: order.id, outcome: 'refunded' }
+}
+
+/**
  * **§17.1f, in one transaction.**
  *
  * > *"At order finalization: re-check inventory transactionally. Atomically decrement or otherwise
  * > reserve/commit stock. If stock is unavailable, do not mark an impossible order as fulfilled."*
  *
- * Stock is read **inside** the transaction that will write it, so the value a decision is made on
- * cannot change before the decision is written. That is the whole of the race: two customers buying
- * the last unit are two transactions, and the second one reads what the first one committed.
+ * ### The claim — which session, for how much
  *
- * ### What happens when the stock is not there
+ * One conditional `UPDATE` sets `paid` and refuses to if the order is already paid, **or** if the
+ * session is not the order's current one, **or** if the amount or currency differ from what the order
+ * records (Phase 36, R1-01). Zero rows is then classified; see `classifyUnclaimed`. The same
+ * statement resets `fulfillment_status` to `unfulfilled`, because a finalisable order has never been
+ * picked and a `cancelled` left behind by an earlier expiry is terminal.
  *
- * The payment has already succeeded — Stripe took the money before this ran, and nothing here can
- * undo that. So the order is marked **paid** and left **unfulfilled**, and the shortfall is logged.
- * That is §17.1f's *"refund/exception path"*: a human decides between refunding, back-ordering and
- * substituting, because none of those is a decision code should make silently.
+ * ### What happens when the stock is not there — R1-10 and R3-19
  *
- * The alternative — refusing to mark it paid — would be worse in every direction: the money is gone,
- * the customer has a receipt from Stripe, and the shop's own record would say the order was never
- * paid for. §17.1f says *"do not mark an impossible order as **fulfilled**"*, and fulfilment is
- * precisely the half that is withheld.
+ * The payment has already succeeded, so the order is marked **paid** and left **unfulfilled**, and
+ * a human decides between refunding, back-ordering and substituting (§17.1f's *"exception path"*).
+ * Phase 36 made that true all the way through:
+ *
+ * - **No partial pick.** A `SAVEPOINT` is taken after the claim, and if any decrement affects no row
+ *   the transaction rolls back to it — so no line's stock moves, which is what `planStockDecrements`
+ *   always promised and the per-variant loop did not deliver.
+ * - **The same tail either way.** The promotion is counted and the bag is converted on both paths: the
+ *   customer paid with that code and for that bag, whether or not the goods are there.
+ * - **It is visible.** `fulfilmentHold: stockShortfall` and the `shortfall` detail are written in the
+ *   same transaction, and the failure is reported beyond the log.
  */
 async function finalisePaidOrder(
   payload: Payload,
   orderId: number,
   paymentIntentId: null | string,
+  session: SessionFacts,
 ): Promise<FulfilOutcome> {
   const transactionID = await payload.db.beginTransaction()
 
@@ -267,12 +413,16 @@ async function finalisePaidOrder(
 
   const req = { transactionID } as Parameters<typeof payload.find>[0]['req']
 
+  let short: ShortLine[] = []
+  let promotionCounted = true
+  let promotionId: null | number = null
+
   try {
     /*
-     * The narrowed handle for the two statements that must be expression updates rather than
+     * The narrowed handle for the statements that must be expression updates rather than
      * read-then-write. Only `execute` is used, and only with parameterised SQL.
      */
-    const session = (
+    const tx = (
       payload.db as unknown as {
         sessions?: Record<
           string,
@@ -281,43 +431,37 @@ async function finalisePaidOrder(
       }
     ).sessions?.[transactionID]
 
-    if (!session) {
+    if (!tx) {
       throw new Error('The transaction session was not available to finalise the order.')
     }
 
     /*
-     * **The third barrier, and the only one that holds under concurrency.**
-     *
-     * The two in §17.1d are a unique event id and a status check. Phase 17's first sweep ran two
-     * deliveries of one payment at the same instant and both passed the status check — because a
-     * check is a *read*, and two transactions read the same row before either wrote it. The stock
-     * then moved twice.
-     *
-     * So the order is **claimed**, not checked: one conditional UPDATE that both sets `paid` and
-     * refuses to if it is already paid. Postgres serialises the two statements on the row, the loser
-     * sees zero rows affected, and it stops. There is no window between the decision and the write
-     * because they are the same statement.
-     *
-     * `FINALISABLE_STATUSES` comes from the state machine so the SQL and the machine cannot drift.
+     * **The claim, and the only barrier that holds under concurrency.** Postgres serialises two
+     * statements on the row, the loser sees zero rows affected, and it stops. `FINALISABLE_STATUSES`
+     * comes from the state machine so the SQL and the machine cannot drift. `amount_total = NULL`
+     * is never true, so a session with no amount cannot pay anything.
      */
-    const claim = await session.db.execute(
+    const claim = await tx.db.execute(
       sql`UPDATE "orders"
           SET "payment_status" = 'paid',
               "paid_at" = ${new Date().toISOString()},
+              "fulfillment_status" = 'unfulfilled',
               "stripe_payment_intent_id" = COALESCE(${paymentIntentId}, "stripe_payment_intent_id")
           WHERE "id" = ${orderId}
-            AND "payment_status" IN (${sql.join(
-              FINALISABLE_STATUSES.map((status) => sql`${status}`),
-              sql`, `,
-            )})`,
+            AND "payment_status" IN (${statusList(FINALISABLE_STATUSES)})
+            AND "stripe_checkout_session_id" = ${session.id}
+            AND "total_minor" = ${session.amountTotal}
+            AND lower("currency"::text) = lower(${session.currency ?? ''})`,
     )
 
     if ((claim.rowCount ?? 0) === 0) {
-      /* Somebody else finalised it, or it was never finalisable. Both are `alreadyFinal`. */
       await payload.db.commitTransaction(transactionID)
 
-      return { orderId, outcome: 'alreadyFinal' }
+      return classifyUnclaimed(payload, orderId, 'finalise', session)
     }
+
+    /* Everything after this point may be undone without undoing the claim. See the docblock. */
+    await tx.db.execute(sql`SAVEPOINT "finalise_stock"`)
 
     const order = await payload.findByID({
       collection: 'orders',
@@ -369,98 +513,69 @@ async function finalisePaidOrder(
     const plan = planStockDecrements(lines)
 
     if (!plan.ok) {
-      payload.logger.error({
-        msg:
-          'An order was paid that cannot be fulfilled from stock. It is marked paid and left ' +
-          'unfulfilled for a human decision — plan §17.1f.',
-        orderId,
-        short: plan.short,
-      })
-
-      await payload.db.commitTransaction(transactionID)
-
-      return { orderId, outcome: 'outOfStock', short: plan.short }
-    }
-
-    /*
-     * **The decrement is one atomic statement, not a read followed by a write.**
-     *
-     * §17.1f says *"atomically decrement"* and the first version of this did not: it wrote
-     * `stockRead - quantity`, an absolute value computed from a read taken earlier in the
-     * transaction. Two finalisations running at once both read 5, and both wrote their own answer —
-     * the classic lost update. Phase 17's first sweep caught it by running two events concurrently
-     * and watching **both** report success.
-     *
-     * `inventory_quantity = inventory_quantity - $n` is evaluated by Postgres against the row it is
-     * locking, so the second statement waits for the first to commit and then subtracts from the
-     * value the first left. The `AND inventory_quantity >= $n` guard makes it refuse rather than go
-     * negative, and the row count says which happened — which is what turns *"atomically decrement
-     * or otherwise reserve"* into something the database enforces rather than something this
-     * function hopes for.
-     *
-     * Raw SQL through the transaction's own handle, because Payload's Local API has no expression
-     * update. `docs/DATABASE.md` allows it; what it forbids is hand-authored *migrations*.
-     */
-    for (const decrement of plan.decrements) {
-      const updated = await session.db.execute(
-        sql`UPDATE "product_variants"
-            SET "inventory_quantity" = "inventory_quantity" - ${decrement.quantity}
-            WHERE "id" = ${decrement.variantId}
-              AND "inventory_quantity" >= ${decrement.quantity}`,
-      )
-
+      short = plan.short
+    } else {
       /*
-       * Zero rows means somebody else took the stock between the plan and the write. The payment has
-       * happened, so this is §17.1f's exception path again: paid, unfulfilled, logged — never a
-       * negative row and never a silent success.
+       * **Each decrement is one atomic statement**, evaluated by Postgres against the row it locks,
+       * with a guard that refuses rather than go negative. Zero rows means somebody else took the
+       * stock between the plan and the write — and then every decrement already made in this loop is
+       * rolled back with the savepoint, so the order takes no stock at all rather than some of it.
        */
-      if ((updated.rowCount ?? 0) === 0) {
-        payload.logger.error({
-          msg:
-            'Stock disappeared between planning and decrementing. The order is paid and left ' +
-            'unfulfilled for a human decision — plan §17.1f.',
-          orderId,
-          variantId: decrement.variantId,
-        })
+      for (const decrement of plan.decrements) {
+        const updated = await tx.db.execute(
+          sql`UPDATE "product_variants"
+              SET "inventory_quantity" = "inventory_quantity" - ${decrement.quantity}
+              WHERE "id" = ${decrement.variantId}
+                AND "inventory_quantity" >= ${decrement.quantity}`,
+        )
 
-        await payload.db.commitTransaction(transactionID)
+        if ((updated.rowCount ?? 0) === 0) {
+          await tx.db.execute(sql`ROLLBACK TO SAVEPOINT "finalise_stock"`)
 
-        return {
-          orderId,
-          outcome: 'outOfStock',
-          short: [{ available: 0, quantity: decrement.quantity, variantId: decrement.variantId }],
+          short = [{ available: 0, quantity: decrement.quantity, variantId: decrement.variantId }]
+
+          break
         }
       }
     }
 
-    /*
-     * §15's owed item, paid here: `timesUsed` moves **inside the payment transaction**, which is what
-     * `Promotions.ts` said Phase 17 would do — *"incrementing it anywhere earlier means a code
-     * consumed by an abandoned checkout."*
-     */
-    const promotionId = relatedId(order.promotion)
-
-    if (promotionId !== null) {
-      /*
-       * An expression, for the same reason the decrement above is one. This counter is what a
-       * `usageLimit` is measured against, so a lost update here does not merely miscount — it lets a
-       * code be honoured more often than the shop agreed to. Two customers paying with one code at
-       * the same instant are two *different* orders, so neither §17.1d barrier applies and both are
-       * genuinely owed an increment; a `read + 1` gives them one between them.
-       *
-       * Phase 17's second sweep found this by grepping for the **shape** of the first sweep's defect
-       * rather than for another instance of it. `verify-webhook.ts` section L holds it, and section K
-       * — which increments twice in sequence — passes either way, which is the point.
-       */
-      await session.db.execute(
-        sql`UPDATE "promotions" SET "times_used" = "times_used" + 1 WHERE "id" = ${promotionId}`,
+    if (short.length > 0) {
+      await tx.db.execute(
+        sql`UPDATE "orders"
+            SET "fulfilment_hold" = 'stockShortfall',
+                "shortfall" = ${JSON.stringify(short)}::jsonb
+            WHERE "id" = ${orderId}`,
       )
     }
 
-    /* The bag is history now. §14's `converted` status exists for exactly this moment. */
+    /*
+     * **The promotion is counted, but only while it is under its limit** — Phase 36, R1-07.
+     *
+     * `timesUsed` moves inside the payment transaction (Phase 17), as an expression so two
+     * concurrent payments both count. The limit used to be checked only at preflight, so N
+     * overlapping checkouts on a code limited to one were all honoured and all counted. The
+     * predicate makes the counter unable to pass the limit. The payment itself stands either way —
+     * the money has moved at the discounted price — so zero rows is recorded and reported as an
+     * over-redemption rather than refused.
+     */
+    promotionId = relatedId(order.promotion)
+
+    if (promotionId !== null) {
+      const counted = await tx.db.execute(
+        sql`UPDATE "promotions"
+            SET "times_used" = "times_used" + 1
+            WHERE "id" = ${promotionId}
+              AND ("usage_limit" IS NULL OR "times_used" < "usage_limit")`,
+      )
+
+      promotionCounted = (counted.rowCount ?? 0) > 0
+    }
+
+    /* The bag is history now — on both paths. §14's `converted` status exists for this moment. */
     const cartId = relatedId(order.cart)
 
     if (cartId !== null) {
+      /* A bag deleted meanwhile is simply gone; any other failure rolls the payment back and retries. */
       await payload
         .update({
           collection: 'carts',
@@ -469,15 +584,49 @@ async function finalisePaidOrder(
           overrideAccess: true,
           req,
         })
-        .catch(() => undefined)
+        .catch(notFoundAsNull)
     }
 
     await payload.db.commitTransaction(transactionID)
-
-    return { orderId, outcome: 'finalised' }
   } catch (error) {
     await payload.db.rollbackTransaction(transactionID)
 
     throw error
   }
+
+  /* Reported after the commit, so a report can never describe a transaction that rolled back. */
+  if (!promotionCounted) {
+    const error = new Error('A promotion was redeemed beyond its usage limit.')
+
+    payload.logger.error({
+      msg:
+        'A paid order used a promotion that had already reached its usage limit (or was deleted). ' +
+        'The payment stands; the redemption was not counted.',
+      orderId,
+      promotionId,
+    })
+    reportFailure(error, 'checkout.promotionOverRedeemed', { orderId, promotionId })
+  }
+
+  if (short.length > 0) {
+    payload.logger.error({
+      msg:
+        'An order was paid that cannot be fulfilled from stock. It is marked paid, held with ' +
+        'fulfilmentHold=stockShortfall, and no stock was taken — plan §17.1f.',
+      orderId,
+      short,
+    })
+    reportFailure(
+      new Error('A paid order could not be fulfilled from stock.'),
+      'checkout.oversold',
+      {
+        orderId,
+        shortLines: short.length,
+      },
+    )
+
+    return { orderId, outcome: 'outOfStock', short }
+  }
+
+  return { orderId, outcome: 'finalised' }
 }

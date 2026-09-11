@@ -170,17 +170,21 @@ assigned to the phase that first needs it.
 | G-03 | **Gender** is an Algolia filterable attribute (plan §12.1a) and a facet drawn in the reference image, but no product or variant field stores it. | ~~Phase 6~~ **Closed in Phase 6** — `products.gender`, indexed. Women / Men / Unisex. |
 | G-04 | **Product display price.** Price is owned by the variant, yet listings and the PDP must show a product-level price. No document says how it is derived. | ~~Phase 6~~ **Closed in Phase 6** — `products.derived`, a hook-maintained aggregate over active variants. See **D-18**. |
 | G-05 | **Variant availability state** is in the domain model §2.1 but absent from the Phase 6.1c variant schema, and its values are never enumerated. | ~~Phase 6~~ **Closed in Phase 6** — enumerated as a *derivation*, not a column: discontinued / sold out / low stock / in stock, from `active`, `inventoryQuantity` and `siteSettings.lowStockThreshold`. A fourth stored state would be a fourth thing to keep in step. See `ProductVariants.ts`. |
-| G-06 | **Shipping method** is a required entity §2.2, "Postgres configuration" in the feature matrix, and a code-level static provider in plan §16.1a — three different homes. | Phase 16 |
+| G-06 | **Shipping method** is a required entity §2.2, "Postgres configuration" in the feature matrix, and a code-level static provider in plan §16.1a — three different homes. | ~~Phase 16~~ **Answered in Phase 16** — the code-level static provider (`lib/shipping/rules.ts`), with the chosen method snapshotted on the order (`shippingMethodCode`, `shippingMethodLabel`). A rate card an operator can edit is still owed (notes §1.21.7). |
 | G-07 | **Infrastructure records** — Stripe webhook/idempotency, email delivery, search sync — are required by §2.2 and by Phases 12/17/19, but Phase 6 never defines them. | Their own phases — **confirmed in Phase 6**, which deliberately created none of them. See **D-19**. |
-| G-08 | **About**, **Order Tracking**, and the support surface (**FAQ / Contact / Shipping / Returns**) are navigation destinations in the structure doc with no dedicated implementation phase. | Phase 23 |
-| G-09 | **Recommendations** are fully specified in feature matrix §10 but have no phase of their own — only incidental mentions inside the Phase 11 and 13 prompts. | Phase 13 |
-| G-10 | **Checkout preflight** (plan §17.1a) never validates a shipping address, though the tech stack makes one mandatory for physical goods. | Phase 17 |
-| G-11 | **Payment status vs fulfillment status.** Feature matrix §21 models them as two fields; the plan's §18.1b machine is a single linear axis mixing both. | Phase 18 |
+| G-08 | **About**, **Order Tracking**, and the support surface (**FAQ / Contact / Shipping / Returns**) are navigation destinations in the structure doc with no dedicated implementation phase. | ~~Phase 23~~ **Partly closed.** FAQ, Shipping and Returns render at `/help/faq`, `/help/shipping` and `/help/returns` (Phase 28, notes §1.33). About is withdrawn (**DEV-07**, amended in Phase 30). Order Tracking has no public route (**DEV-77**). **Contact is still open.** |
+| G-09 | **Recommendations** are fully specified in feature matrix §10 but have no phase of their own — only incidental mentions inside the Phase 11 and 13 prompts. | ~~Phase 13~~ **Closed by DEV-79** — one row, same category first and then the catalogue. |
+| G-10 | **Checkout preflight** (plan §17.1a) never validates a shipping address, though the tech stack makes one mandatory for physical goods. | ~~Phase 17~~ **Resolved by DEV-11** (Phase 17). |
+| G-11 | **Payment status vs fulfillment status.** Feature matrix §21 models them as two fields; the plan's §18.1b machine is a single linear axis mixing both. | ~~Phase 18~~ **Resolved by D-05 / DEV-03**, confirmed in Phase 18. |
 | G-12 | Design tokens for **radius, shadow, motion duration and accent** are required numerically by plan §3.1a; the visual guide describes them only in adjectives. The type scale gives sizes but no weights, line-heights or tracking. | ~~Phase 3~~ **Closed in Phase 3** — every number fixed and recorded in notes §1.8.1. |
 | G-13 | The visual guide gives page-level art direction for seven page types — **Cart and Checkout are absent**, as are Payload Admin and transactional email. | Phases ~~3~~, 14, 17, 19 — Phase 3's part is answered: guide §09's "Account / Utility" direction plus the token layer is what Cart and Checkout compose from, so no new visual language is needed for them. |
 | G-15 | **The public URL of a single document.** The structure document draws the browsing namespaces (`SHOP`, `COLLECTIONS`, `EDIT`, `LOOKBOOK`, `JOURNAL`) but gives no path for an individual product, and no node at all for a campaign — while plan §9.1a requires a navigation item to be a *reference* whose href is derived at render time. | ~~Phase 9~~ **Closed in Phase 9** — one route map in `lib/navigation/routes.ts`, following the namespaces the document does give. See **D-30**. |
 | G-14 | **Sale / compare-at price** and **selected/active** states need a visible accent, but the palette forbids saturated colour and prescribes low-contrast borders. | ~~Phase 3~~ **Closed in Phase 3** — selection is carried by contrast, compare-at is typographic, and the border rule is split. See notes §1.8.2, **DEV-21**, **DEV-22**. |
 | G-16 | **Art direction for a promotional strip and a community gallery.** Visual guide §09 gives page-level direction for seven page types and neither section is among them, while plan §10.1a and feature matrix §3 both require them on the homepage. | ~~Phase 10~~ **Closed in Phase 10** — both are treated as editorial furniture governed by §09's Home composition rules and §06's component rules: hairline rules and Meta-sized statements for the strip, a 4:5 tile grid with a Micro credit for the gallery. Neither invents a visual language. |
+| G-17 | **Analytics consent.** Nothing asks permission before loading PostHog or GA4, and no document requires it; a shop selling into the EU or California needs a banner and a gate in front of `Analytics`. | **Open** — recorded in Phase 25 (notes §1.30.15). |
+| G-18 | **`POST /api/customers/login` is not Turnstile-guarded.** It is Payload's own auth endpoint, so the login form's challenge protects the form and not the route. The five-failure lockout still applies to it. | **Open** — recorded in Phase 26 (notes §1.31). |
+| G-19 | **Privacy policy and terms.** The footer's legal links (feature matrix §1, structure §20) need legal text somebody accountable has to write. `/legal/privacy` and `/legal/terms` do not exist and `legalNav` is empty. | **Open, owner action** — recorded in Phase 28 (notes §1.33); TODO.md. |
+| G-20 | **Online returns.** Structure §2 promises an *"online return request/support flow"*, and no phase built one: no return-request action on an order, no record, no email, no guest path. | **Open** — recorded in Phase 36 (audit DOC-01). Owed: a return request on shipped or delivered orders inside the window plus a guest lookup, or a staffed channel the returns copy names. The seeded `returnsPolicy` and FAQ no longer promise a self-service return: they say returns are arranged with the team. The channel they point to does not exist yet (G-08). |
 
 ### 3.3 Image-only elements — present in the reference, defined nowhere
 
@@ -412,6 +416,12 @@ separate *modules* — `src/lib/env.public.ts` and `src/lib/env.server.ts` — r
 one, so the mistake is visible in the import line of the file making it, not in a value several hops
 away.
 
+**Amended in Phase 30:** the public *schema* moved out of `env.public.ts` into `src/lib/env.schema.ts`,
+which only `env.core.ts` imports for values. `env.public.ts` is imported by client components, so
+the Zod import at its head had put all of Zod into every storefront route. Public values are still
+validated, on the server at build and at startup, because `ServerEnvSchema` extends the public
+schema. See the `env.schema.ts` docblock.
+
 **A runtime check was not enough, and the first version of this decision was wrong.** `env.server.ts`
 originally relied on a `typeof window` tripwire. That cannot fire during a build, because prerendering
 runs on the server where `window` is undefined — so a client component importing the environment built
@@ -425,9 +435,13 @@ does not resolve at all. Hence three modules rather than two: `env.core.ts` hold
 tsx-resolvable, `env.server.ts` is that plus the guard. The `typeof window` check stays as a backstop.
 The same tsx constraint is why the module imports nothing from `next/*`.
 
-**The core is fenced by lint, and the two gates are not equivalent.** Two ESLint rules keep anything
-but `env.server.ts`, `payload.config.ts` and `instrumentation.ts` from reaching `env.core.ts`:
-`no-restricted-imports` for the static form, and `no-restricted-syntax` for `import()`. The second is
+**The core is fenced by lint, and the two gates are not equivalent.** Two ESLint rules keep
+everything outside one exemption block from reaching `env.core.ts`: `no-restricted-imports` for the
+static form, and `no-restricted-syntax` for `import()`. **The exemption block's `files` array in
+`eslint.config.mjs` is the authoritative list.** Today it is `src/lib/env.server.ts`,
+`src/payload.config.ts`, `src/instrumentation.ts` and `scripts/**/*.ts`. `scripts/` was added in
+Phase 6: a script is run by the Payload CLI through tsx, outside Next, and nothing in `src/` imports
+one, so it cannot reach a client bundle. The second is
 needed because the first is blind to dynamic imports — its implementation registers no
 `ImportExpression` visitor — and the second Phase 4 audit proved that gap live: a client component
 doing `use(import('@/lib/env.core'))` passed typecheck, lint and build and put `PAYLOAD_SECRET` into
@@ -627,7 +641,8 @@ Plan §7.1e requires forgot-password and reset-password. Plan §19 owns Resend. 
 unconfigured default logs an email's *subject* and discards its body — which for a reset mail discards
 the only copy of the token, leaving a form that submits, confirms, and cannot be completed by anyone.
 
-So `src/payload/email/logEmailAdapter.ts` logs the whole message, and the flow is genuinely
+So `src/payload/email/logEmailAdapter.ts` logs the whole message (*replaced in Phase 19 by
+`serviceEmailAdapter.ts`, which keeps this behaviour when Resend is unconfigured*), and the flow is genuinely
 end-to-end in development: submit the form, read the link out of the server log, choose a new
 password. The token, the one-hour expiry, the single use, the session handling and the storefront
 reset route are all real and all tested. Only the transport is missing, it says so at `error` level on
@@ -813,13 +828,14 @@ fallback is one of them, and it is **not** the outermost:
 
 | Scenario | Result |
 |---|---|
-| A statically prerendered route (`/`) | **200**, real CMS content, database never contacted — the prerender is a stronger guarantee than the fallback |
+| ~~A statically prerendered route (`/`)~~ | ~~**200**, real CMS content, database never contacted~~ — **wrong, and struck.** No storefront route is prerendered: the root layout reads cookies, so `/` is dynamic like every other page (**DEV-83**, notes §1.29.10). Since Phase 31 `/` answers 200 with a signed-out shell during an outage because the shell degrades (notes §1.36.2, **D-41**), not because a prerender protects it |
 | A dynamic route rendering the shell | **200**, fallback navigation, `[shell] Falling back…` in the log |
 | A dynamic route with its own data access (`/login`, `/account`) | **500** — correctly: the page has nothing true to show |
 | `pnpm build` | **exit 1** — a deploy against a broken database fails loudly rather than silently baking a fallback site |
 
 So the fallback protects *the shell's own two reads*. It is not, and should not be read as, a promise
-that the storefront survives a database outage; the first row is what does that, and it does it better.
+that the storefront survives a database outage. No prerender stands behind it either (**DEV-83**):
+what an outage does to each route since Phase 31 is **D-41**'s table.
 
 **Amended in Phase 31.** The third row was the whole storefront, not just `/login` and `/account`: the
 root layout and the header also read the signed-in customer and the bag for its badge, those reads
@@ -1322,7 +1338,7 @@ Phase 6 editorial blocks imported unchanged. **No dependency added**; direct dep
 | Hero edge cases — CTA omitted, mobile image omitted, video unavailable, media loading, text too long (§10.1b) | **pass** — the last is removed *by construction*: the copy never sits over the crop (**DEV-44**) |
 | Every editorial block has an explicit path into commerce (§10.1c) | **pass** — structurally for `collectionFeature`, whose subject is a reference, so a path exists even with no CTA authored |
 | Responsive sizes, lazy loading, priority only on the LCP image (§10.1d) | **pass** — measured: exactly one `fetchpriority="high"`, every other image lazy, and no image delivered smaller than its box |
-| Skeletons for asynchronous product data *where needed* (§10.1d) | **none, deliberately** — `/` is prerendered static and all reads are in one cached loader; a `loading.tsx` would put the LCP behind a boundary. Notes §1.15.9 |
+| Skeletons for asynchronous product data *where needed* (§10.1d) | **none, deliberately** — all reads are in one cached loader, and a `loading.tsx` would put the LCP behind a boundary. Notes §1.15.9. *(This row originally said `/` was prerendered static. It is not: it is dynamic, **DEV-83**, notes §1.29.10.)* |
 | Connected to real Payload data; no hard-coded product content | **pass** — the page renders only what the global holds |
 | Empty / missing media and incomplete blocks handled gracefully | **pass** — every edge case in feature matrix §3 asserted in `verify-home.ts` |
 | Accessibility | **0 axe-core violations** at 1440×900 and 390×844; the scrollable rail is keyboard-operable, which axe cannot see |
@@ -1361,7 +1377,11 @@ on `campaigns`, no `DROP COLUMN` and no `DROP TABLE` in its `up`. Applied, rolle
 on a throwaway database, and the resulting schema **diffed identical** to the pushed development one
 across 867 columns, 519 indexes, 282 constraints and 68 enums.
 
-**Next: Phase 11 — product catalog and discovery.**
+**Phases 11–35: complete.** This section is not extended past Phase 10. Each later phase is
+recorded in the notes (`NORTH01_Implementation_Notes_and_Deviations.md` §1.16–§1.40) and in its
+append log (Section 3), with the decisions above (**D-36**–**D-42**) and the deviation register
+(Section 2, through **DEV-84**). **Phase 36 (final review and documentation audit) is in progress.**
+What still needs the owner is in `TODO.md`.
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 

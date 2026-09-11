@@ -29,6 +29,8 @@ import {
 import { resolveContext, type MediaRole } from '@/lib/media/roles'
 import type { Media } from '@/payload-types'
 
+import { MediaFrame } from './media-frame'
+
 /**
  * **The one way an image reaches a page.** Plan §8.1c's responsive delivery and §8.1d's missing-media
  * behaviour, in a single server component.
@@ -49,8 +51,9 @@ import type { Media } from '@/payload-types'
  *    breakpoint, which is `<picture>` with `media` conditions and nothing else.
  *
  * What `next/image` would otherwise have given us is native HTML now: `loading`, `decoding` and
- * `fetchpriority` are attributes, not features. So this component ships **no client JavaScript at
- * all** — it is a server component that returns markup.
+ * `fetchpriority` are attributes, not features. So this is a server component that returns markup;
+ * the only client code is `MediaFrame`'s failure listener, and the `<img>` inside it is still
+ * server-rendered.
  *
  * ### How layout shift is prevented, in every state
  *
@@ -58,7 +61,8 @@ import type { Media } from '@/payload-types'
  * comes from the context, not from the asset.** `reserveBox` reads the delivery context — a property
  * of the page — so the rectangle is known before it is known whether an asset exists, whether its
  * bytes arrive, or whether the CDN 404s. `aspect-ratio` holds the space with no JavaScript and no
- * padding-top hack.
+ * padding-top hack. When the bytes do not arrive, `MediaFrame` paints the placeholder over the failed
+ * `<img>` inside that same box (Phase 36, audit R1-29).
  *
  * ### Art direction is two things, and Phase 10 added the second
  *
@@ -324,8 +328,7 @@ export function MediaImage({
     const mobileUrl = hasDistinctMobile ? (mobileRecord?.url ?? null) : null
 
     return (
-      <div
-        data-slot="media-image"
+      <MediaFrame
         className={cn('relative w-full overflow-hidden bg-surface', frameClass, className)}
         style={frame}
       >
@@ -356,7 +359,7 @@ export function MediaImage({
             className={cn('h-full w-full object-cover', imageClassName)}
           />
         )}
-      </div>
+      </MediaFrame>
     )
   }
 
@@ -376,9 +379,12 @@ export function MediaImage({
    *
    * The blurred 24-pixel copy is the *background* of the frame rather than a second `<img>`: it costs
    * 120 bytes, needs no JavaScript to swap out, and means the photograph fades in over its own
-   * colours instead of over a grey rectangle. It also covers **state 4** for free — if delivery 404s,
-   * the browser paints the alt text over the blur inside an already-reserved box, which is a
-   * deliberate-looking absence rather than a broken-image icon and a jump.
+   * colours instead of over a grey rectangle.
+   *
+   * **State 4 — delivery fails.** This used to claim the blur covered it for free. It did not: when
+   * Cloudinary is down the blur is a Cloudinary URL too, and the browser drew its broken-image icon.
+   * `MediaFrame` now covers a failed `<img>` with the placeholder, drops the dead blur, and keeps the
+   * reserved box — a deliberate-looking absence with no jump.
    */
   /*
    * The blur follows the photograph that will actually be served. With a distinct mobile asset the
@@ -418,8 +424,7 @@ export function MediaImage({
   )
 
   return (
-    <div
-      data-slot="media-image"
+    <MediaFrame
       className={cn('relative w-full overflow-hidden bg-surface', frameClass, blurClass, className)}
       style={blur}
     >
@@ -454,6 +459,6 @@ export function MediaImage({
       ) : (
         image
       )}
-    </div>
+    </MediaFrame>
   )
 }

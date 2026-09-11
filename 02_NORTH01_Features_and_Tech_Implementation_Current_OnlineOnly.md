@@ -12,6 +12,29 @@
 >
 > **Fulfillment model:** inventory represents centralized online fulfillment stock. Orders are paid online, fulfilled remotely, shipped to the customer, tracked, and returned through an online-first process.
 
+> **As built (Phase 36 documentation audit).** The sections below are the original specification and are not rewritten. Where the build departs from them, the deviation register (`NORTH01_Implementation_Notes_and_Deviations.md` §2) and the gap register (`docs/ARCHITECTURE.md` §3.2) govern:
+>
+> - **Motion** in the *Uses* lines of §1, §3, §4, §6, §7, §11, §14 and §33 — not installed. Motion is CSS on the duration tokens (DEV-40, ARCHITECTURE D-13 and D-34).
+> - **React Hook Form** in §7 and §9 — Server Actions with `useActionState` and Zod (DEV-80).
+> - **§1 Footer** — Contact is not built (G-08, open), and the legal links wait on legal text (G-19, owner action).
+> - **§3 Homepage** — the newsletter is the footer's column, not a homepage block (DEV-42). The social gallery shows only with at least three editorial images (DEV-82).
+> - **§5 Sorting** — no rating sort; five sort options (DEV-46).
+> - **§6 Quick View / Quick Add** — withdrawn. The card is a link plus the wishlist heart (DEV-76).
+> - **§7 Product page** — no Buy Now: Add to Bag opens the bag drawer, which has Checkout (DEV-78). A one-size product's only size is selected automatically (DEV-84).
+> - **§8 Size guide** — a dialog at every width. The mobile drawer was not built, and no deviation records that yet.
+> - **§9 Reviews** — a purchase is a badge, not a gate (DEV-69). Moderation replaces a profanity filter (DEV-70). No review photos (DEV-71).
+> - **§10 Recommendations** — one row, same category first and then the catalogue (DEV-79, closing G-09).
+> - **§13 Edits** — Essentials is a Collection, not an Edit (DEV-01).
+> - **§16 Wishlist** — "Move to cart" is not built (notes §1.25.9 lists it as owed).
+> - **§17 Cart** — there is no "Clear" control, and no deviation records that yet.
+> - **§19 Tax** — Stripe Tax is not wired; a provider boundary answers `unavailable` (DEV-61).
+> - **§23 Order tracking** — signed-in customers see tracking in their account and everyone gets the shipped email. There is no public lookup (DEV-77).
+> - **§24 Email** — eight templates, not ten (DEV-65), and two of the eight are unwired (DEV-66).
+> - **§26 Analytics** — `add_payment_info` and `quick_view_opened` are never emitted (DEV-73, DEV-74). No consent gate (G-17).
+> - **§28 Bot protection** — Turnstile is skipped when unconfigured and refuses during an outage (DEV-75). Contact has no form to protect (G-08), and Payload's REST login is not guarded (G-18).
+> - **§33 Design System / Storybook** — the in-app `/design-system` route instead of Storybook (DEV-20).
+> - **Online returns** — no return-request flow exists (G-20, open).
+
 ## 0. Feature Implementation Rules
 
 1. PostgreSQL/Payload is the application source of truth.
@@ -23,7 +46,7 @@
 7. Analytics, Sentry, and Speed Insights never block customer actions.
 8. Every major feature needs loading, empty, error, and unavailable states where applicable.
 9. Optional third-party services must fail gracefully.
-10. UI implementation must conform to `NORTH01_Visual_Guide_OnlineOnly.md` and `NORTH01_Visual_Reference_OnlineOnly.png`.
+10. UI implementation must conform to `NORTH01_Visual_Guide_OnlineOnly.md`, the visual source of truth. `NORTH01_Visual_Reference_OnlineOnly.png` is directional context only: where it disagrees with the written guide, the guide wins (AGENTS.md; plan visual-reference rules; ARCHITECTURE §3.3).
 
 ### Online-only exclusions
 
@@ -715,7 +738,7 @@ Every reusable component should conform to the visual guide.
 
 - Visual source of truth: `NORTH01_Visual_Guide_OnlineOnly.md`.
 - Overall visual reference: `NORTH01_Visual_Reference_OnlineOnly.png`.
-- Architecture/build-order source: `NORTH01_Claude_Implementation_Plan_Current.md`.
-- Stack source: this document.
+- Architecture/build-order source: `NORTH01_Claude_Implementation_Plan_Current_OnlineOnly.md`.
+- Stack source: `01_NORTH01_Tech_Stack_Current_OnlineOnly.md` (ARCHITECTURE C-01). This document maps features to that stack.
 - Feature source: this document + canonical implementation plan.
 - User-facing structure: `03_NORTH01_Website_Structure_and_User_Flow_Current_OnlineOnly.md`.

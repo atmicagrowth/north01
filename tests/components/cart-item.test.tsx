@@ -72,6 +72,7 @@ function makeLine(overrides: Partial<CartLineView> = {}): CartLineView {
     effectiveQuantity: 1,
     id: 41,
     image: null,
+    limitedByPolicy: false,
     maxQuantity: 10,
     productId: 7,
     productName: PRODUCT,
@@ -146,6 +147,14 @@ describe('CartLineRow — the quantity a customer is actually shown', () => {
     renderRow({ effectiveQuantity: 4, maxQuantity: 4, quantity: 4 })
 
     expect(screen.getByText('That is all we have — 4 in stock.')).toBeInTheDocument()
+  })
+
+  it('names the per-order limit, not the stock, when the policy is what binds', () => {
+    renderRow({ effectiveQuantity: 4, limitedByPolicy: true, maxQuantity: 4, quantity: 4 })
+
+    expect(screen.getByText('You can have up to 4 of this per order.')).toBeInTheDocument()
+    /* "That is all we have" would be a false statement about the warehouse. */
+    expect(screen.queryByText(/That is all we have/)).not.toBeInTheDocument()
   })
 
   it('says nothing extra about a line nowhere near its ceiling, because an unprompted stock sentence is pressure, not information', () => {

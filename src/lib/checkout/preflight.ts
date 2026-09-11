@@ -17,8 +17,17 @@ import {
 import { taxProvider } from '@/lib/tax/provider'
 import type { TaxAddress, TaxResult } from '@/lib/tax/rules'
 
-import { formatOrderNumber, orderTotalMinor, type PreflightFailure } from './rules'
-import { isStripeConfigured } from './stripe'
+import { reportFailure } from '@/lib/observability/report'
+
+import {
+  decidePriorSession,
+  formatOrderNumber,
+  orderTotalMinor,
+  REUSABLE_ORDER_STATUSES,
+  type PaymentStatus,
+  type PreflightFailure,
+} from './rules'
+import { isStripeConfigured, stripeClient } from './stripe'
 import { addressFits } from '@/lib/address-limits'
 
 /**
@@ -199,6 +208,7 @@ export async function runPreflight(
   const taxAddress: TaxAddress = {
     city: trimmed(contact.shippingAddress.city) || null,
     country: destination.country,
+    line1: trimmed(contact.shippingAddress.line1) || null,
     postalCode: destination.postalCode,
     region: destination.region,
   }
@@ -230,13 +240,19 @@ export async function runPreflight(
 
   /* Step 10. */
   const payload = await getPayloadClient()
-  const orderId = await upsertPendingOrder(payload, {
+  const upserted = await upsertPendingOrder(payload, {
     cart,
     contact,
     customerId,
     rate: validated.rate,
     totals,
   })
+
+  if (!upserted.ok) {
+    return upserted
+  }
+
+  const { orderId } = upserted
 
   return {
     cart,
@@ -265,6 +281,17 @@ export async function runPreflight(
  * `CartItems.ts` says so — and freezing it at preflight rather than in the webhook means the order
  * records what the customer was shown at the moment they were sent to pay, which is the number the
  * Checkout Session will charge.
+ *
+ * ### Phase 36: which orders are reused, and what happens to their old session
+ *
+ * `REUSABLE_ORDER_STATUSES` (in `rules.ts`) now includes `pending_payment` and excludes `cancelled` —
+ * audits R1-06 and R1-03, reasoned there. Reusing a `pending_payment` order is only safe because of
+ * the step below: an order that has been sent to Stripe still has a live session, and rewriting the
+ * order while that session can be paid let an older, smaller session pay for a newer, larger bag
+ * (R1-01). So the old session is asked about first (`decidePriorSession`) and expired if it is still
+ * open; one that has been paid, or is clearing a bank payment, refuses the checkout rather than
+ * re-pricing a purchase. The reused order's session id is cleared in the same write, so an event for
+ * the retired session can no longer match it.
  */
 async function upsertPendingOrder(
   payload: Payload,
@@ -281,7 +308,7 @@ async function upsertPendingOrder(
       totalMinor: number
     }
   },
-): Promise<number> {
+): Promise<{ ok: false; reason: PreflightFailure } | { ok: true; orderId: number }> {
   const { cart, contact, customerId, rate, totals } = input
 
   const { docs: existing } = await payload.find({
@@ -291,12 +318,24 @@ async function upsertPendingOrder(
     overrideAccess: true,
     sort: '-createdAt',
     where: {
-      and: [
-        { cart: { equals: cart.id } },
-        { paymentStatus: { in: ['draft', 'checkout_started', 'payment_failed', 'cancelled'] } },
-      ],
+      and: [{ cart: { equals: cart.id } }, { paymentStatus: { in: [...REUSABLE_ORDER_STATUSES] } }],
     },
   })
+
+  const priorSessionId = existing[0]?.stripeCheckoutSessionId ?? null
+
+  if (existing[0] && priorSessionId) {
+    const refusal = await retirePriorSession(
+      payload,
+      existing[0].id,
+      priorSessionId,
+      existing[0].paymentStatus as PaymentStatus,
+    )
+
+    if (refusal !== null) {
+      return { ok: false, reason: refusal }
+    }
+  }
 
   const address = {
     city: trimmed(contact.shippingAddress.city),
@@ -326,7 +365,12 @@ async function upsertPendingOrder(
      */
     fulfillmentStatus: 'unfulfilled' as const,
     paymentStatus: 'checkout_started' as const,
-    ...(cart.discount ? { promotion: cart.discount.id } : {}),
+    /*
+     * Always written, and `null` when there is no code (R1-08). The conditional spread this replaced
+     * omitted the key on an update, so Payload kept the previous attempt's promotion — and paying
+     * then counted a redemption of a code the customer had removed.
+     */
+    promotion: cart.discount?.id ?? null,
     shippingAddress: address,
     shippingMethodCode: rate.id,
     shippingMethodLabel: rate.name,
@@ -340,7 +384,8 @@ async function upsertPendingOrder(
   const order = existing[0]
     ? await payload.update({
         collection: 'orders',
-        data,
+        /* The retired session is no longer this order's — see the docblock. */
+        data: { ...data, stripeCheckoutSessionId: null },
         id: existing[0].id,
         overrideAccess: true,
       })
@@ -394,5 +439,50 @@ async function upsertPendingOrder(
     })
   }
 
-  return order.id
+  return { ok: true, orderId: order.id }
+}
+
+/**
+ * **Make the reused order's previous Stripe session unpayable, or refuse** — Phase 36, R1-01.
+ *
+ * Returns `null` when the order may be rewritten, or the refusal. `decidePriorSession` makes the
+ * decision; this only asks Stripe and acts. Any Stripe error — including an expiry that fails because
+ * the session was paid a moment ago — refuses with the same reason a failed session creation gives,
+ * because proceeding without knowing is exactly the rewrite this exists to prevent.
+ */
+async function retirePriorSession(
+  payload: Payload,
+  orderId: number,
+  sessionId: string,
+  orderStatus: PaymentStatus,
+): Promise<null | PreflightFailure> {
+  try {
+    const stripe = stripeClient()
+    const prior = await stripe.checkout.sessions.retrieve(sessionId)
+
+    const decision = decidePriorSession({
+      orderStatus,
+      sessionPaymentStatus: prior.payment_status ?? null,
+      sessionStatus: prior.status ?? null,
+    })
+
+    if (decision === 'refuse') {
+      return 'alreadyPaid'
+    }
+
+    if (decision === 'expire') {
+      await stripe.checkout.sessions.expire(sessionId)
+    }
+
+    return null
+  } catch (error) {
+    payload.logger.error({
+      err: error,
+      msg: 'Could not retire the previous Stripe session before reusing an order.',
+      orderId,
+    })
+    reportFailure(error, 'checkout.retirePriorSession', { orderId })
+
+    return 'stripeUnconfigured'
+  }
 }

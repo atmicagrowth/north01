@@ -14,6 +14,7 @@ import {
   CATALOG_SORT_LABELS,
   type CatalogSort,
   type CatalogVocabulary,
+  type CategoryOption,
   type FacetOption,
 } from '@/lib/catalog/query'
 import { cn } from '@/lib/cn'
@@ -128,6 +129,36 @@ function FacetGroup({ children, label }: { children: ReactNode; label: string })
   )
 }
 
+/**
+ * Categories in tree order — each child straight after its parent — with a depth for indenting.
+ * A category whose parent is not in the list is treated as a root. The `seen` set is the cycle
+ * guard `expandCategory` also needs: a two-save `A → B → A` would otherwise recurse forever.
+ */
+function treeOrder(options: CategoryOption[]): (FacetOption & { depth: number })[] {
+  const values = new Set(options.map((option) => option.value))
+  const children = new Map<null | string, CategoryOption[]>()
+
+  for (const option of options) {
+    const parent = option.parent && values.has(option.parent) ? option.parent : null
+    children.set(parent, [...(children.get(parent) ?? []), option])
+  }
+
+  const out: (FacetOption & { depth: number })[] = []
+  const seen = new Set<string>()
+  const walk = (parent: null | string, depth: number) => {
+    for (const option of children.get(parent) ?? []) {
+      if (seen.has(option.value)) continue
+      seen.add(option.value)
+      out.push({ depth, label: option.label, value: option.value })
+      walk(option.value, depth + 1)
+    }
+  }
+
+  walk(null, 0)
+
+  return out
+}
+
 function CheckboxFacet({
   name,
   onToggle,
@@ -136,7 +167,7 @@ function CheckboxFacet({
 }: {
   name: string
   onToggle: (value: string, checked: boolean) => void
-  options: FacetOption[]
+  options: (FacetOption & { depth?: number })[]
   selected: string[]
 }) {
   const prefix = useId()
@@ -147,7 +178,14 @@ function CheckboxFacet({
         const id = `${prefix}-${option.value}`
 
         return (
-          <li key={option.value} className="flex items-center gap-s">
+          <li
+            key={option.value}
+            className={cn(
+              'flex items-center gap-s',
+              option.depth === 1 && 'pl-6',
+              (option.depth ?? 0) > 1 && 'pl-12',
+            )}
+          >
             <Checkbox
               id={id}
               name={name}
@@ -301,11 +339,18 @@ export function FilterPanel({
   const groups: {
     key: 'category' | 'collection' | 'color' | 'size'
     label: string
-    options: FacetOption[]
+    options: (FacetOption & { depth?: number })[]
   }[] = [
     ...(routeCategory
       ? []
-      : [{ key: 'category' as const, label: 'Category', options: vocabulary.categories }]),
+      : [
+          {
+            key: 'category' as const,
+            label: 'Category',
+            /* Children under their parent, indented — Phase 36, R2-12. */
+            options: treeOrder(vocabulary.categories),
+          },
+        ]),
     { key: 'collection', label: 'Collection', options: vocabulary.collections },
     { key: 'size', label: 'Size', options: vocabulary.sizes },
     { key: 'color', label: 'Color', options: vocabulary.colors },

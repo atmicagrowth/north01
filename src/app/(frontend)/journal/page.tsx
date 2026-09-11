@@ -7,8 +7,16 @@ import { MediaImage } from '@/components/media/media-image'
 import { Link } from '@/components/ui/link'
 import { getJournalIndex } from '@/lib/editorial/read'
 import { EDITORIAL_GRID_THREE_UP } from '@/lib/media/grid'
+import { pageMetadata } from '@/lib/seo/site'
 
-export const metadata: Metadata = { title: 'Journal' }
+/** Through `pageMetadata`, like every other page, so the index has a canonical URL and a share card. */
+export async function generateMetadata(): Promise<Metadata> {
+  return pageMetadata({
+    description: 'Articles from the NORTH / 01 journal, newest first.',
+    path: '/journal',
+    title: 'Journal',
+  })
+}
 
 /**
  * **`/journal`** — the index.

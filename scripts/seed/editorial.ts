@@ -250,7 +250,7 @@ const ARTICLES: ArticleSpec[] = [
  * question comes before the delivery-price one, at 10 against 20.
  *
  * Every answer is checked against something that exists. The estimates and prices are
- * `SHIPPING_METHODS` in `lib/shipping/rules.ts`, the returns window and the two ways of starting one
+ * `SHIPPING_METHODS` in `lib/shipping/rules.ts`, the returns window and how a return is arranged
  * are `site-settings.returnsPolicy`, tracking is a real column on `orders` and a real dispatch email,
  * and the card answer is true because `Orders.ts` stores no card fields at all. An FAQ that promises a
  * screen the shop does not have is §0.1.17's fake functionality in prose.
@@ -271,7 +271,7 @@ const FAQS: {
   },
   {
     answer: [
-      'Email help@north01.example straight away and we will try. Once an order is packed we cannot alter it, and after that the answer is a return.',
+      'Contact us as soon as you can and we will try. Once an order is packed we cannot alter it, and after that the answer is a return. Contact details will be published here.',
     ],
     question: 'Can I change or cancel an order after placing it?',
     sortOrder: 30,

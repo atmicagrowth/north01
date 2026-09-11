@@ -113,6 +113,7 @@ export const Orders: CollectionConfig = {
       'email',
       'paymentStatus',
       'fulfillmentStatus',
+      'fulfilmentHold',
       'totalMinor',
       'createdAt',
     ],
@@ -490,11 +491,17 @@ export const Orders: CollectionConfig = {
               type: 'row',
               fields: [
                 {
+                  /*
+                   * Phase 36 (R1-11): server-written only. Re-pointing it would move a redemption
+                   * from one code's usage count to another's after the money had moved.
+                   */
                   name: 'promotion',
                   type: 'relationship',
                   relationTo: 'promotions',
+                  access: { update: nobodyField },
                   admin: {
                     width: '50%',
+                    readOnly: true,
                     description: 'The promotion applied — one per order (DEV-08).',
                   },
                 },
@@ -525,11 +532,14 @@ export const Orders: CollectionConfig = {
               type: 'row',
               fields: [
                 {
+                  /* Phase 36 (R1-11): a snapshot of what was charged for, so server-written only. */
                   name: 'shippingMethodCode',
                   type: 'text',
                   index: true,
+                  access: { update: nobodyField },
                   admin: {
                     width: '50%',
+                    readOnly: true,
                     description:
                       'The normalised method ID from the shipping provider — plan §16.1a.',
                   },
@@ -537,8 +547,10 @@ export const Orders: CollectionConfig = {
                 {
                   name: 'shippingMethodLabel',
                   type: 'text',
+                  access: { update: nobodyField },
                   admin: {
                     width: '50%',
+                    readOnly: true,
                     description:
                       'As the customer chose it — "Express". A snapshot; the rate card may change.',
                   },
@@ -604,6 +616,56 @@ export const Orders: CollectionConfig = {
           },
 
           fields: [
+            {
+              /**
+               * **Paid, and the stock was not there** — plan §17.1f's exception path, made visible.
+               *
+               * `fulfil.ts` marks such an order paid (the money moved) and takes no stock at all — the
+               * decrements roll back to a savepoint, so a partial pick is never implied. Until Phase 36
+               * the only record was a log line (audit R3-19), so an order nobody could send looked
+               * exactly like one waiting to be picked. This column is what the list filter and the
+               * column above find it by.
+               *
+               * **Server-written only, and never cleared.** It is a record that this order was sold
+               * beyond stock at the moment of payment, not a to-do flag: the resolution — a refund in
+               * Stripe, a back-order, a substitution — is its own fact with its own trail, and a box
+               * someone could untick would make the history say the shortfall never happened.
+               */
+              name: 'fulfilmentHold',
+              type: 'select',
+              /*
+               * Not `required`: the generated create type would then demand it of every order ever
+               * created, and every order but a held one has nothing to say here. The default carries
+               * it, and "no hold" is `none` or empty, never anything else.
+               */
+              defaultValue: 'none',
+              index: true,
+              access: { update: nobodyField },
+              options: [
+                { label: 'None', value: 'none' },
+                {
+                  label: 'Stock shortfall — paid, cannot be sent from stock',
+                  value: 'stockShortfall',
+                },
+              ],
+              admin: {
+                readOnly: true,
+                description:
+                  'Set automatically when an order was paid for but the stock was no longer there. No stock was taken for it. Decide with the customer — refund in Stripe, back-order, or substitute — before picking anything. Filter the list on this to find every one.',
+              },
+            },
+            {
+              /** Which lines were short, and by how much, as the finalisation saw it. */
+              name: 'shortfall',
+              type: 'json',
+              access: { update: nobodyField },
+              admin: {
+                readOnly: true,
+                condition: (data) => data?.fulfilmentHold === 'stockShortfall',
+                description:
+                  'The lines that could not be met at payment: variant id, quantity ordered, and how many were available.',
+              },
+            },
             {
               type: 'row',
               fields: [

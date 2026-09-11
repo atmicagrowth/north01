@@ -29,17 +29,18 @@ import { isAdmin, isStaff } from '../access'
  *
  * The two protect against different things. This row stops **the same event** being processed twice.
  * The order's own state stops **a different event** driving the same transition twice — a
- * `checkout.session.completed` and a `payment_intent.succeeded` both describing one payment, which
- * Stripe will happily send. Only the second barrier catches that, which is why marking an order paid
- * checks that it is not already paid rather than trusting that it got here only once.
+ * `checkout.session.completed` and a later `checkout.session.async_payment_succeeded` for one
+ * payment, say. Only the second barrier catches that, which is why marking an order paid is a
+ * conditional claim on its current status, session, total and currency (Phase 36, R1-01).
  *
- * ### Status is a record of what happened, not a lock
+ * ### Status is a record of what happened, and briefly a lease
  *
- * `received` is written before processing and updated afterwards. If the process dies in between, the
- * row is left at `received` — and that is deliberately *not* treated as "in progress, do not retry",
- * because a crashed handler and a slow one are indistinguishable from outside and a lock nobody can
- * release is worse than a retry. Stripe will send the event again; the order's own state decides
- * whether anything is still owed.
+ * `received` is written before processing and updated afterwards. A redelivery that finds a
+ * **fresh** `received` row (under 60 seconds) is answered 409, so Stripe retries later rather than
+ * marking the event delivered while another attempt may still be working. A `failed` row, or a
+ * `received` one older than that — a crashed handler — is reclaimed atomically and processed again
+ * (Phase 36, R1-04). The order's own state decides whether anything is still owed, so reprocessing
+ * never takes stock or sends an email twice.
  *
  * `ignored` is a real outcome and a common one. §17.1h requires unknown event types to be *"safely
  * acknowledged/logged without crashing"*, and a Stripe account emits many events this application has

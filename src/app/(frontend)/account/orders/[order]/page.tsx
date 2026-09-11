@@ -67,7 +67,29 @@ export default async function AccountOrderPage({ params }: { params: Promise<{ o
         <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
           {order.statusDetail}
         </p>
+
+        {order.placedOn ? (
+          <p className="font-sans text-micro uppercase text-foreground-muted">
+            Placed <time dateTime={order.placedAt ?? undefined}>{order.placedOn}</time>
+          </p>
+        ) : null}
       </div>
+
+      {/* Phase 36 (R2-10): where it is going — the snapshot taken at checkout, not the address book. */}
+      {order.addressLines.length > 0 ? (
+        <div className="flex flex-col gap-1 border-t border-border pt-m">
+          <span className="font-sans text-micro uppercase text-foreground-muted">
+            Delivery address
+          </span>
+          <address className="font-sans text-body-sm not-italic">
+            {order.addressLines.map((line, index) => (
+              <span className="block" key={`${index}-${line}`}>
+                {line}
+              </span>
+            ))}
+          </address>
+        </div>
+      ) : null}
 
       {/* §18.1c stores the carrier and the tracking number; this is where a customer looks for them. */}
       {order.trackingNumber ? (
@@ -122,7 +144,22 @@ export default async function AccountOrderPage({ params }: { params: Promise<{ o
         ) : null}
         <Row label="Tax" value={order.tax} />
         <Row emphasis label="Total" value={order.total} />
+        {/* Phase 36 (R2-06): a partial refund is shown as the amount that came back. */}
+        <Row label="Refunded" value={order.refunded} />
       </dl>
+
+      {/* Phase 36 (R2-10): the two questions an order page is opened to answer. */}
+      <nav
+        aria-label="Help with this order"
+        className="flex flex-wrap gap-m border-t border-border pt-m"
+      >
+        <Link className="font-sans text-body-sm" href="/help/shipping">
+          Shipping
+        </Link>
+        <Link className="font-sans text-body-sm" href="/help/returns">
+          Returns
+        </Link>
+      </nav>
     </div>
   )
 }

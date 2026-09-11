@@ -6,7 +6,10 @@
  * four or five sequences every flow opens with** — so that when a `data-slot` or a sentence of copy
  * changes, one file changes with it rather than twelve.
  *
- * ### This suite has never been executed, and that is a fact about the environment
+ * ### Why this suite went unrun until Phase 35
+ *
+ * *Status: first run in Phase 35 — 43 passed, 0 failed, 14 skipped, against a local production
+ * build of the development database (`docs/TESTING.md`). What follows is why it had not run before.*
  *
  * Every helper below was written by reading `src/`, and none of it has been run. An E2E suite needs
  * a running application, a running application needs a database it may write to, and `TODO.md` §1

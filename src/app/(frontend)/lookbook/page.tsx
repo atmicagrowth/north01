@@ -7,8 +7,16 @@ import { MediaImage } from '@/components/media/media-image'
 import { Link } from '@/components/ui/link'
 import { getLookbookIndex } from '@/lib/editorial/read'
 import { EDITORIAL_GRID_TWO_UP } from '@/lib/media/grid'
+import { pageMetadata } from '@/lib/seo/site'
 
-export const metadata: Metadata = { title: 'Lookbook' }
+/** Through `pageMetadata`, like every other page, so the index has a canonical URL and a share card. */
+export async function generateMetadata(): Promise<Metadata> {
+  return pageMetadata({
+    description: 'Every published NORTH / 01 lookbook, one season each.',
+    path: '/lookbook',
+    title: 'Lookbook',
+  })
+}
 
 /**
  * **`/lookbook`** — the index, and the reason the navigation has been broken since Phase 9.

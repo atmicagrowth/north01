@@ -990,7 +990,8 @@ try {
     {
       question: 'Can I return something?',
       topic: 'returns',
-      answer: 'Anything unworn can be returned within 30 days. Start the return from your account.',
+      answer:
+        'Anything unworn, with its tags on, can be returned within 30 days of delivery. Returns are arranged with our team rather than started online.',
       sortOrder: 30,
     },
     {
@@ -1102,7 +1103,12 @@ try {
     data: {
       siteName: 'NORTH / 01',
       tagline: 'Considered clothing for people who wear it out.',
-      contactEmail: 'help@north01.example',
+      /*
+       * No contact address until the owner publishes a real one (Phase 36, DOC-02). This was
+       * `help@north01.example` — a reserved TLD that cannot receive mail, which the FAQ told
+       * customers to write to and every order email set as its reply-to.
+       */
+      contactEmail: null,
       defaultCurrency: 'USD',
       defaultLocale: 'en-US',
       freeShippingThresholdMinor: 15000,
@@ -1130,7 +1136,7 @@ try {
       ),
       returnsPolicy: rich(
         'Anything unworn, with its tags on, can be returned within 30 days of delivery.',
-        'Start a return from your account, or from the order confirmation email if you checked out as a guest.',
+        'Returns are arranged with our team rather than started online. Contact details for returns will be published here.',
       ),
       defaultSeoTitle: 'NORTH / 01',
       defaultSeoDescription: 'Considered clothing, made in small runs and built to be worn out.',

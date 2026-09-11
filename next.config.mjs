@@ -92,9 +92,11 @@ const withPayloadConfig = withPayload(nextConfig, { devBundleServerPackages: fal
  *
  * `telemetry: false` stops the build reporting itself to Sentry, which is unrelated to error
  * reporting and is not something a build should do without being asked.
+ *
+ * There is no `disableLogger` (Phase 36, audit R3-23): the SDK deprecated it and it did nothing under
+ * this build, so it read as a setting that was not in effect.
  */
 export default withSentryConfig(withPayloadConfig, {
-  disableLogger: true,
   silent: true,
   sourcemaps: { disable: true },
   telemetry: false,

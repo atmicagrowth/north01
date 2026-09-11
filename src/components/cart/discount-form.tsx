@@ -38,6 +38,8 @@ import { cn } from '@/lib/cn'
 export function DiscountForm({ discount }: { discount: null | ResolvedPromotion }) {
   const [state, action, pending] = useActionState(applyCodeAction, PROMOTION_ACTION_IDLE)
   const fieldId = useId()
+  const noticeId = `${fieldId}-notice`
+  const rejected = !state.ok && Boolean(state.notice)
 
   const applied = discount !== null && discount.result.reason === null
   const failing = discount !== null && discount.result.reason !== null
@@ -97,6 +99,8 @@ export function DiscountForm({ discount }: { discount: null | ResolvedPromotion 
 
       <div className="flex gap-s">
         <Input
+          aria-describedby={noticeId}
+          aria-invalid={rejected || undefined}
           autoCapitalize="characters"
           autoComplete="off"
           className="flex-1 uppercase"
@@ -118,8 +122,10 @@ export function DiscountForm({ discount }: { discount: null | ResolvedPromotion 
         </Button>
       </div>
 
+      {/* Tied to the field, so the reason a code was refused is read with the field itself. */}
       <p
         aria-live="polite"
+        id={noticeId}
         className={cn(
           'min-h-[1.25rem] font-sans text-meta',
           state.ok ? 'text-foreground-muted' : 'text-error',

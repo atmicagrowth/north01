@@ -94,7 +94,10 @@ export default async function FrontendLayout({ children }: { children: ReactNode
         <ShellOverlayProvider>
           <SiteHeader />
 
-          <main id="main-content">{children}</main>
+          {/* `tabIndex={-1}` so the skip link moves focus here, not only the scroll position. */}
+          <main className="focus:outline-none" id="main-content" tabIndex={-1}>
+            {children}
+          </main>
 
           <SiteFooter newsletter={<NewsletterSignup />} />
 

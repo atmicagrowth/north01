@@ -37,10 +37,14 @@ import { NON_INDEXABLE_PREFIXES } from '@/lib/seo/routes'
  *
  * Both are usually cargo. `crawlDelay` is ignored by Google entirely; a shop this size does not need
  * to ration a crawler; and a list of named user agents is a maintenance burden that goes stale.
+ *
+ * ### There is no `Host:` line either
+ *
+ * It is not part of RFC 9309 — a Yandex-only extension that other crawlers ignore (Phase 36, audit
+ * R3-24). The canonical origin is already stated by every page's canonical link and by the sitemap.
  */
 export default function robots(): MetadataRoute.Robots {
   return {
-    host: siteUrl,
     rules: {
       allow: '/',
       disallow: NON_INDEXABLE_PREFIXES.flatMap((prefix) => [

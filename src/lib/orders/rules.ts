@@ -292,6 +292,39 @@ export function displayStatus(
   return payment
 }
 
+/**
+ * **Two facts the two axes do not carry, and what a customer reads for each** — Phase 36.
+ *
+ * - **A partial refund** (R2-06, R1-09) leaves the order `paid`, because the rest of it is still
+ *   being sent. Reading only "Paid" there hides the refund the customer asked for.
+ * - **A stock shortfall** (R3-19) is a paid order that could not be sent from stock. "We are getting
+ *   it ready to send" would be untrue, so it says what is actually happening.
+ */
+export const PARTIAL_REFUND_COPY = {
+  detail:
+    'Part of this order was refunded to your original payment method. The rest is unaffected.',
+  label: 'Partially refunded',
+} as const
+
+export const STOCK_SHORTFALL_COPY = {
+  detail:
+    'Paid. Something in this order sold out just before your payment reached us, so nothing has been sent yet — we will contact you about it.',
+} as const
+
+/** Whether an order is paid with some, but not all, of its total refunded. */
+export function isPartiallyRefunded(
+  payment: PaymentStatus,
+  refundedMinor: null | number | undefined,
+  totalMinor: number,
+): boolean {
+  return (
+    payment === 'paid' &&
+    typeof refundedMinor === 'number' &&
+    refundedMinor > 0 &&
+    refundedMinor < totalMinor
+  )
+}
+
 /** What a customer reads. One sentence each, because a status with no explanation is a support email. */
 export const DISPLAY_STATUS_COPY: Record<DisplayStatus, { detail: string; label: string }> = {
   cancelled: { detail: 'This order was cancelled. Nothing was dispatched.', label: 'Cancelled' },

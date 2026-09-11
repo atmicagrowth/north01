@@ -10,6 +10,9 @@ import type { SizeGuide } from '@/payload-types'
 /**
  * **Feature matrix §8's size guide.** Measurement table, fit notes, model info, in a dialog.
  *
+ * The model note is the dialog's description, under the title, and nowhere else — Phase 36 removed
+ * a second copy that repeated it word for word below the table.
+ *
  * The corpus asks for *"mobile drawer"* and *"accessible dialog"* as two bullets. They are one
  * component here: Radix's dialog is the same primitive the drawer is built on, and this content is a
  * **table** — a bottom sheet would give it the narrowest possible box and force horizontal scrolling
@@ -105,10 +108,6 @@ export function SizeGuideDialog({ fitNotes, guide }: { fitNotes?: ReactNode; gui
           ) : null}
 
           {fitNotes}
-
-          {guide.modelNote ? (
-            <p className="font-sans text-body-sm text-foreground-muted">{guide.modelNote}</p>
-          ) : null}
         </div>
       </DialogContent>
     </Dialog>

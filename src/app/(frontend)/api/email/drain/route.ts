@@ -19,12 +19,9 @@ import { cronRefusal, isCronRequest } from '@/lib/security/cron-auth'
  * to document, and this endpoint needs exactly the audience that already exists: the people who can
  * see `email-messages` in the first place. `isStaff` and this route now agree by construction.
  *
- * The consequence worth naming is that **nothing drains on a schedule**. A shipped notice queued in
- * the admin panel is delivered by the next Stripe webhook's bounded opportunistic drain, by an
- * operator running the script, or by a staff member calling this. On a busy shop the first covers it;
- * on a quiet one a message can wait. Wiring a scheduled call is deployment work rather than
- * application work — it belongs with the rest of the cron surface, and is recorded as owed rather
- * than pretended at here.
+ * A shipped notice queued in the admin panel is delivered by the next Stripe webhook's bounded
+ * opportunistic drain, by an operator running the script, by a staff member calling this — and,
+ * since Phase 32, by the daily Vercel Cron `GET` below.
  *
  * ### It cannot be used to send anything new
  *

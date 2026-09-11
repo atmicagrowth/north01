@@ -14,18 +14,8 @@ pointed at it by mistake.
 
 ### What is still owed against it
 
-The five harnesses blocked since Phase 19, and the 57 Playwright tests, have **not been run yet** —
-deliberately deferred so the phase work could continue. In rough order of value:
-
-| Harness | Checks | Why it matters most |
-| --- | --- | --- |
-| `pnpm verify:access` | 48 | **First.** Phase 26 changed `customers.create` and could not re-verify it |
-| `pnpm verify:email` | 85 | |
-| `pnpm verify:account` | 40 | |
-| `pnpm verify:reviews` | 30 | |
-| `pnpm verify:lookbook` | 20 | |
-| `pnpm verify:editorial` | 24 | |
-| `pnpm test:e2e` | 57 | Needs `pnpm exec playwright install --with-deps chromium` once, and `E2E_START_SERVER=1` |
+Nothing technical. Every `verify:*` harness now runs against this database at each phase, and the
+57 Playwright tests first ran in Phase 35 (43 passed, 0 failed, 14 skipped — `docs/TESTING.md`).
 
 ### Rotate the role anyway
 
@@ -74,6 +64,13 @@ verification is verified offline; what has never run is one live `checkout.sessi
 `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, plus a webhook
 endpoint pointed at `/api/stripe/webhook`.
 
+**Enable Stripe Tax in the Stripe Dashboard** (Phase 36, audit R1-02). Checkout calculates tax with
+`stripe.tax.calculations.create` as soon as the keys exist, and that needs, under *Tax* in the
+Dashboard: the business **origin address**, and a **registration** for every place the shop must
+collect tax. **Without registrations every calculation returns zero tax** — checkout will work and
+charge no tax anywhere, which looks like success. Check one calculation against a registered address
+before taking real orders.
+
 ---
 
 ## 5. Larger product photography — optional, and the most visible gap
@@ -88,7 +85,10 @@ file to change.
 
 ---
 
-## 6. Analytics and error reporting — Phase 25 is built and is measuring nothing
+## 6. Analytics and error reporting — keys are set in Production; two settings remain
+
+Production has `NEXT_PUBLIC_GA_MEASUREMENT_ID`, the PostHog key and host, and `NEXT_PUBLIC_SENTRY_DSN`
+(`vercel env ls`, 2026-09-11). Preview and local have none, which is the intended local state.
 
 **Switch off one GA4 setting.** GA4 → Admin → Data streams → the web stream → Enhanced measurement →
 **Page views → Advanced → uncheck "Page changes based on browser history events"**. The storefront
@@ -121,12 +121,12 @@ Every integration is behind a key check, so with none of these set the SDKs are 
 
 The Phase 25 prompt asks for it in as many words: *"verify events in local/preview environments
 before enabling production measurement."* That has **not** been done — no account exists to do it
-against. The taxonomy and the GA4 reshaping are covered by `pnpm verify:analytics` (89 checks); what
+against. The taxonomy and the GA4 reshaping are covered by `pnpm verify:analytics` (115 checks); what
 is unverified is that events arrive, which only a network tab against a real property can show.
 
 ---
 
-## 7. Cloudflare Turnstile — the four public forms are unprotected until these exist
+## 7. Cloudflare Turnstile — set in Production (2026-09-11); Preview and local have none
 
 Phase 26 wired verification into the newsletter, review submission, registration and login forms. With
 no keys, **the widget is not rendered and nothing is verified** — by design, and stated here rather
@@ -194,6 +194,11 @@ request does to orders; a self-service newsletter unsubscribe before the first m
 whether editors, not only admins, should read the subscriber list and the outbox. Each is a small
 change once the answer exists.
 
+A sixth, about staff rather than customers (Phase 36, audit R1-17): **editors can update an order's
+fulfilment and tracking, and create and edit discount codes.** Credentials and order ownership are
+already admin-only. If only admins should touch orders or promotions, say so and it is a one-line
+access change each; if editors should, it is recorded as intended.
+
 ## 11. Production content — Phase 35
 
 The storefront hides what is missing rather than showing it broken, but only you can fill it in:
@@ -207,3 +212,20 @@ The storefront hides what is missing rather than showing it broken, but only you
 - **Social handles:** the footer shows none until real accounts are added in Navigation → Social.
 - **Photography (§5):** the supplied photographs are 217–467 pixels wide and have white borders, so
   every full-width image is visibly soft. Larger, borderless exports are the fix.
+
+## 12. Wording to update in the live admin — Phase 36
+
+The seed now writes these, but production's content was entered separately and still carries the old
+wording, which promises an online returns flow that does not exist and names an address that cannot
+receive mail (audit DOC-01, DOC-02):
+
+- **FAQ — "Can I return something?"** → *Anything unworn, with its tags on, can be returned within 30
+  days of delivery. Returns are arranged with our team rather than started online.*
+- **Site settings → Returns policy**, second paragraph → *Returns are arranged with our team rather
+  than started online. Contact details for returns will be published here.*
+- **FAQ — "Can I change or cancel an order after placing it?"** → remove the `help@north01.example`
+  address: *Contact us as soon as you can and we will try. Once an order is packed we cannot alter it,
+  and after that the answer is a return. Contact details will be published here.*
+- **Site settings → Contact email** → clear it until a real support mailbox exists. Emails already
+  ignore the placeholder as a reply-to.
+- **Then supply a real support address** (gap G-08), and the three sentences above can name it.

@@ -52,7 +52,9 @@ const FOOTER_GUIDE = [
  *
  * ---
  *
- * ### The primary navigation is six items, and the schema says so
+ * ### The primary navigation is at most six items, and the schema says so
+ *
+ * *As built it is five — ABOUT was withdrawn in Phase 30 because no page exists (DEV-07, amended).*
  *
  * **NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT** — plan's canonical naming section,
  * structure document §2's Simplicity rule, and the visual guide, against a reference image that
@@ -110,7 +112,7 @@ export const Navigation: GlobalConfig = {
               labels: { singular: 'Primary item', plural: 'Primary items' },
               admin: {
                 description:
-                  'Six at most: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK, ABOUT. The limit is the rule, not a suggestion — see DEV-07. An item pointing at a page that is a draft, dated in the future, or deleted is left out of the header entirely rather than shown as a dead link, and nothing warns you here — so after unpublishing a page, look at the header.',
+                  'Five: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK (six at most — DEV-07, amended in Phase 30 when ABOUT was withdrawn for want of a page). A link to a page that does not exist is dropped too. An item pointing at a page that is a draft, dated in the future, or deleted is left out of the header entirely rather than shown as a dead link, and nothing warns you here — so after unpublishing a page, look at the header.',
               },
               fields: [
                 ...linkFields({ required: true }),

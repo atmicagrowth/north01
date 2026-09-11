@@ -5,6 +5,7 @@ import { cache } from 'react'
 
 import { getCustomer } from '@/lib/auth/session'
 import { getCart } from '@/lib/cart/cart'
+import { reportFailure } from '@/lib/observability/report'
 
 /**
  * **The shell's two per-visitor reads, which may fail without taking the shop with them.**
@@ -43,6 +44,7 @@ export const getShellSession = cache(async () => {
       '[shell] The customer or bag could not be read; rendering a signed-out shell.',
       error,
     )
+    reportFailure(error, 'shell', { read: 'session' })
 
     return { cart: null, customer: null, failed: true }
   }

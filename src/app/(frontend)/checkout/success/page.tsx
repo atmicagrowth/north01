@@ -118,7 +118,8 @@ export default async function CheckoutSuccessPage({
 
   const money = (minor: number) => formatMinorUnits(minor, order.currency, order.locale) ?? '—'
   const paid = order.paymentStatus === 'paid'
-  const copy = confirmationCopy(order.paymentStatus)
+  /* Phase 36 (R3-19): a paid order whose stock was not there must not say it is on its way. */
+  const copy = confirmationCopy(order.paymentStatus, { onHold: order.fulfilmentHold })
 
   return (
     <>

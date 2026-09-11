@@ -6,7 +6,7 @@
 # first. A type error should cost fifteen seconds, not a five-minute Next build.
 #
 # **The pure harnesses run here too.** `verify:seo`, `verify:analytics`, `verify:security` and
-# `scan:secrets` open no database connection, so unlike the other eleven `verify:*` scripts they can
+# `scan:secrets` open no database connection, so unlike the other nineteen `verify:*` scripts they can
 # run on a pull request with no secrets at all. That is not an accident of how they were written —
 # see their docblocks — and it is what makes them worth having in CI.
 #

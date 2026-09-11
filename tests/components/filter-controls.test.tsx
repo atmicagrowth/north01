@@ -218,6 +218,28 @@ describe('FilterPanel structure', () => {
     expect(screen.getByRole('group', { name: 'Price' })).toBeInTheDocument()
   })
 
+  it('lists each child category straight after its parent, so the tree reads as a tree', () => {
+    render(
+      <FilterPanel
+        vocabulary={{
+          ...VOCABULARY,
+          categories: [
+            { label: 'Hoodies', parent: 'clothing', value: 'hoodies' },
+            { label: 'Bags', parent: null, value: 'bags' },
+            { label: 'Clothing', parent: null, value: 'clothing' },
+          ],
+        }}
+      />,
+    )
+
+    const rows = within(screen.getByRole('group', { name: 'Category' })).getAllByRole('listitem')
+
+    expect(rows.map((row) => row.textContent)).toEqual(['Bags', 'Clothing', 'Hoodies'])
+    /* The child is indented under its parent; the roots are not. */
+    expect(rows[2]).toHaveClass('pl-6')
+    expect(rows[1]).not.toHaveClass('pl-6')
+  })
+
   it('suppresses the Category group on /shop/<category>, where ticking it can only leave the page', () => {
     render(<FilterPanel routeCategory="clothing" vocabulary={VOCABULARY} />)
 

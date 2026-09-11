@@ -434,7 +434,8 @@ const DEMO_ORDERS: DemoOrder[] = [
     ],
     orderNumber: 'N1-2607-DEMO05',
     paidAt: '2026-07-30T10:03:12.000Z',
-    paymentStatus: 'refunded',
+    /* `paid`, not `refunded`: a partial refund leaves the order paid (Phase 36, R1-09). */
+    paymentStatus: 'paid',
     refundedAt: '2026-08-12T15:10:00.000Z',
     /*
      * The shirt went back and the crew did not, so this is 16500 of a 38500 order. Partial refunds

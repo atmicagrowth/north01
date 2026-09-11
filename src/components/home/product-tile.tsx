@@ -10,8 +10,8 @@ import type { ProductTile as ProductTileModel } from '@/lib/home/resolve'
  *
  * It is **not** plan §11.1b's product card, and the restraint is deliberate rather than
  * unfinished. That card has nine states — hover, loading, new, sale, low stock, sold out,
- * out-of-season, image unavailable — and §11.1c gives it quick view, quick add and a wishlist
- * control. All of it belongs to **Phase 11**, which builds the catalogue those states describe.
+ * out-of-season, image unavailable — and a wishlist control (§11.1c's quick view and quick add
+ * were withdrawn, DEV-76). All of it belongs to **Phase 11**, which builds the catalogue those states describe.
  * Building them here would be a later phase's feature arriving early, and arriving without the
  * shop page that gives them meaning.
  *

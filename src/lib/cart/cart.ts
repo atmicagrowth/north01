@@ -123,6 +123,11 @@ export type CartLineView = {
   effectiveQuantity: number
   id: number
   image: Media | null
+  /**
+   * True when `maxQuantity` is the per-order policy (`maxQuantityPerLine`) rather than stock — the
+   * warehouse has more. The line then says "up to N per order" instead of "that is all we have".
+   */
+  limitedByPolicy: boolean
   /** The most this line may hold right now, for the stepper's bound. */
   maxQuantity: number
   productId: number
@@ -509,6 +514,8 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
       color: variant?.color?.trim() || null,
       id: item.id,
       image,
+      limitedByPolicy:
+        ceiling.quantity > 0 && (availability?.inventoryQuantity ?? 0) > ceiling.quantity,
       maxQuantity: ceiling.quantity,
       priceChangedFromLabel:
         movedFrom === null ? null : formatMinorUnits(movedFrom, settings.currency, settings.locale),
@@ -919,6 +926,14 @@ async function ownedLine(
  *   chance to lose one.
  * - **Both** — the real merge, then the guest cart is deleted so it cannot be presented again.
  *
+ * ### The guest's discount code comes along when the customer's bag has none
+ *
+ * Phase 36 (R2-03). A code applied as a guest used to vanish with the deleted guest cart. It is now
+ * copied to the customer's bag when that bag has no code of its own; if it has one, the customer's
+ * code wins. Only the reference moves — `getCart` re-decides the promotion on the next read, so a
+ * code this customer may not use (a first-order code on an account with orders, say) shows its
+ * reason beside it like any other failing code. In the claim path the code is already on the row.
+ *
  * The cookie is cleared either way at the end, because after this the bag is found by customer id
  * and a stale guest token in the jar is a second identity for the same shopper.
  *
@@ -1051,6 +1066,18 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
       if (current) {
         await payload.delete({ collection: 'cart-items', id: current.id, overrideAccess: true })
       }
+    }
+
+    /* The guest's code, when the customer's bag has none — see "discount code" above. */
+    const guestPromotion = relatedId(guestCart.promotion)
+
+    if (guestPromotion !== null && relatedId(customerCart.promotion) === null) {
+      await payload.update({
+        collection: 'carts',
+        data: { promotion: guestPromotion },
+        id: customerCart.id,
+        overrideAccess: true,
+      })
     }
 
     await payload.delete({ collection: 'carts', id: guestCart.id, overrideAccess: true })

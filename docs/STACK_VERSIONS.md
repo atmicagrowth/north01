@@ -70,11 +70,12 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
 | `motion` | 13.1.1 | ~~Phase 3~~ ~~Phase 10~~ **not installed — see DEV-40** |
 | `storybook` | 10.5.10 | **not installed — see DEV-20**; revisit at Phase 27 |
 | `zod` | 4.4.3 | **Phase 4 — installed** |
-| `react-hook-form` + `@hookform/resolvers` | 7.86.0 / 5.9.1 | Phase 7 |
-| `nuqs` | 2.10.0 | Phase 11 |
-| `algoliasearch` | 5.57.0 | Phase 12 |
-| `stripe` | 22.5.0 | Phase 17 |
-| `resend` + `react-email` + `@react-email/components` | 6.22.0 / 6.9.2 / 1.0.12 | Phase 19 |
+| `react-hook-form` + `@hookform/resolvers` | 7.86.0 / 5.9.1 | **not installed — see DEV-80.** Forms are Server Actions with `useActionState` and Zod |
+| `husky` + `lint-staged` | — | **not installed — see DEV-81.** CI enforces the gate |
+| `nuqs` | 2.10.1 | **Phase 11 — installed** |
+| `algoliasearch` | 5.57.0 | **Phase 12 — installed** |
+| `stripe` | 22.5.0 | **Phase 17 — installed** |
+| `resend` + `react-email` + `@react-email/components` | 6.22.0 / 6.9.2 / 1.0.12 | **Phase 19 — installed** (`react-email` as a devDependency, for `pnpm email:preview`) |
 | `cloudinary` | 2.10.1 | **Phase 8 — installed.** Server-only, imported by exactly one file (`payload/storage/cloudinary.ts`). Delivery URLs are built without it — see D-26 |
 | `@payloadcms/plugin-cloud-storage` | 3.88.0 | **Phase 8 — installed.** Exact peer on `payload@3.88.0`; its only new transitive deps are `range-parser` and `find-node-modules` |
 | `posthog-js` | 1.418.10 | **Phase 25 — installed.** Dynamically imported, and only when `NEXT_PUBLIC_POSTHOG_KEY` is set — see `components/analytics/analytics.tsx` |
@@ -86,7 +87,7 @@ Per plan §2.1b: *"Do not install the entire final dependency list on day one."*
 | `@testing-library/user-event` | 14.6.7 | **Phase 27 — installed.** `fireEvent` dispatches one event; a real click is several. Behaviour tests use this one |
 | `@testing-library/jest-dom` | 7.0.1 | **Phase 27 — installed.** The `/vitest` entry point, not the Jest one |
 | `jsdom` | 30.0.1 | **Phase 27 — installed.** Chosen over `happy-dom` because Radix's primitives exercise the corners — pointer capture, focus management — and jsdom is the implementation those are tested against upstream |
-| `@playwright/test` | 1.62.1 | **Phase 27 — installed.** Chromium plus one mobile project. **The specs have never been executed** — there is no development database and D-10 forbids pointing a writing harness at production. See `TODO.md` §1 |
+| `@playwright/test` | 1.62.1 | **Phase 27 — installed.** Chromium plus one mobile project. **First executed in Phase 35**, against a local production build on the development database: 43 passed, 0 failed, 14 skipped (notes §1.40.7). D-10 still forbids pointing it at production |
 | `@axe-core/playwright` | 4.13.0 | **Phase 27 — installed.** §27.1e's automated pass, on six routes. The plan is explicit that it does not replace a manual keyboard review |
 | `prettier` | 3.9.6 | Phase 2 |
 

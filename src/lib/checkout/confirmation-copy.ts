@@ -1,4 +1,5 @@
 import type { PaymentStatus } from '@/lib/checkout/rules'
+import { STOCK_SHORTFALL_COPY } from '@/lib/orders/rules'
 
 /**
  * **Plan §31.1f — what the success page says, by what actually happened.**
@@ -24,11 +25,21 @@ export type ConfirmationCopy = {
   title: string
 }
 
-export function confirmationCopy(status: PaymentStatus): ConfirmationCopy {
+/**
+ * `onHold` is the order's `fulfilmentHold` (Phase 36, R3-19): paid, but the stock was not there. The
+ * payment is still confirmed — it happened — and the body stops short of implying the parcel is
+ * being prepared.
+ */
+export function confirmationCopy(
+  status: PaymentStatus,
+  options: { onHold?: boolean } = {},
+): ConfirmationCopy {
   switch (status) {
     case 'paid':
       return {
-        body: 'Your payment has been confirmed and your order is with us.',
+        body: options.onHold
+          ? `Your payment has been confirmed. ${STOCK_SHORTFALL_COPY.detail.replace(/^Paid\. /, '')}`
+          : 'Your payment has been confirmed and your order is with us.',
         eyebrow: 'Order confirmed',
         offerBag: false,
         promisesEmail: false,

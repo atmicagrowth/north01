@@ -662,7 +662,7 @@ try {
 
     check(
       'G: **a refund with no order reference finds its order by payment intent**',
-      refund.outcome === 'transitioned',
+      refund.outcome === 'refunded' && refund.full,
       refund.outcome,
     )
 
@@ -699,9 +699,178 @@ try {
     )
   }
 
+  /* ============================================ G2 — R1-09, partial refunds are cumulative */
+  {
+    const order = await makeOrder('G2', 'paid')
+    const intent = `pi_orders_g2_${suffix}`
+
+    await payload.update({
+      collection: 'orders',
+      data: { stripePaymentIntentId: intent, totalMinor: 10_000 },
+      id: order.id,
+      overrideAccess: true,
+    })
+
+    const refundOf = (amountRefundedMinor: number) =>
+      applyStripeEvent(payload, {
+        amountRefundedMinor,
+        eventType: 'charge.refunded',
+        orderId: null,
+        paymentIntentId: intent,
+      })
+
+    const first = await refundOf(1_500)
+    const afterFirst = await orderNow(order.id)
+
+    check(
+      'G2: **R1-09 a partial refund records the amount and leaves the order paid**',
+      first.outcome === 'refunded' &&
+        !first.full &&
+        afterFirst.paymentStatus === 'paid' &&
+        afterFirst.refundedMinor === 1_500,
+      `${first.outcome} ${afterFirst.paymentStatus} ${afterFirst.refundedMinor}`,
+    )
+
+    const second = await refundOf(3_000)
+    const afterSecond = await orderNow(order.id)
+
+    check(
+      'G2: **a second, cumulative refund is not dropped** — 3000 recorded, still paid',
+      second.outcome === 'refunded' &&
+        afterSecond.refundedMinor === 3_000 &&
+        afterSecond.paymentStatus === 'paid',
+      `${second.outcome} ${afterSecond.refundedMinor} ${afterSecond.paymentStatus}`,
+    )
+
+    const late = await refundOf(1_500)
+
+    check(
+      'G2: an older, smaller figure arriving late changes nothing — the amount never goes down',
+      late.outcome === 'alreadyFinal' && (await orderNow(order.id)).refundedMinor === 3_000,
+      late.outcome,
+    )
+
+    const { queueRefundMessage } = await import('../src/lib/email/orders')
+
+    const emails = await Promise.all([
+      queueRefundMessage(payload, order.id, 1_500),
+      queueRefundMessage(payload, order.id, 3_000),
+    ])
+    const again = await queueRefundMessage(payload, order.id, 3_000)
+
+    for (const queued of [...emails, again]) {
+      if (queued.outcome === 'claimed') {
+        await payload
+          .delete({ collection: 'email-messages', id: queued.id, overrideAccess: true })
+          .catch(() => undefined)
+      }
+    }
+
+    check(
+      'G2: **one refund email per new cumulative amount**, and not a second for the same one',
+      emails.every((queued) => queued.outcome === 'claimed') && again.outcome === 'duplicate',
+      `${emails.map((queued) => queued.outcome).join(',')} / ${again.outcome}`,
+    )
+
+    await payload.update({
+      collection: 'orders',
+      data: { fulfillmentStatus: 'processing' },
+      id: order.id,
+      overrideAccess: true,
+    })
+
+    check(
+      'G2: **what remains of a partially refunded order can still be picked**',
+      (await orderNow(order.id)).fulfillmentStatus === 'processing',
+    )
+
+    const full = await refundOf(10_000)
+    const afterFull = await orderNow(order.id)
+
+    check(
+      'G2: a refund reaching the total marks the order refunded',
+      full.outcome === 'refunded' &&
+        full.full &&
+        afterFull.paymentStatus === 'refunded' &&
+        afterFull.refundedMinor === 10_000,
+      `${full.outcome} ${afterFull.paymentStatus} ${afterFull.refundedMinor}`,
+    )
+  }
+
+  /* ============================================ G3 — R1-06 and R2-06, what the account shows */
+  {
+    const { readCustomerOrder, readCustomerOrders } = await import('../src/lib/account/orders')
+
+    const customer = await payload.create({
+      collection: 'customers',
+      data: {
+        email: `orders-history-${suffix}@example.test`,
+        firstName: 'History',
+        lastName: 'Fixture',
+        password: 'Correct-Horse-Battery-9',
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'customers', id: customer.id })
+
+    const withCustomer = async (label: string, status: PaymentStatus, extra = {}) => {
+      const order = await makeOrder(label, status)
+
+      await payload.update({
+        collection: 'orders',
+        data: { customer: customer.id, ...extra },
+        id: order.id,
+        overrideAccess: true,
+      })
+
+      return order
+    }
+
+    const started = await withCustomer('G3a', 'checkout_started')
+    const expired = await withCustomer('G3b', 'cancelled')
+    const paid = await withCustomer('G3c', 'paid', {
+      paidAt: new Date().toISOString(),
+      refundedMinor: 1_000,
+    })
+
+    const list = await readCustomerOrders(payload, customer.id, 'en-US')
+    const numbers = list.map((row) => row.orderNumber)
+
+    check(
+      'G3: **R1-06 the account list hides abandoned checkouts and never-paid cancellations**',
+      numbers.length === 1 && numbers[0] === paid.orderNumber,
+      numbers.join(','),
+    )
+
+    check(
+      'G3: …and their pages are not found either',
+      (await readCustomerOrder(payload, customer.id, started.orderNumber, 'en-US')) === null &&
+        (await readCustomerOrder(payload, customer.id, expired.orderNumber, 'en-US')) === null,
+    )
+
+    const detail = await readCustomerOrder(payload, customer.id, paid.orderNumber, 'en-US')
+
+    check(
+      'G3: **R2-06 a partially refunded order says so, with the amount that came back**',
+      list[0]?.statusLabel === 'Partially refunded' &&
+        detail?.refunded === '−$10.00' &&
+        typeof detail?.placedOn === 'string',
+      `${list[0]?.statusLabel} / ${detail?.refunded} / ${detail?.placedOn}`,
+    )
+  }
+
   /* ============================================ H — the race Phase 17's sweeps did not reach */
   {
     const order = await makeOrder('H')
+    const sessionId = `cs_orders_h_${suffix}`
+
+    await payload.update({
+      collection: 'orders',
+      data: { stripeCheckoutSessionId: sessionId },
+      id: order.id,
+      overrideAccess: true,
+    })
 
     /*
      * **A late failure racing the payment that succeeded.**
@@ -721,11 +890,13 @@ try {
         eventType: 'checkout.session.completed',
         orderId: order.id,
         paymentIntentId: `pi_orders_h_${suffix}`,
+        session: { amountTotal: 5_000, currency: 'usd', id: sessionId, paymentStatus: 'paid' },
       }),
       applyStripeEvent(payload, {
-        eventType: 'payment_intent.payment_failed',
+        eventType: 'checkout.session.async_payment_failed',
         orderId: order.id,
         paymentIntentId: null,
+        session: { amountTotal: 5_000, currency: 'usd', id: sessionId, paymentStatus: 'unpaid' },
       }),
     ])
 
@@ -735,7 +906,10 @@ try {
       `${first.outcome},${second.outcome} → ${(await orderNow(order.id)).paymentStatus}`,
     )
 
-    /* And the sequential case still holds, in the other order. */
+    /*
+     * And the sequential case, in the other order. Since Phase 36 a declined card
+     * (`payment_intent.payment_failed`) is recorded only — it never moves the order at all.
+     */
     const late = await applyStripeEvent(payload, {
       eventType: 'payment_intent.payment_failed',
       orderId: order.id,
@@ -743,8 +917,8 @@ try {
     })
 
     check(
-      'H: …and a later one is refused outright',
-      late.outcome === 'alreadyFinal' && (await orderNow(order.id)).paymentStatus === 'paid',
+      'H: …and a later declined card changes nothing',
+      late.outcome === 'recorded' && (await orderNow(order.id)).paymentStatus === 'paid',
       late.outcome,
     )
   }

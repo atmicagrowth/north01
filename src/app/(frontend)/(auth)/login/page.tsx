@@ -48,7 +48,13 @@ export default async function LoginPage({
           ? 'You are signed out.'
           : params.registered !== undefined
             ? 'Your account was created. Sign in to continue.'
-            : null
+            : /*
+               * The header's wishlist link sends a guest here. The second sentence is true because
+               * `WishlistSync` (DEV-68) merges this device's saved list after sign-in.
+               */
+              next === '/account/wishlist'
+              ? 'Sign in to see your wishlist. Anything saved on this device is added when you sign in.'
+              : null
 
   return (
     <div className="flex flex-col gap-l">

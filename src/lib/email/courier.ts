@@ -44,15 +44,36 @@ export function courierFromEnv(replyTo: null | string = null): Courier | null {
  * from a no-reply address that silently discards replies is a small cruelty, and customers reply to
  * order confirmations constantly — asking to change an address, or to add something.
  *
- * A read failure costs the reply-to header and never the message.
+ * A read failure costs the reply-to header and never the message. So does an address on a reserved
+ * domain (see `usableReplyTo`): no reply-to is better than one that bounces.
  */
 export async function courierFor(payload: Payload): Promise<Courier | null> {
   const settings = await payload
     .findGlobal({ depth: 0, overrideAccess: true, slug: 'site-settings' })
     .catch(() => null)
 
-  const contact =
-    settings && typeof settings.contactEmail === 'string' ? settings.contactEmail : null
+  return courierFromEnv(usableReplyTo(settings?.contactEmail))
+}
 
-  return courierFromEnv(contact)
+/**
+ * The contact address, or `null` when it cannot receive mail (Phase 36, audit DOC-02).
+ *
+ * The seed used to store `help@north01.example`, and production was built from the seed, so every
+ * order email invited a reply to an address on an IANA-reserved TLD (RFC 2606 / RFC 6761). Those
+ * names are refused here rather than trusted: `.example`, `.test`, `.invalid`, `.localhost`, and the
+ * three `example.*` second-level domains.
+ */
+export function usableReplyTo(value: unknown): null | string {
+  if (typeof value !== 'string') return null
+
+  const address = value.trim()
+  const domain = address.slice(address.lastIndexOf('@') + 1).toLowerCase()
+
+  if (!address.includes('@') || !domain) return null
+
+  const reserved =
+    /\.(example|test|invalid|localhost)$/.test(domain) ||
+    /(^|\.)example\.(com|net|org)$/.test(domain)
+
+  return reserved ? null : address
 }

@@ -463,7 +463,7 @@ export interface ProductVariant {
   deletedAt?: string | null;
 }
 /**
- * Every photograph and video the storefront uses. JPEG, PNG, WebP or AVIF for stills and MP4 or WebM for video, up to 25 MB and 12,000 pixels on the longest side. SVG and GIF are refused deliberately, so a logo comes in as a PNG. Upload the largest uncropped original you have: every size the site shows is cut from it at delivery time, so a picture that arrives already cropped can only ever be cropped further. The marker you drag onto the picture is its focal point — it says which part must stay in frame when the same photograph is shown wide on a laptop and tall on a phone. Put it on the face, or on the product. Leave it in the middle if you are unsure.
+ * Every photograph and video the storefront uses. JPEG, PNG, WebP or AVIF for stills and MP4 or WebM for video, up to 4 MB and 12,000 pixels on the longest side. SVG and GIF are refused deliberately, so a logo comes in as a PNG. Camera originals are usually larger than 4 MB, so export a high-quality JPEG under the limit first — keep it uncropped and as large as the limit allows: every size the site shows is cut from it at delivery time, so a picture that arrives already cropped can only ever be cropped further. The marker you drag onto the picture is its focal point — it says which part must stay in frame when the same photograph is shown wide on a laptop and tall on a phone. Put it on the face, or on the product. Leave it in the middle if you are unsure.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "media".
@@ -1764,6 +1764,22 @@ export interface Order {
     phone?: string | null;
   };
   /**
+   * Set automatically when an order was paid for but the stock was no longer there. No stock was taken for it. Decide with the customer — refund in Stripe, back-order, or substitute — before picking anything. Filter the list on this to find every one.
+   */
+  fulfilmentHold?: ('none' | 'stockShortfall') | null;
+  /**
+   * The lines that could not be met at payment: variant id, quantity ordered, and how many were available.
+   */
+  shortfall?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
    * Who is carrying it, spelled as the customer should read it — "DHL", "Royal Mail". Required together with the tracking number before this order can be marked Shipped, and it appears in the dispatch email.
    */
   carrier?: string | null;
@@ -2905,6 +2921,8 @@ export interface OrdersSelect<T extends boolean = true> {
         country?: T;
         phone?: T;
       };
+  fulfilmentHold?: T;
+  shortfall?: T;
   carrier?: T;
   trackingNumber?: T;
   trackingUrl?: T;
@@ -3333,7 +3351,7 @@ export interface SiteSetting {
 export interface Navigation {
   id: number;
   /**
-   * Six at most: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK, ABOUT. The limit is the rule, not a suggestion — see DEV-07. An item pointing at a page that is a draft, dated in the future, or deleted is left out of the header entirely rather than shown as a dead link, and nothing warns you here — so after unpublishing a page, look at the header.
+   * Five: NEW, SHOP, COLLECTIONS, EDIT, LOOKBOOK (six at most — DEV-07, amended in Phase 30 when ABOUT was withdrawn for want of a page). A link to a page that does not exist is dropped too. An item pointing at a page that is a draft, dated in the future, or deleted is left out of the header entirely rather than shown as a dead link, and nothing warns you here — so after unpublishing a page, look at the header.
    */
   primary?:
     | {

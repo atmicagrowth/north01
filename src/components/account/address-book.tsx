@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { addAddressAction, removeAddressAction } from '@/lib/account/addresses'
 import { ADDRESS_MAX_LENGTH } from '@/lib/address-limits'
+import { cn } from '@/lib/cn'
 
 /**
  * **The address book's two controls** — plan §20.1d's `/account/addresses`.
@@ -64,7 +65,15 @@ export function AddAddressForm() {
           Save address
         </Button>
 
-        <p aria-live="polite" className="font-sans text-body-sm text-foreground-muted">
+        {/* A failure is an alert, so it is announced at once; a success stays polite. */}
+        <p
+          aria-live={state.ok ? 'polite' : undefined}
+          className={cn(
+            'font-sans text-body-sm',
+            state.ok ? 'text-foreground-muted' : 'text-error',
+          )}
+          role={state.ok ? undefined : 'alert'}
+        >
           {state.notice}
         </p>
       </div>

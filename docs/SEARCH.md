@@ -264,10 +264,12 @@ counts as one operation or N, and how `replaceAllObjects` is billed.
 - **No rate limiting, throttling or Turnstile** on the search path. Phase 26 owns them, and §26.1a's
   surface list does not name search. The floor, the debounce, the six-hit cap and the byte clamp are
   edge-case handling and cost control — they are **not** security controls. **DEV-51.**
-- **No analytics events.** `search_submitted` is Phase 25. **DEV-52.**
-- **No `metadata`, canonical or `noindex`** on `/search`. Phase 24 owns SEO, including whether a
-  search results page should be indexable at all. Redirecting `/shop?q=` here hands Phase 24 exactly
-  one crawlable search namespace rather than two. **DEV-50.**
+- ~~**No analytics events.**~~ **DEV-52, discharged in Phase 25:** `search_submitted` is emitted from
+  `components/shell/search-panel.tsx` on the normalised term. Browse queries still send
+  `analytics: false`, and `clickAnalytics` is still not set.
+- ~~**No `metadata`, canonical or `noindex`** on `/search`.~~ **DEV-50, discharged:** `/search` exports
+  `privateMetadata('Search')`, which is `noindex, nofollow`. `/shop?q=` still redirects here, so
+  there is one search namespace and it is not indexed.
 - **No dependent facets.** **DEV-49** — the reason is structural and is recorded there.
 - **Typo tolerance reaches queries of four characters or more** (`minWordSizefor1Typo: 4`). Measured:
   `hod` → 0, `hoodei` → 1. Feature matrix §2 names typo tolerance without qualifying it; this is the

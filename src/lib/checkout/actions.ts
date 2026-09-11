@@ -4,10 +4,11 @@ import { redirect } from 'next/navigation'
 
 import { getCustomer } from '@/lib/auth/session'
 import { PREFLIGHT_COPY, type PreflightFailure } from '@/lib/checkout/rules'
+import { reportFailure } from '@/lib/observability/report'
 
 import type { CheckoutActionState } from './action-state'
-import { runPreflight, type CheckoutContact } from './preflight'
-import { createCheckoutSession } from './session'
+import { runPreflight, type CheckoutContact, type PreflightResult } from './preflight'
+import { createCheckoutSession, type SessionResult } from './session'
 
 /**
  * **The one action that starts a payment** — plan §17.1a's eleven steps, run in order, followed by a
@@ -22,8 +23,11 @@ import { createCheckoutSession } from './session'
  * Every one of §17.1a's steps can fail for a reason the customer can do something about: a code that
  * expired while they were typing, a size that sold out, an address we do not deliver to. Each returns
  * a sentence and leaves them on the page with their details still filled in. The one exception is a
- * bag that changed underneath them, which sends them back to look at it — because the honest response
- * to *"this is not what you were shown"* is to show them what it is now.
+ * bag that changed underneath them, which sends them back to look at it.
+ *
+ * **Phase 36 (audit R1-03):** an *unexpected* failure is a refusal too. Preflight and session creation
+ * are wrapped, and anything they throw — a database error, a transition the order hook refused —
+ * becomes `checkoutFailed`'s sentence instead of an uncaught error on the last click before paying.
  *
  * ### The redirect is outside the try, deliberately
  *
@@ -45,6 +49,13 @@ function failure(reason: PreflightFailure): CheckoutActionState {
 
 const text = (form: FormData, key: string): string => (form.get(key)?.toString() ?? '').trim()
 
+function unexpected(error: unknown, step: string): CheckoutActionState {
+  console.error(`Checkout failed unexpectedly during ${step}.`, error)
+  reportFailure(error, 'checkout.action', { step })
+
+  return failure('checkoutFailed')
+}
+
 export async function startCheckoutAction(
   _previous: CheckoutActionState,
   formData: FormData,
@@ -65,8 +76,15 @@ export async function startCheckoutAction(
     shippingMethodId: text(formData, 'shippingMethod'),
   }
 
-  const customer = await getCustomer()
-  const preflight = await runPreflight(customer?.id ?? null, contact)
+  let preflight: PreflightResult
+
+  try {
+    const customer = await getCustomer()
+
+    preflight = await runPreflight(customer?.id ?? null, contact)
+  } catch (error) {
+    return unexpected(error, 'preflight')
+  }
 
   if (!preflight.ok) {
     if (preflight.reason === 'sessionExpired') {
@@ -80,7 +98,13 @@ export async function startCheckoutAction(
     return failure(preflight.reason)
   }
 
-  const session = await createCheckoutSession(preflight)
+  let session: SessionResult
+
+  try {
+    session = await createCheckoutSession(preflight)
+  } catch (error) {
+    return unexpected(error, 'session creation')
+  }
 
   if (!session.ok) {
     return { error: PREFLIGHT_COPY.stripeUnconfigured, field: null }

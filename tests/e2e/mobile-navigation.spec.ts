@@ -9,7 +9,10 @@
  *
  * ---
  *
- * ### This suite has never been executed, and that is a fact about the environment
+ * ### Why this suite went unrun until Phase 35
+ *
+ * *Status: first run in Phase 35 — 43 passed, 0 failed, 14 skipped, against a local production
+ * build of the development database (`docs/TESTING.md`). What follows is why it had not run before.*
  *
  * An end-to-end run needs a running application, and a running application here needs a database it
  * may write to. `TODO.md` §1 records that the only reachable one is **production**, and decision

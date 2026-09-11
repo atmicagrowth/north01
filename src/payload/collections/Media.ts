@@ -27,12 +27,13 @@ const CLOUDINARY_CLOUD_NAME = publicEnv.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
  * read for the person doing the uploading rather than the person who wrote the rule.
  *
  * Until Phase 28 every one of these numbers was enforced and none of them was stated: an editor met
- * the 25 MB cap as a rejected upload, the format allowlist as a rejected upload, and the dimension
+ * the size cap as a rejected upload, the format allowlist as a rejected upload, and the dimension
  * cap as a rejected upload. Each rule is correct and each was discovered the expensive way.
  *
- * They are interpolated from the constants rather than typed out, because a description that says
- * "25 MB" beside a `MAX_UPLOAD_BYTES` somebody has since changed is worse than no description at
- * all — it is a confident lie the admin panel tells every morning.
+ * They are interpolated from the constants rather than typed out, because a description that names
+ * a size beside a `MAX_UPLOAD_BYTES` somebody has since changed is worse than no description at
+ * all — it is a confident lie the admin panel tells every morning. (Phase 36 changed it: the cap is
+ * 4 MB because the hosting platform refuses larger request bodies — see `lib/media/limits.ts`.)
  */
 const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))
 
@@ -46,7 +47,7 @@ const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))
 const MEDIA_DESCRIPTION = [
   `Every photograph and video the storefront uses. JPEG, PNG, WebP or AVIF for stills and MP4 or WebM for video, up to ${MAX_UPLOAD_MB} MB and ${MAX_IMAGE_DIMENSION.toLocaleString('en-US')} pixels on the longest side.`,
   'SVG and GIF are refused deliberately, so a logo comes in as a PNG.',
-  'Upload the largest uncropped original you have: every size the site shows is cut from it at delivery time, so a picture that arrives already cropped can only ever be cropped further.',
+  `Camera originals are usually larger than ${MAX_UPLOAD_MB} MB, so export a high-quality JPEG under the limit first — keep it uncropped and as large as the limit allows: every size the site shows is cut from it at delivery time, so a picture that arrives already cropped can only ever be cropped further.`,
   'The marker you drag onto the picture is its focal point — it says which part must stay in frame when the same photograph is shown wide on a laptop and tall on a phone. Put it on the face, or on the product. Leave it in the middle if you are unsure.',
 ].join(' ')
 

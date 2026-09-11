@@ -28,16 +28,15 @@ import type { ShellNavItem } from '@/lib/navigation/resolve'
  * close from any major route without conflicting. Its `open` state is the shell's one state machine,
  * so opening the bag closes the menu and vice versa, by construction rather than by coordination.
  *
- * ### What Phase 14 filled in, and what is still missing on purpose
+ * ### What Phase 14 filled in
  *
  * Phase 9 shipped this as an empty-state panel and said so plainly: *"nothing in this application can
  * put a line in a bag yet."* Now it can. §14.1e's list is here — items, variant labels, quantity
- * controls, remove, the shipping-progress message, recommendations — with one exception.
+ * controls, remove, the shipping-progress message, recommendations.
  *
- * **There is no Checkout button.** Checkout is **Phase 17**, and a control labelled *Checkout* that
- * leads to a route which does not exist is the same fake UI Phase 13 refused to draw for Add to Bag.
- * The pinned action is **View bag**, which goes to `/cart` — a page this phase builds and which is
- * where checkout will be reached from. Recorded as **DEV-57**.
+ * Phase 14 left out a Checkout button because `/checkout` did not exist yet (**DEV-57**). Phase 17
+ * built the route and the button came back as the drawer's `primary` action, with **View bag** as
+ * the secondary one.
  *
  * ### The bag is passed in, not fetched here
  *
@@ -86,7 +85,7 @@ export function CartDrawer({
                 to another page to find the button is a drawer with one job it does not do.
               */}
               <div className="flex flex-col gap-s">
-                <Button asChild size="lg" onClick={close}>
+                <Button asChild size="lg" onClick={close} variant="primary">
                   <Link href="/checkout" variant="unstyled">
                     Checkout
                   </Link>

@@ -22,6 +22,7 @@ import { dedupeKeyFor } from '@/lib/email/rules'
 import { deliverEmail, enqueueEmail } from '@/lib/email/send'
 import { siteUrl } from '@/lib/env.server'
 import { checkPassword } from '@/lib/password-policy'
+import { reportFailure } from '@/lib/observability/report'
 
 import type { AuthFormState } from './form-state'
 import { ForgotPasswordSchema, LoginSchema, RegisterSchema, ResetPasswordSchema } from './schemas'
@@ -656,8 +657,10 @@ export async function resetPassword(
     return failure(previous, formData, null, { password: problem })
   }
 
+  let customerId: null | number | string = null
+
   try {
-    await payload.resetPassword({
+    const result = await payload.resetPassword({
       collection: 'customers',
       data: { password: parsed.data.password, token: parsed.data.token },
       /*
@@ -667,6 +670,8 @@ export async function resetPassword(
        */
       overrideAccess: true,
     })
+
+    customerId = (result.user as { id?: number | string }).id ?? null
   } catch (error) {
     if (error instanceof APIError && error.status === 403) {
       return failure(
@@ -685,6 +690,39 @@ export async function resetPassword(
     payload.logger.error({ err: error, msg: 'Password reset failed unexpectedly.' })
 
     return failure(previous, formData, UNEXPECTED_FAILURE)
+  }
+
+  /*
+   * **A reset ends every session the account had** — Phase 36, audit R1-13.
+   *
+   * A reset is what someone does when they think their account is compromised, and until now
+   * whoever held the old cookie stayed signed in for up to seven days under the new password.
+   * `resetPassword` writes through `payload.db`, so the `Customers` hook that clears sessions on a
+   * password change never runs for it; this does the same thing explicitly.
+   *
+   * This cannot sign the customer out of the reset itself, because the reset never signs them in
+   * (see the docblock). Payload's operation does add a session and returns a token for it, but this
+   * action never sets that token as a cookie, so the session is unreachable and is cleared here with
+   * the rest.
+   *
+   * A failure here does not undo the reset — the new password is already stored and the old one no
+   * longer works — so it is logged and reported rather than shown as a failed reset.
+   */
+  if (customerId !== null) {
+    await payload
+      .update({
+        collection: 'customers',
+        data: { sessions: [] },
+        id: customerId,
+        overrideAccess: true,
+      })
+      .catch((error: unknown) => {
+        payload.logger.error({
+          err: error,
+          msg: 'A password was reset, but the old sessions could not be cleared.',
+        })
+        reportFailure(error, 'auth.resetPassword.sessions', { customerId: String(customerId) })
+      })
   }
 
   redirect('/login?reset=1')

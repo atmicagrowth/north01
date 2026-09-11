@@ -13,9 +13,10 @@ The trust boundary is a **file boundary**, so getting it wrong is visible in the
 
 | Module | Holds | Importable from |
 |---|---|---|
-| [`src/lib/env.public.ts`](../src/lib/env.public.ts) | `NEXT_PUBLIC_*` only — compiled into the browser bundle | anywhere, server or client |
+| [`src/lib/env.public.ts`](../src/lib/env.public.ts) | `NEXT_PUBLIC_*` values only (the literal `publicEnvSource` table), compiled into the browser bundle; no Zod | anywhere, server or client |
+| [`src/lib/env.schema.ts`](../src/lib/env.schema.ts) | the public **schema** (Zod), moved out of `env.public.ts` in Phase 30 so no client bundle carries the parser | `env.core.ts` only (`env.public.ts` imports its *type*) |
 | [`src/lib/env.server.ts`](../src/lib/env.server.ts) | everything, secrets included | **server only** |
-| [`src/lib/env.core.ts`](../src/lib/env.core.ts) | the same, without the guard | `payload.config.ts` and `instrumentation.ts` only |
+| [`src/lib/env.core.ts`](../src/lib/env.core.ts) | the same, without the guard | the files in `eslint.config.mjs`'s exemption block only: `env.server.ts`, `payload.config.ts`, `instrumentation.ts`, `scripts/**` |
 
 `env.server.ts` is `env.core.ts` plus `import 'server-only'`, and that one line is the guard: a
 client component importing it **fails the build**, naming the offending chain.
@@ -31,8 +32,10 @@ Error: You're importing a module that depends on "server-only".
 specifier to a vendored copy, and that alias exists only inside Next's bundler. The `payload` CLI
 loads `payload.config.ts` through tsx, outside Next, where the import fails to resolve at all. So
 the config imports the unguarded core, and **ESLint forbids anyone else from doing the same** —
-`no-restricted-imports` for the static form and `no-restricted-syntax` for `import()`, with
-`env.server.ts`, `payload.config.ts` and `instrumentation.ts` exempted.
+`no-restricted-imports` for the static form and `no-restricted-syntax` for `import()`. The
+exemptions are the `files` array of one block in `eslint.config.mjs`, which is the authoritative
+list: `src/lib/env.server.ts`, `src/payload.config.ts`, `src/instrumentation.ts` and
+`scripts/**/*.ts`. Scripts run through tsx outside Next and are imported by nothing in `src/`.
 
 Both rules are needed. `no-restricted-imports` registers no `ImportExpression` visitor, so it cannot
 see a dynamic import at all — and a client component doing `use(import('@/lib/env.core'))` passed
@@ -60,7 +63,7 @@ of them covers everything.
 |---|---|---|
 | `src/payload.config.ts` → `env.core.ts` | **build** — `next build` evaluates the Payload config while collecting page data, so a bad environment fails the build with exit 1 | a server that starts later with a different environment |
 | `src/instrumentation.ts` | **startup** — `next dev` and `next start` | the build; Next skips `register()` when `NEXT_PHASE` is `phase-production-build` |
-| `env.public.ts` | malformed public values, in the browser | anything server-only |
+| ~~`env.public.ts`~~ | ~~malformed public values, in the browser~~ — **not since Phase 30.** The browser no longer parses public values. They are validated by `env.schema.ts` on the server, at build and startup, through the two hooks above (`ServerEnvSchema` extends the public schema) | — |
 
 Two consequences worth knowing:
 
@@ -373,8 +376,8 @@ Never use production customer data in development.
 
 ## Adding a variable
 
-1. Add it to the right schema — `env.public.ts` for browser-safe, `env.core.ts` for server-only — with the phase in a comment.
-   Public entries also need a literal `process.env.NEXT_PUBLIC_…` line in `publicEnvSource` —
+1. Add it to the right schema — `env.schema.ts` for browser-safe, `env.core.ts` for server-only — with the phase in a comment.
+   Public entries also need a literal `process.env.NEXT_PUBLIC_…` line in `publicEnvSource` (in `env.public.ts`) —
    Next substitutes that member expression textually at build time, so a dynamic read or a
    spread yields nothing in the browser.
 2. Add it to `.env.example` with a comment, and no value.

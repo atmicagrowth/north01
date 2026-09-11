@@ -108,7 +108,7 @@ export default async function CheckoutPage() {
 
       <Section spacing="tight">
         <PageContainer>
-          <PageTitle eyebrow="Checkout">Checkout</PageTitle>
+          <PageTitle>Checkout</PageTitle>
         </PageContainer>
       </Section>
 
@@ -136,12 +136,12 @@ export default async function CheckoutPage() {
               ) : (
                 <div className="flex flex-col gap-m" data-slot="checkout-unavailable">
                   <p className="font-sans text-heading-s text-foreground">
-                    Payment is not connected yet.
+                    Online checkout isn&rsquo;t open yet.
                   </p>
 
                   <p className="max-w-measure font-sans text-body text-foreground-muted">
-                    Everything in your bag is real — the prices, the sizes and the stock are live.
-                    Card payment is the last piece and it is not switched on for this environment.
+                    We can&rsquo;t take payment right now. Your bag is saved, with its prices and
+                    sizes.
                   </p>
 
                   {/*
@@ -171,7 +171,37 @@ export default async function CheckoutPage() {
             </div>
 
             <div className="lg:col-span-5 lg:pl-l">
-              <div className="lg:sticky lg:top-24">
+              <div className="flex flex-col gap-m lg:sticky lg:top-24">
+                {/*
+                  What is being bought, read-only. The steppers stay on the bag: changing a quantity
+                  here would re-quote under a form the customer is halfway through. Not
+                  `data-slot="cart-line"` — that slot means an editable bag row to the e2e suite.
+                */}
+                <ul
+                  aria-label="In your bag"
+                  className="divide-y divide-border border-y border-border font-sans text-body-sm"
+                  data-slot="checkout-lines"
+                >
+                  {cart.lines.map((line) => {
+                    const variant = [line.color, line.size].filter(Boolean).join(' · ')
+
+                    return (
+                      <li className="flex items-start justify-between gap-s py-s" key={line.id}>
+                        <div className="min-w-0">
+                          <p className="text-foreground">{line.productName}</p>
+                          <p className="text-meta uppercase text-foreground-muted">
+                            {[variant, `× ${line.effectiveQuantity}`].filter(Boolean).join(' · ')}
+                          </p>
+                        </div>
+
+                        <span className={line.unitPriceLabel ? 'text-foreground' : 'text-error'}>
+                          {line.unitPriceLabel ?? CART_COPY.lineUnavailable}
+                        </span>
+                      </li>
+                    )
+                  })}
+                </ul>
+
                 <CartSummary
                   currency={cart.currency}
                   discount={cart.discount}

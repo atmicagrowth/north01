@@ -49,31 +49,18 @@ export function productBreadcrumb(product: Pick<Product, 'categories' | 'name' |
  * Gallery → identity → price → colour → size → details → you may also like
  * ```
  *
- * Two of that list's nodes are deliberately absent and one is deferred; the reasons are below and in
- * **DEV-55**. Everything else is here.
+ * Structure §7 also puts **Quantity**, **Add to Bag** and reviews between size and the detail
+ * sections, and all three are here: Phase 14 slotted the purchase controls beneath the selector,
+ * which resolves the exact variant they post; Phase 20 added the wishlist control and Phase 21 the
+ * moderated reviews (no star histogram without reviews, §13.1f).
  *
  * ---
  *
  * ### What is not on this page, and why that is not an omission
  *
- * Structure §7 puts **Quantity**, **Add to Bag** and reviews between size and the detail sections.
- * None of them ships, because none of them can:
- *
- * - **Add to Bag / Buy Now** need a cart. The cart is **Phase 14** and checkout is **Phase 17**. A
- *   button that looks like it adds to a bag and does not is precisely what plan §0.1.17 forbids, and
- *   it is a worse lie than a missing button because the customer only learns the truth after
- *   committing to a purchase decision.
- * - **Quantity** is a control whose only consumer is Add to Bag. Shipping it alone would be a
- *   stepper that changes a number nothing reads.
- * - **Rating and reviews** (§13.1b, §13.1f) need the reviews collection populated and moderated,
- *   which is **Phase 21**. §13.1f is explicit that an empty star histogram must not be shown, and a
- *   catalogue with no reviews is exactly that state.
- * - **Wishlist** is **Phase 20**.
- *
- * What ships instead is the whole of the page that *can* be true today: the gallery, the identity,
- * an authoritative variant selector, live stock messaging, the size guide, the detail accordions and
- * recommendations. The purchase controls arrive in Phase 14 and slot in below the selector, which is
- * why the selector already resolves and exposes the exact variant they will need.
+ * - **Buy Now** is withdrawn (**DEV-78**): Add to Bag opens the bag drawer, whose Checkout is the
+ *   same step, so a second submit path would only duplicate it.
+ * - **Quick View** belongs to cards and is withdrawn with Quick Add (**DEV-76**).
  *
  * ### The price is the selected variant's, and it moves
  *
@@ -253,8 +240,9 @@ export function ProductPage({
               {/*
                 Phase 14's purchase controls, which DEV-55 recorded as owed and which slot in exactly
                 where that deviation said they would — beneath the selector, reading the variant it
-                had already resolved. What is still absent is **Buy Now** (Phase 17, which owns
-                checkout) and the wishlist (Phase 20).
+                had already resolved. **Buy Now** is withdrawn rather than owed (DEV-78): Add to
+                Bag opens the drawer, whose Checkout is the same step. The wishlist control sits
+                below.
 
                 `maxQuantity` is the live bound: `clampQuantity` applied to this variant's stock and
                 the shop's `maxQuantityPerLine`. It is computed on the server and passed down, so the

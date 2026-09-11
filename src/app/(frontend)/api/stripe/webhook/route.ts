@@ -1,12 +1,25 @@
+import { after } from 'next/server'
+import type { Payload } from 'payload'
 import type Stripe from 'stripe'
 
-import { countWebhookDelivery } from '@/lib/checkout/events'
+import {
+  countWebhookDelivery,
+  isUniqueViolation,
+  reclaimWebhookDelivery,
+} from '@/lib/checkout/events'
 import { courierFor } from '@/lib/email/courier'
 import { queueOrderConfirmation, queueRefundMessage } from '@/lib/email/orders'
 import { deliverEmail, drainEmails } from '@/lib/email/send'
-import { applyStripeEvent } from '@/lib/checkout/fulfil'
-import { isHandledEventType, parseOrderReference } from '@/lib/checkout/rules'
+import { applyStripeEvent, type FulfilOutcome, type SessionFacts } from '@/lib/checkout/fulfil'
+import {
+  decideDuplicateDelivery,
+  isHandledEventType,
+  isSessionEvent,
+  parseOrderReference,
+  planStripeEvent,
+} from '@/lib/checkout/rules'
 import { isStripeConfigured, stripeClient, stripeWebhookSecret } from '@/lib/checkout/stripe'
+import { reportFailure } from '@/lib/observability/report'
 import { getPayloadClient } from '@/lib/payload'
 
 /**
@@ -25,45 +38,41 @@ import { getPayloadClient } from '@/lib/payload'
  * ### The raw body, and why `request.text()` is not a detail
  *
  * A Stripe signature is computed over the **exact bytes** Stripe sent. `request.json()` parses and
- * re-serialises, and the round trip changes key order, whitespace and number formatting — so the
- * verification would fail for every event, and the natural "fix" is to stop verifying. The body is
- * read as text, verified, and only then parsed by the SDK.
+ * re-serialises, which changes them, so verification would fail for every event and the natural
+ * "fix" is to stop verifying. The body is read as text, verified, and only then parsed by the SDK.
  *
- * ### What each status code means, and why 200 is the default rather than the rule
+ * ### What each status code means
  *
  * Stripe retries any non-2xx response with backoff for days. That is correct for *"we could not
- * process this yet"* and actively harmful for *"this is not for us"* — an unrecognised event type
- * retried for three days is noise that buries a real failure. So the responses split four ways:
+ * process this yet"* and harmful for *"this is not for us"*:
  *
- * - **503** when Stripe is not configured. The one degradation that must not be quiet: nothing can be
- *   verified, so nothing can be safely acknowledged, and a silent 200 would make Stripe discard real
- *   payment events for the length of a misconfiguration.
- * - **400** for a signature that does not verify. Not a retry — a forgery, a misconfigured secret, or
- *   a proxy that rewrote the body. Retrying cannot fix any of them.
- * - **500** for an event we *should* have handled and could not. Stripe retries, which is what we
- *   want, and the event row records why.
- * - **200** for everything else, including duplicates, unknown types and events about orders this
- *   application does not hold. §17.1h: *"Unknown events should be safely acknowledged/logged without
- *   crashing the webhook handler."*
+ * - **503** when Stripe is not configured: nothing can be verified, so nothing can be acknowledged.
+ * - **400** for a signature that does not verify. A retry cannot fix a forgery or a wrong secret.
+ * - **409** for an event another delivery is still working on (Phase 36). Stripe retries, and by
+ *   then the row says how it went.
+ * - **500** for an event we should have handled and could not — including a database error while
+ *   recording it. Stripe retries, and the retry is **reprocessed** (Phase 36, audit R1-04): until
+ *   then a failed row answered every retry with *"Already processed"*, which made this path dead.
+ * - **200** for everything else: done, duplicate, unknown type, not our order — and a **mismatch**,
+ *   a session that does not match the order it names. That is recorded, logged and alerted, and a
+ *   retry could never fix it, so asking Stripe for one would only bury it.
  *
- * A 200 here means *"received and dealt with"*, and for an unknown type "dealt with" is a row saying
- * we saw it and did nothing.
+ * ### The email is after the response — Phase 36, audit R1-21
+ *
+ * The row is marked `processed` **before** any mail work, and the mail work runs in Next's `after()`
+ * (supported in route handlers — `next/dist/docs/.../functions/after.md`). A slow mail provider used
+ * to hold Stripe's request open, and a timeout there is a failure to Stripe even though the order was
+ * already paid. The confirmation is keyed on the order, so it is safe to queue again: a redelivery
+ * that finds the order already paid by this session re-queues it, which is what recovers an email
+ * lost to a crash between the commit and the send.
  *
  * ### `force-dynamic`, because a cached webhook is not a webhook
- *
- * Nothing about this route may be pre-rendered or revalidated. It is a POST with a signature header
- * and a side effect.
  */
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request): Promise<Response> {
   const payload = await getPayloadClient()
 
-  /*
-   * An unconfigured integration cannot verify anything, so it cannot safely acknowledge anything
-   * either. 503 rather than 200: Stripe should retry once the keys are in place, and a silent 200
-   * would discard real payment events during a misconfiguration.
-   */
   if (!isStripeConfigured()) {
     payload.logger.error('A Stripe webhook arrived while Stripe is not configured.')
 
@@ -84,10 +93,6 @@ export async function POST(request: Request): Promise<Response> {
   try {
     event = stripeClient().webhooks.constructEvent(body, signature, stripeWebhookSecret())
   } catch (error) {
-    /*
-     * The one case that must never be a 200. An unverified body is not evidence of anything, and
-     * treating it as an event would make the signature ceremonial.
-     */
     payload.logger.error({
       err: error,
       msg: 'A Stripe webhook failed signature verification and was rejected.',
@@ -97,13 +102,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   /*
-   * **The first idempotency barrier — §17.1d.**
-   *
-   * A unique column, and an insert that violates it. Not a read-then-write: two concurrent retries
-   * would both find nothing and both proceed, and the window between the read and the write is
-   * exactly where a duplicate finalisation lives. The database has no such window.
+   * **The first idempotency barrier — §17.1d.** A unique column and an insert that violates it,
+   * never a read-then-write. What the violation *means* is then decided from the stored row.
    */
-  let eventRowId: null | number = null
+  let eventRowId: number
 
   try {
     const row = await payload.create({
@@ -119,11 +121,19 @@ export async function POST(request: Request): Promise<Response> {
     })
 
     eventRowId = row.id
-  } catch {
-    /*
-     * Already seen. Stripe retries after network failures, timeouts and deploys, so this is the
-     * ordinary case rather than the exceptional one — acknowledged, counted, and not processed again.
-     */
+  } catch (error) {
+    if (!isUniqueViolation(error)) {
+      /* Not a duplicate: the database failed. Nothing was recorded, so Stripe must retry. */
+      payload.logger.error({
+        err: error,
+        eventId: event.id,
+        msg: 'A Stripe webhook could not be recorded.',
+      })
+      reportFailure(error, 'stripe.webhook.record', { eventType: event.type })
+
+      return new Response('Could not record the event.', { status: 500 })
+    }
+
     const { docs } = await payload.find({
       collection: 'stripe-events',
       depth: 0,
@@ -134,11 +144,32 @@ export async function POST(request: Request): Promise<Response> {
 
     const seen = docs[0]
 
-    if (seen) {
-      await countWebhookDelivery(payload, seen.id)
+    if (!seen) {
+      return new Response('Could not read the stored event.', { status: 500 })
     }
 
-    return new Response('Already processed.', { status: 200 })
+    const decision = decideDuplicateDelivery({
+      now: new Date(),
+      receivedAt: seen.receivedAt,
+      status: seen.status,
+    })
+
+    if (decision === 'acknowledge') {
+      await countWebhookDelivery(payload, seen.id)
+
+      return new Response('Already processed.', { status: 200 })
+    }
+
+    if (decision === 'retryLater' || !(await reclaimWebhookDelivery(payload, seen.id))) {
+      if (decision === 'retryLater') {
+        await countWebhookDelivery(payload, seen.id)
+      }
+
+      return new Response('Still being processed.', { status: 409 })
+    }
+
+    /* A failed or abandoned delivery, now ours. Reprocessing is safe: every write is a claim. */
+    eventRowId = seen.id
   }
 
   if (!isHandledEventType(event.type)) {
@@ -156,22 +187,18 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const object = event.data.object as {
       amount_refunded?: unknown
+      amount_total?: unknown
+      currency?: unknown
+      id?: unknown
       metadata?: unknown
       payment_intent?: unknown
+      payment_status?: unknown
     }
 
     /*
-     * **Two ways back to the order, and Phase 18 needed the second.**
-     *
-     * §17.1b attaches the reference through Checkout Session metadata, which every session-shaped
-     * event carries back. `charge.refunded` does not: its object is a Charge, whose `metadata` is the
-     * charge's own. So the reference is *optional* here rather than required, and `applyStripeEvent`
-     * falls back to the payment intent — which Stripe puts on the charge and Phase 17 already stored
-     * on the order.
-     *
-     * An event with neither still ends as `noOrder`, recorded and acknowledged, exactly as before.
-     * What changed is that a signed refund for an order this shop holds is no longer discarded at the
-     * door for lacking a field its event type never had.
+     * **Two ways back to the order.** Session-shaped events carry §17.1b's metadata reference;
+     * `charge.refunded` carries a Charge, whose metadata is its own, so `applyStripeEvent` falls
+     * back to the payment intent Phase 17 stored on the order.
      */
     const orderId = parseOrderReference(object.metadata)
 
@@ -184,106 +211,70 @@ export async function POST(request: Request): Promise<Response> {
           ? String((object.payment_intent as { id: unknown }).id)
           : null
 
+    /* Phase 36, R1-01 and R1-05: which session this is, for how much, and whether it is paid. */
+    const session: null | SessionFacts =
+      isSessionEvent(event.type) && typeof object.id === 'string'
+        ? {
+            amountTotal: typeof object.amount_total === 'number' ? object.amount_total : null,
+            currency: typeof object.currency === 'string' ? object.currency : null,
+            id: object.id,
+            paymentStatus: typeof object.payment_status === 'string' ? object.payment_status : null,
+          }
+        : null
+
     const outcome = await applyStripeEvent(payload, {
-      /* Stripe's own figure, in minor units. A partial refund and a full one differ only here. */
       amountRefundedMinor:
         typeof object.amount_refunded === 'number' ? object.amount_refunded : null,
       eventType: event.type,
       orderId,
       paymentIntentId,
+      session,
     })
 
-    /*
-     * **§17.1d: *"Triggers email only after the correct state transition."***
-     *
-     * Gated on the outcome, which is the single value that means *this* call is the one that moved
-     * the order — not a replay, not the second event Stripe sends for the same payment. Both barriers
-     * upstream have already fired by the time a `finalised` reaches here, and the unique `dedupeKey`
-     * on `email-messages` is the third, which is what makes §17.1d's *"do not send duplicate
-     * confirmation email"* a database constraint rather than a hope.
-     *
-     * **`outOfStock` is included deliberately.** The money moved; §17.1f left the order paid and
-     * unfulfilled for a human to resolve. Withholding the receipt would leave a customer who has been
-     * charged with no record of it, which is a worse failure than the one it would avoid. What they
-     * receive is a confirmation of payment and of the order — never of dispatch, which is a separate
-     * message that will not be sent until somebody can send the goods.
-     *
-     * Wrapped so tightly because of what this route does with a throw: the catch below turns one into
-     * a 500, Stripe retries, and the retry is refused by the unique event id **without reprocessing**.
-     * A thrown error from a mail call would therefore leave the order paid and the customer
-     * permanently without a confirmation that nothing would ever resend. §19.1d, in its sharpest form.
-     */
-    try {
-      const courier = await courierFor(payload)
-
-      if (outcome.outcome === 'finalised' || outcome.outcome === 'outOfStock') {
-        const queued = await queueOrderConfirmation(payload, outcome.orderId)
-
-        if (queued.outcome === 'claimed' && courier) {
-          await deliverEmail(payload, queued.id, courier)
-        }
-      }
-
-      if (outcome.outcome === 'transitioned' && outcome.status === 'refunded') {
-        const queued = await queueRefundMessage(
-          payload,
-          outcome.orderId,
-          typeof object.amount_refunded === 'number' ? object.amount_refunded : null,
-        )
-
-        if (queued.outcome === 'claimed' && courier) {
-          await deliverEmail(payload, queued.id, courier)
-        }
-      }
-
+    if (outcome.outcome === 'mismatch') {
       /*
-       * Opportunistic, and bounded. The admin-panel messages are queued inside a transaction and have
-       * no sender of their own, so something has to carry them; a webhook is the most frequent
-       * server-side event this application has. `pnpm email:drain` and the staff-authenticated drain
-       * route are the deliberate paths — this is the one that means a backlog rarely forms.
+       * Money may have moved for something this order no longer describes. Not applied, not retried,
+       * and not quiet: the row, the log and the alert all carry the reason.
        */
-      if (courier) {
-        await drainEmails(payload, courier, { limit: 5 })
-      }
-    } catch (error) {
       payload.logger.error({
-        err: error,
         eventId: event.id,
-        msg: 'Sending an order email failed. The order is unaffected — see the email-messages record.',
+        msg: `A Stripe session did not match its order, and nothing was applied: ${outcome.reason}`,
+        orderId: outcome.orderId,
       })
+      reportFailure(
+        new Error(`Stripe session mismatch: ${outcome.reason}`),
+        'stripe.webhook.mismatch',
+        {
+          eventType: event.type,
+          orderId: outcome.orderId,
+        },
+      )
     }
 
     await payload.update({
       collection: 'stripe-events',
       data: {
         ...(outcome.orderId === null ? {} : { order: outcome.orderId }),
-        ...(outcome.outcome === 'noOrder'
-          ? { error: 'No order reference and no known payment intent in the event.' }
-          : {}),
-        ...(outcome.outcome === 'outOfStock'
-          ? {
-              error:
-                'Paid, but stock was unavailable at finalisation. Left unfulfilled for a human ' +
-                'decision — plan §17.1f.',
-            }
-          : {}),
-        status: outcome.outcome === 'noOrder' ? 'ignored' : 'processed',
+        ...rowRecordFor(outcome),
       },
       id: eventRowId,
       overrideAccess: true,
     })
 
+    /* §17.1d: *"Triggers email only after the correct state transition."* — see the docblock. */
+    const isPayment =
+      planStripeEvent(event.type, session?.paymentStatus ?? null).kind === 'finalise'
+
+    after(() => sendOrderEmails(payload, event.id, outcome, isPayment))
+
     return new Response('OK', { status: 200 })
   } catch (error) {
-    /*
-     * An event we should have handled and could not. 500 so Stripe retries — and the row records the
-     * reason, so the retry has something to compare against.
-     */
     payload.logger.error({
       err: error,
       eventId: event.id,
       msg: 'Processing a Stripe webhook failed.',
     })
+    reportFailure(error, 'stripe.webhook.process', { eventType: event.type })
 
     await payload
       .update({
@@ -298,5 +289,92 @@ export async function POST(request: Request): Promise<Response> {
       .catch(() => undefined)
 
     return new Response('Processing failed.', { status: 500 })
+  }
+}
+
+/** How each outcome is recorded on the `stripe-events` row. */
+function rowRecordFor(outcome: FulfilOutcome): { error?: string; status: 'ignored' | 'processed' } {
+  switch (outcome.outcome) {
+    case 'noOrder':
+      return {
+        error: 'No order reference and no known payment intent in the event.',
+        status: 'ignored',
+      }
+    case 'mismatch':
+      return { error: `MISMATCH: ${outcome.reason}`.slice(0, 900), status: 'ignored' }
+    case 'superseded':
+      return {
+        error: 'Superseded: this session is no longer the order’s current one. Nothing changed.',
+        status: 'ignored',
+      }
+    case 'outOfStock':
+      return {
+        error:
+          'Paid, but stock was unavailable at finalisation. Held (fulfilmentHold = stockShortfall) ' +
+          'for a human decision; no stock was taken — plan §17.1f.',
+        status: 'processed',
+      }
+    default:
+      return { status: 'processed' }
+  }
+}
+
+/**
+ * The customer's email for this outcome, run after the response.
+ *
+ * Wrapped whole, because nothing here may throw: the event row already says `processed`, and a mail
+ * failure is recorded on its own `email-messages` row, which the drain retries.
+ *
+ * **The confirmation** is queued for a new payment (`finalised`, and `outOfStock` — the customer has
+ * been charged and deserves the receipt; it confirms the order, never dispatch), and also for a
+ * payment event that finds the order already paid. The dedupe key makes that second case free when
+ * the email already exists, and it is what recovers one lost to a crash after the commit.
+ *
+ * **The refund message** is queued once per new cumulative refunded amount.
+ */
+async function sendOrderEmails(
+  payload: Payload,
+  eventId: string,
+  outcome: FulfilOutcome,
+  isPayment: boolean,
+): Promise<void> {
+  try {
+    const courier = await courierFor(payload)
+
+    const confirm =
+      outcome.outcome === 'finalised' ||
+      outcome.outcome === 'outOfStock' ||
+      (isPayment && outcome.outcome === 'alreadyFinal' && outcome.status === 'paid')
+
+    if (confirm && outcome.orderId !== null) {
+      const queued = await queueOrderConfirmation(payload, outcome.orderId)
+
+      if (queued.outcome === 'claimed' && courier) {
+        await deliverEmail(payload, queued.id, courier)
+      }
+    }
+
+    if (outcome.outcome === 'refunded') {
+      const queued = await queueRefundMessage(payload, outcome.orderId, outcome.amountRefundedMinor)
+
+      if (queued.outcome === 'claimed' && courier) {
+        await deliverEmail(payload, queued.id, courier)
+      }
+    }
+
+    /*
+     * Opportunistic, and bounded. The admin-panel messages are queued inside a transaction and have
+     * no sender of their own; a webhook is the most frequent server-side event this application has.
+     */
+    if (courier) {
+      await drainEmails(payload, courier, { limit: 5 })
+    }
+  } catch (error) {
+    payload.logger.error({
+      err: error,
+      eventId,
+      msg: 'Sending an order email failed. The order is unaffected — see the email-messages record.',
+    })
+    reportFailure(error, 'stripe.webhook.email', { eventId })
   }
 }

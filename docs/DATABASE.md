@@ -21,23 +21,25 @@ second ORM and no hand-written DDL — plan §5.1b, and the reason the migration
 | Environment | Database | Schema arrives by | Push guard |
 |---|---|---|---|
 | Local | Neon **development** branch | Drizzle push (`pnpm dev`) | armed, and aimed — see **D-10** |
-| Preview | a non-production branch | committed migrations | cannot arm — `appEnv` is `preview` |
+| Preview | a Neon branch of its own — **not set up yet** (owner action, [`DEPLOYMENT.md`](DEPLOYMENT.md) §3 and §9) | committed migrations, once it exists | cannot arm — `appEnv` is `preview` |
 | Production | the production database | committed migrations, at build time | constant-folded to `false` in the build |
 
 **Why PostgreSQL 17 and not Neon's default 18**, and why the major version cannot be changed later:
 notes §1.7.2. Do not create a new Neon project on 18 without reading it.
 
-Production is **not provisioned yet** — no phase before deployment needs it, and provisioning it is
-the project owner's job, not this repository's. Nothing in the workflow below assumes it exists;
-§6 is what to do on the day it does.
+Production **is provisioned** and serves the deployed site, on the production branch's pooled
+endpoint ([`DEPLOYMENT.md`](DEPLOYMENT.md) §2). The release procedure (a backup branch, migration
+by the build, verification) is DEPLOYMENT.md §4, and §6 below is the migration side of it.
 
 ### The tables today
 
-**Ninety.** Nine belong to Payload's own machinery — `users`, `users_sessions`,
-`customers_sessions`, `payload_preferences`, `payload_preferences_rels`, `payload_locked_documents`,
-`payload_locked_documents_rels`, `payload_migrations`, `payload_kv` — and the rest are Phase 6's data
-model: twenty-two collections, **three** globals, and the array, block and relationship tables beneath
-them — seventeen of which arrived with the `homepage` global in Phase 10.
+**Ninety-three**, counted from the latest migration snapshot
+(`20260911_175019_phase_36_order_fulfilment_hold.json`). Nine belong to Payload's own machinery — `users`,
+`users_sessions`, `customers_sessions`, `payload_preferences`, `payload_preferences_rels`,
+`payload_locked_documents`, `payload_locked_documents_rels`, `payload_migrations`, `payload_kv` — and
+the rest are the data model: twenty-four collections (`src/payload/collections/`), **three** globals,
+and the array, block and relationship tables beneath them — seventeen of which arrived with the
+`homepage` global in Phase 10.
 
 Phase 5's fixture, `schema_probes`, is gone. Removing it was this project's first destructive
 migration, deliberately rehearsed on something worthless before the same shape of migration is ever
@@ -344,7 +346,7 @@ throughout `src/payload/collections/`.
 | Concern | Convention |
 |---|---|
 | **Index** | Any column that filters or sorts a list. `unique: true` implies one. Payload indexes `created_at`, `updated_at` and `deleted_at` for you |
-| **CHECK** | Only where application validation can be bypassed. One exists: `inventory_quantity >= 0`, because Phase 17's atomic decrement will be raw SQL. Added through `afterSchemaInit` — see below |
+| **CHECK** | Only where application validation can be bypassed. One exists: `inventory_quantity >= 0`, because Phase 17's atomic decrement is raw SQL (`lib/checkout/fulfil.ts`). Added through `afterSchemaInit` — see below |
 | **Unique, one column** | `unique: true`. For anything a human types twice — SKU, slug, external reference |
 | **Unique, several columns** | `indexes: [{ fields: [...], unique: true }]` on the collection |
 | **Foreign key** | A single non-polymorphic `relationship` writes a real `REFERENCES` column with **`ON DELETE SET NULL`** |
@@ -422,7 +424,7 @@ are defects; a partial index would have permitted both. Reasoning in full at the
 `src/payload/collections/ProductVariants.ts`.
 
 `afterSchemaInit` is used once, and for the constraint that genuinely has no other spelling:
-`CHECK (inventory_quantity >= 0)`. That one matters because Phase 17's decrement will be raw SQL past
+`CHECK (inventory_quantity >= 0)`. That one matters because Phase 17's decrement is raw SQL past
 every Payload validator, and negative stock is a lost write rather than an oversell. `drizzle-orm` is
 reached through `@payloadcms/db-postgres/drizzle/pg-core`, which the adapter re-exports, so it costs no
 new direct dependency — and drizzle-kit does carry the CHECK into the snapshot, so later migrations

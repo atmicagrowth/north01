@@ -12,6 +12,7 @@ import * as migration_20260908_071034_phase_18_order_system from './20260908_071
 import * as migration_20260909_053604_phase_19_email from './20260909_053604_phase_19_email';
 import * as migration_20260911_142556_cart_item_price_seen from './20260911_142556_cart_item_price_seen';
 import * as migration_20260911_164502_order_shipping_estimate from './20260911_164502_order_shipping_estimate';
+import * as migration_20260911_180257_phase_36_order_fulfilment_hold from './20260911_180257_phase_36_order_fulfilment_hold';
 
 export const migrations = [
   {
@@ -82,6 +83,11 @@ export const migrations = [
   {
     up: migration_20260911_164502_order_shipping_estimate.up,
     down: migration_20260911_164502_order_shipping_estimate.down,
-    name: '20260911_164502_order_shipping_estimate'
+    name: '20260911_164502_order_shipping_estimate',
+  },
+  {
+    up: migration_20260911_180257_phase_36_order_fulfilment_hold.up,
+    down: migration_20260911_180257_phase_36_order_fulfilment_hold.down,
+    name: '20260911_180257_phase_36_order_fulfilment_hold'
   },
 ];

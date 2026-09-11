@@ -1,35 +1,47 @@
 import 'server-only'
 
-import { decideDeferredTax, type TaxRequest, type TaxResult } from './rules'
+import { isStripeConfigured, stripeClient } from '@/lib/checkout/stripe'
+import { reportFailure } from '@/lib/observability/report'
+
+import {
+  decideDeferredTax,
+  PENDING_TAX,
+  stripeTaxCalculationParams,
+  taxResultFromStripeCalculation,
+  type TaxRequest,
+  type TaxResult,
+} from './rules'
 
 /**
- * **Plan §16.1c's `TaxProvider` interface**, and the implementation this phase can honestly ship.
+ * **Plan §16.1c's `TaxProvider` interface**, and the two implementations behind it.
  *
  * The interface is the deliverable, and its whole purpose is that nothing above it knows which engine
  * answered: *"the checkout calculation layer should not depend directly on Stripe-specific data
  * structures."*
  *
- * ### Why the implementation is a deferral rather than Stripe Tax — DEV-61
+ * ### Stripe Tax, since Phase 36 — audit R1-02, closing DEV-61
  *
- * §16.1c says Stripe Tax *"may be"* the initial provider. It cannot be this one, for two reasons that
- * are both about phase order rather than preference:
+ * Phase 16 shipped a deferral here and said Phase 17 would swap in a real provider "in a single
+ * line". Phase 17 never did, and the deferral answers `unavailable` for every real address — so every
+ * checkout was refused at the tax step whether or not Stripe keys existed. `stripeTaxProvider` is the
+ * swap: `stripe.tax.calculations.create` with the discounted goods, the delivery charge and the
+ * shipping address. The request and the mapping back are pure functions in `rules.ts`, unit-tested
+ * against fixtures; this module only makes the call.
  *
- * 1. **Stripe is Phase 17's dependency.** `AGENTS.md`: *"Do not build a later phase's feature early,
- *    and do not install its dependencies early."* The SDK, the secret key and the webhook signature
- *    all arrive together, and pulling one of them forward to compute a number nothing yet charges
- *    would be exactly that.
- * 2. **There is nothing to calculate.** Tax is a function of a destination, and no surface in this
- *    application collects one — the address form is checkout's, which is Phase 17. Every request this
- *    provider can currently receive has `address: null`.
+ * **Not Checkout's `automatic_tax`.** That would have Stripe add tax on its own page, after our total
+ * was computed — so the order would record one total and the customer would be charged another,
+ * which is exactly what DEV-63's single line item exists to prevent. The tax is calculated here,
+ * added into our total, and charged as part of it.
  *
- * So the provider answers `pending_address` and says so. That is not a stub: it is the correct answer
- * to every question the application is currently able to ask, and the day an address exists the same
- * call site gets a real number from a different implementation without changing.
+ * **Five seconds, no retries.** The customer is waiting on the last click; the client's default of
+ * two network retries could hold them three times as long. A slow or failed answer is `unavailable`,
+ * and preflight says *"try again in a moment"* rather than guessing zero.
  *
- * **What it must never do is return `0`.** A tax amount of zero is a claim that no tax is owed, and a
- * checkout that acted on it would undercharge every order in a taxable jurisdiction. `amountMinor` is
- * `null` for both `pending_address` and `unavailable`, and the type makes the difference between
- * *unknown* and *none* impossible to lose.
+ * ### The deferral, still
+ *
+ * Without Stripe keys there is no engine to ask, and the deferral's honest answer — never `0` — stays
+ * what the application says. It is also the answer for a bag with no address yet, whichever provider
+ * is selected.
  */
 export type TaxProvider = {
   /** Identifies the implementation in logs and on an order. */
@@ -37,21 +49,41 @@ export type TaxProvider = {
   calculate(request: TaxRequest): Promise<TaxResult>
 }
 
-/**
- * The provider Phase 16 ships: it answers honestly and calculates nothing.
- *
- * The decision is in `rules.ts` rather than here, so `pnpm verify:shipping` can execute it: this
- * module's `server-only` guard is correct — a real provider holds an API key — and `server-only`
- * cannot resolve outside Next, which would otherwise make the one claim worth testing untestable.
- */
+/** The Phase 16 provider: it answers honestly and calculates nothing. */
 export const deferredTaxProvider: TaxProvider = {
   calculate: (request) => Promise.resolve(decideDeferredTax(request)),
   id: 'deferred',
 }
 
-/**
- * The provider this application uses.
- *
- * One export, so Phase 17 swaps the implementation in a single line and every caller keeps compiling.
- */
-export const taxProvider: TaxProvider = deferredTaxProvider
+const STRIPE_TAX_TIMEOUT_MS = 5_000
+
+/** Stripe Tax. Requires Stripe Tax to be enabled on the account — see `TODO.md` §4. */
+export const stripeTaxProvider: TaxProvider = {
+  async calculate(request) {
+    const params = stripeTaxCalculationParams(request)
+
+    if (params === null) {
+      return PENDING_TAX
+    }
+
+    try {
+      const calculation = await stripeClient().tax.calculations.create(params, {
+        maxNetworkRetries: 0,
+        timeout: STRIPE_TAX_TIMEOUT_MS,
+      })
+
+      return taxResultFromStripeCalculation({ calculation })
+    } catch (error) {
+      console.error('Stripe Tax could not calculate tax for a checkout.', error)
+      reportFailure(error, 'tax.stripe', { country: params.customer_details.address.country })
+
+      return taxResultFromStripeCalculation({ error })
+    }
+  },
+  id: 'stripe',
+}
+
+/** The provider this application uses: Stripe Tax when Stripe is configured, the deferral otherwise. */
+export const taxProvider: TaxProvider = isStripeConfigured()
+  ? stripeTaxProvider
+  : deferredTaxProvider

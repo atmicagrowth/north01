@@ -58,7 +58,23 @@ import { registerPostHog } from '@/lib/analytics/track'
  * `lazyOnload`, and PostHog (roughly 60 KB gzipped) is imported after the `load` event, once the
  * browser is idle. Events sent before either is ready are queued — `dataLayer` for GA, and a
  * dropped `trackEvent` for PostHog, which is the documented cost of never blocking a render on it.
+ *
+ * ### A blocked vendor is a non-event too
+ *
+ * Content blockers routinely fail the dynamic imports and stub or break `gtag`. Every import here
+ * ends in `.catch(() => {})` and every `gtag` call is wrapped, so a failed analytics script can
+ * never throw into the page (Phase 36, audit R1-30). Nothing is reported: a blocked tracker is the
+ * customer's choice, not a fault.
  */
+
+/** Calls `window.gtag` if it exists, swallowing anything a broken or stubbed copy throws. */
+function safeGtag(...args: unknown[]): void {
+  try {
+    ;(window.gtag as ((...rest: unknown[]) => void) | undefined)?.(...args)
+  } catch {
+    /* A tracker that throws is a tracker that is not running. */
+  }
+}
 
 /** Routes whose URL carries a credential. Neither vendor is told about them. */
 const PRIVATE_PATHS = ['/reset-password'] as const
@@ -119,8 +135,8 @@ export function Analytics() {
     let cancelled = false
 
     const cancelIdle = whenIdle(() => {
-      void Promise.all([import('posthog-js'), import('@/lib/observability/redact')]).then(
-        ([{ default: posthog }, { redactUrl }]) => {
+      void Promise.all([import('posthog-js'), import('@/lib/observability/redact')])
+        .then(([{ default: posthog }, { redactUrl }]) => {
           if (cancelled) {
             return
           }
@@ -175,9 +191,15 @@ export function Analytics() {
             },
           })
 
-          registerPostHog((event, properties) => posthog.capture(event, properties))
-        },
-      )
+          registerPostHog((event, properties) => {
+            try {
+              posthog.capture(event, properties)
+            } catch {
+              /* See "A blocked vendor is a non-event too". */
+            }
+          })
+        })
+        .catch(() => {})
     })
 
     return () => {
@@ -214,21 +236,23 @@ export function Analytics() {
 
     if (!gaConfigured) {
       gaConfigured = true
-      window.gtag('js', new Date())
-      window.gtag('config', measurementId, { send_page_view: false })
+      safeGtag('js', new Date())
+      safeGtag('config', measurementId, { send_page_view: false })
     }
 
-    void import('@/lib/observability/redact').then(({ redactUrl }) => {
-      if (cancelled) {
-        return
-      }
+    void import('@/lib/observability/redact')
+      .then(({ redactUrl }) => {
+        if (cancelled) {
+          return
+        }
 
-      const location = redactUrl(window.location.href)
+        const location = redactUrl(window.location.href)
 
-      /* `set`, so anything GA sends on its own from this page carries the redacted URL too. */
-      window.gtag?.('set', { page_location: location })
-      window.gtag?.('event', 'page_view', { page_location: location })
-    })
+        /* `set`, so anything GA sends on its own from this page carries the redacted URL too. */
+        safeGtag('set', { page_location: location })
+        safeGtag('event', 'page_view', { page_location: location })
+      })
+      .catch(() => {})
 
     return () => {
       cancelled = true

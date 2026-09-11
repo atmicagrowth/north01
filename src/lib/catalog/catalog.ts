@@ -5,6 +5,7 @@ import { cache } from 'react'
 import type { Payload, Where } from 'payload'
 
 import { appEnv, integrationStatus, serverEnv } from '@/lib/env.server'
+import { reportFailure } from '@/lib/observability/report'
 import { getPayloadClient } from '@/lib/payload'
 import { documentSeo, type DocumentSeo } from '@/lib/seo/document'
 import type { Media } from '@/payload-types'
@@ -162,6 +163,7 @@ const DEFAULT_SETTINGS: CatalogSettings = {
 async function readSettings(payload: Payload): Promise<CatalogSettings> {
   const settings = await payload.findGlobal({ slug: 'site-settings', depth: 0 }).catch((error) => {
     console.error('[catalog] Site settings could not be read; using defaults.', error)
+    reportFailure(error, 'catalog', { read: 'site-settings' })
 
     return null
   })
@@ -362,6 +364,7 @@ const getVocabulary = cache(async (): Promise<CatalogVocabulary> => {
     return await loadVocabulary()
   } catch (error) {
     console.error('[catalog] The filter vocabulary could not be read; offering no filters.', error)
+    reportFailure(error, 'catalog', { read: 'vocabulary' })
 
     return {
       categories: [],
@@ -585,6 +588,7 @@ export const getCatalog = cache(
         '[catalog] The search index could not be queried; degrading the filters.',
         error,
       )
+      reportFailure(error, 'search', { read: 'listing' })
 
       return {
         ignored,
@@ -676,6 +680,7 @@ export const getShopCategory = cache(async (slug: string): Promise<ShopCategory 
      * exists has been deleted.
      */
     console.error(`[catalog] The category "${slug}" could not be read.`, error)
+    reportFailure(error, 'catalog', { read: 'category', slug })
 
     throw error
   }
@@ -736,6 +741,7 @@ export const getSearchSuggestions = cache(async (term: string): Promise<SearchSu
       `[catalog] Suggestions could not be read (${failure}). ` + SEARCH_FAILURE_HINT[failure],
       error,
     )
+    reportFailure(error, 'search', { failure, read: 'suggestions' })
 
     return { engine: 'unavailable', products: [] }
   }
@@ -765,6 +771,7 @@ export const getPopularSearches = cache(async (): Promise<string[]> => {
     return await loadPopularSearches()
   } catch (error) {
     console.error('[catalog] Popular searches could not be read; omitting the section.', error)
+    reportFailure(error, 'search', { read: 'popular-searches' })
 
     return []
   }
@@ -809,6 +816,7 @@ const loadPopularSearches = unstable_cache(
       return terms.filter((term) => (counts.get(term) ?? 0) > 0)
     } catch (error) {
       console.error('[catalog] Popular searches could not be validated; omitting them.', error)
+      reportFailure(error, 'search', { read: 'popular-search-counts' })
 
       return []
     }
@@ -862,6 +870,7 @@ export const getCuratedProducts = cache(async (limit = 4): Promise<ProductCard[]
     return await read({ and: publishedProductWhere(now) })
   } catch (error) {
     console.error('[catalog] Curated products could not be read; omitting them.', error)
+    reportFailure(error, 'catalog', { read: 'curated-products' })
 
     return []
   }

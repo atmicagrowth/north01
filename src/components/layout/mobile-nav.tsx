@@ -96,10 +96,15 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
                     </AccordionTrigger>
 
                     <AccordionContent className="pb-m">
-                      <ul className="flex flex-col gap-s pl-3 pt-1">
+                      {/* Links are 44px tall (WCAG 2.5.8 comfortably); the gaps shrank to match. */}
+                      <ul className="flex flex-col pl-3">
                         <li>
                           <DrawerClose asChild>
-                            <Link href={item.href} variant="quiet" className="text-body-sm">
+                            <Link
+                              href={item.href}
+                              variant="quiet"
+                              className="flex min-h-11 items-center text-body-sm"
+                            >
                               All {item.label}
                             </Link>
                           </DrawerClose>
@@ -113,7 +118,7 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
                               </p>
                             ) : null}
 
-                            <ul className="mt-s flex flex-col gap-s">
+                            <ul className="flex flex-col">
                               {column.links.map((link, linkIndex) => (
                                 <li key={linkIndex}>
                                   <DrawerClose asChild>
@@ -121,7 +126,7 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
                                       href={link.href}
                                       variant="quiet"
                                       external={link.external}
-                                      className="text-body-sm"
+                                      className="flex min-h-11 items-center text-body-sm"
                                     >
                                       {link.label}
                                       {link.external ? <NewTabHint /> : null}
@@ -164,11 +169,15 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
 
         {/* Structure doc §3: "Account and wishlist remain accessible from the mobile navigation" —
             they are not in the mobile header bar, so they live here. */}
-        <ul className="flex flex-col gap-s px-m pb-l">
+        <ul className="flex flex-col px-m pb-l">
           {[utilityNav.account, utilityNav.wishlist].map((entry) => (
             <li key={entry.href}>
               <DrawerClose asChild>
-                <Link href={entry.href} variant="quiet" className="text-body-sm">
+                <Link
+                  href={entry.href}
+                  variant="quiet"
+                  className="flex min-h-11 items-center text-body-sm"
+                >
                   {entry.label}
                 </Link>
               </DrawerClose>

@@ -306,6 +306,8 @@ Use these labels consistently across UI, CMS slugs, route names, docs, and code 
 Primary navigation labels:
 **NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT**
 
+> *As built:* five items, without ABOUT, which has no page — DEV-07 as amended in Phase 30 (`NORTH01_Implementation_Notes_and_Deviations.md` §2).
+
 Do not add another top-level navigation category merely because a backend collection exists.
 
 # REQUIRED REFERENCE DOCUMENTATION — CONSULT BEFORE IMPLEMENTATION
@@ -1317,7 +1319,7 @@ Desktop navigation:
 - Collections.
 - Edit.
 - Lookbook.
-- About.
+- About. *(As built: withdrawn — DEV-07 as amended in Phase 30.)*
 
 Utility actions:
 

@@ -471,7 +471,7 @@ check(
 
 const payload: Payload = await getPayload({ config })
 
-const created: { collection: 'promotions'; id: number }[] = []
+const created: { collection: 'carts' | 'customers' | 'orders' | 'promotions'; id: number }[] = []
 
 const cleanup = async () => {
   for (const doc of [...created].reverse()) {
@@ -581,6 +581,92 @@ try {
     duplicate === null,
     duplicate === null ? '' : 'a duplicate was accepted',
   )
+
+  /* =============================================================================================
+   * H — R1-07: a customer's in-flight checkouts count toward the per-customer limit
+   * ========================================================================================== */
+  {
+    const { countCustomerUses } = await import('../src/lib/promotions/read')
+
+    const customer = await payload.create({
+      collection: 'customers',
+      data: {
+        email: `promo-uses-${suffix}@example.test`,
+        firstName: 'Promo',
+        lastName: 'Fixture',
+        password: 'Correct-Horse-Battery-9',
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'customers', id: customer.id })
+
+    const cart = async (label: string, status: 'active' | 'converted') => {
+      const row = await payload.create({
+        collection: 'carts',
+        data: {
+          currency: 'USD',
+          customer: customer.id,
+          expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+          status,
+          token: `promo-cart-${label}-${suffix}`,
+        } as never,
+        overrideAccess: true,
+      })
+
+      created.push({ collection: 'carts', id: row.id })
+
+      return row
+    }
+
+    const order = async (label: string, paymentStatus: string, cartId: null | number) => {
+      const row = await payload.create({
+        collection: 'orders',
+        data: {
+          ...(cartId === null ? {} : { cart: cartId }),
+          currency: 'USD',
+          customer: customer.id,
+          discountMinor: 0,
+          email: `promo-uses-${suffix}@example.test`,
+          fulfillmentStatus: 'unfulfilled',
+          orderNumber: `N1-PROMO-${label}-${suffix}`,
+          paymentStatus,
+          promotion: doc.id,
+          shippingMinor: 0,
+          subtotalMinor: 5_000,
+          taxMinor: 0,
+          totalMinor: 5_000,
+        } as never,
+        overrideAccess: true,
+      })
+
+      created.push({ collection: 'orders', id: row.id })
+
+      return row
+    }
+
+    const current = await cart('current', 'active')
+    const earlier = await cart('earlier', 'converted')
+
+    await order('paid', 'paid', null)
+    await order('elsewhere', 'pending_payment', earlier.id)
+    await order('current', 'pending_payment', current.id)
+    await order('abandoned', 'checkout_started', null)
+
+    const uses = await countCustomerUses(payload, doc.id, customer.id)
+
+    check(
+      'H: **R1-07 a paid order and an in-flight checkout on another bag both count** — 2',
+      uses === 2,
+      String(uses),
+    )
+
+    check(
+      'H: …the checkout for the bag being paid now does not count against itself',
+      uses !== 3,
+      String(uses),
+    )
+  }
 } finally {
   await cleanup()
 }

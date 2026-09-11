@@ -142,13 +142,17 @@ export function CartLineRow({
           </p>
         ) : null}
 
-        {buyable && reduced ? (
+        {/*
+          Stock and the per-order limit are different reasons, and saying "that is all we have"
+          about a limit is a false claim about the warehouse — `limitedByPolicy` tells them apart.
+        */}
+        {buyable && (reduced || atCeiling) ? (
           <p className="font-sans text-meta text-foreground-muted">
-            {`You asked for ${line.quantity}. Only ${line.maxQuantity} left, so that is what this line is for.`}
-          </p>
-        ) : buyable && atCeiling ? (
-          <p className="font-sans text-meta text-foreground-muted">
-            {`That is all we have — ${line.maxQuantity} in stock.`}
+            {line.limitedByPolicy
+              ? `${reduced ? `You asked for ${line.quantity}. ` : ''}You can have up to ${line.maxQuantity} of this per order.`
+              : reduced
+                ? `You asked for ${line.quantity}. Only ${line.maxQuantity} left, so that is what this line is for.`
+                : `That is all we have — ${line.maxQuantity} in stock.`}
           </p>
         ) : null}
       </div>

@@ -69,7 +69,7 @@ export default async function GlobalNotFound() {
         <ShellOverlayProvider>
           <SiteHeader />
 
-          <main id="main-content">
+          <main className="focus:outline-none" id="main-content" tabIndex={-1}>
             <PageContainer width="narrow">
               <Section spacing="loose" className="flex flex-col items-start gap-l">
                 <PageTitle eyebrow="404" size="display-l">

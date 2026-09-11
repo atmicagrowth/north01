@@ -37,10 +37,35 @@ import { parseAllowlist } from './rules'
  * Resend's SDK already reports provider errors in-band as `{ data, error }`, so the shape matches;
  * the `catch` is for the layer beneath it — DNS, TLS, a socket closing mid-request — which throws.
  */
+/**
+ * **How long one send may take** — Phase 36, audit R1-21.
+ *
+ * Resend's SDK sets no timeout of its own, so a provider that accepted the connection and never
+ * answered held the caller for as long as the platform allowed — and the callers include the Stripe
+ * webhook, whose slow answer Stripe treats as a failure and retries. Eight seconds is several times
+ * a healthy send. The timeout is a failure like any other: the row stays retryable, and the
+ * idempotency key below makes a retry of a send that did land after all a no-op at Resend.
+ */
+const SEND_TIMEOUT_MS = 8_000
+
 export function createEmailTransport({ apiKey }: { apiKey: string }): Transport {
   const client = new Resend(apiKey)
 
   return async (message) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const timedOut = new Promise<{ error: string; ok: false }>((resolve) => {
+      timer = setTimeout(() => resolve({ error: 'timeout', ok: false }), SEND_TIMEOUT_MS)
+    })
+
+    try {
+      return await Promise.race([send(message), timedOut])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  async function send(message: Parameters<Transport>[0]): ReturnType<Transport> {
     try {
       const { data, error } = await client.emails.send(
         {

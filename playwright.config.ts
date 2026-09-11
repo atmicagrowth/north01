@@ -3,7 +3,10 @@ import { defineConfig, devices } from '@playwright/test'
 /**
  * **Plan §27.1c–§27.1e — Playwright.**
  *
- * ### These specs are written and have never run, and that is stated rather than implied
+ * ### Why this suite went unrun until Phase 35
+ *
+ * *Status: first run in Phase 35 — 43 passed, 0 failed, 14 skipped, against a local production
+ * build of the development database (`docs/TESTING.md`). What follows is why it had not run before.*
  *
  * An end-to-end test needs a running application, and a running application needs a database it may
  * write to. This project has one reachable database and it is **production** — see `TODO.md` §1.

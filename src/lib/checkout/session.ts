@@ -1,7 +1,10 @@
 import 'server-only'
 
+import { sql } from '@payloadcms/db-postgres'
+
 import { getPayloadClient } from '@/lib/payload'
 import { siteUrl } from '@/lib/env.server'
+import { reportFailure } from '@/lib/observability/report'
 
 import type { PreflightResult } from './preflight'
 import { stripeClient } from './stripe'
@@ -15,31 +18,40 @@ import { stripeClient } from './stripe'
  *
  * ### Every amount here came from preflight
  *
- * The line items are built from the **order snapshot's** numbers, which preflight wrote from the
+ * The line item is built from the **order snapshot's** numbers, which preflight wrote from the
  * database moments earlier. Nothing in this function accepts an amount, and the only values that
  * cross from the browser — an email and an address — were validated before this was called and are
  * sent to Stripe as *display* data rather than as anything that decides a price.
  *
- * ### Why the whole bag is one line item and not several
+ * ### Why the whole bag is one line item and not several — DEV-63
  *
- * Stripe would happily take a line per product, and it would look tidier on their receipt. It would
- * also be a **second place the total is computed**: Stripe sums the line items, and if our subtotal
- * and their sum ever disagreed — a rounding difference on a percentage discount, a shipping amount
- * allocated across lines — the customer would be charged Stripe's answer while the order recorded
- * ours. One line item priced at the order's own `totalMinor` makes that disagreement impossible to
- * express.
- *
- * The itemisation the customer needs is on the bag page and on the confirmation, both rendered from
- * `order-items`, which is the record. Stripe's page is where they type a card number.
+ * A line per product would make Stripe a **second place the total is computed**. One line item priced
+ * at the order's own `totalMinor` makes a disagreement between the two impossible to express.
  *
  * ### The metadata is the webhook's way home
  *
- * `orderId` is what §17.1b means by *"internal references … so webhook processing can identify the
- * application order/cart safely"*. It arrives back inside a signed payload, so it cannot be forged —
- * but it is still *parsed* rather than trusted, because a signature proves who sent an event and not
- * that its contents mean what this application expects. See `parseOrderReference`.
+ * `orderId` arrives back inside a signed payload, so it cannot be forged — but it is still *parsed*
+ * rather than trusted. See `parseOrderReference`. Since Phase 36 the webhook also checks the event's
+ * session id, amount and currency against the order, so the reference alone no longer pays anything.
+ *
+ * ### Phase 36: a short-lived session, recorded by a claim — audit R1-01
+ *
+ * Sessions used to live for Stripe's default 24 hours, so an abandoned attempt stayed payable long
+ * after the bag had changed. They now expire after about half an hour (`expires_at`), which is
+ * Stripe's minimum. And the order is moved to `pending_payment` by a **conditional** statement rather
+ * than an unconditional write, so session creation can no longer overwrite a status the webhook
+ * set in the meantime, or a session id another attempt recorded first.
  */
 export type SessionResult = { ok: false; reason: 'stripeFailed' } | { ok: true; url: string }
+
+/**
+ * **How long a Checkout Session stays payable.**
+ *
+ * Stripe accepts 30 minutes to 24 hours, measured from **its** creation time. This timestamp is taken
+ * before the request leaves, so exactly thirty minutes would land a little under Stripe's floor and
+ * be refused; the extra minute absorbs request latency and clock skew.
+ */
+const CHECKOUT_SESSION_LIFETIME_SECONDS = 31 * 60
 
 export async function createCheckoutSession(
   preflight: Extract<PreflightResult, { ok: true }>,
@@ -55,10 +67,8 @@ export async function createCheckoutSession(
        * who bought it. Preflight already validated it.
        */
       customer_email: preflight.contact.email,
-      /*
-       * A single line item priced at the server's own total — see the docblock. `unit_amount` is in
-       * minor units, which is what every amount in this project already is.
-       */
+      expires_at: Math.floor(Date.now() / 1000) + CHECKOUT_SESSION_LIFETIME_SECONDS,
+      /* A single line item priced at the server's own total — see the docblock. */
       line_items: [
         {
           price_data: {
@@ -96,20 +106,42 @@ export async function createCheckoutSession(
         orderId: preflight.orderId,
       })
 
+      await stripe.checkout.sessions.expire(session.id).catch(() => undefined)
+
       return { ok: false, reason: 'stripeFailed' }
     }
 
     /*
-     * Recorded before the redirect, so a webhook that arrives while the customer is still typing can
-     * be matched to this attempt. `stripeCheckoutSessionId` is unique — two orders cannot claim the
-     * same payment.
+     * **Recorded by a claim, before the redirect**, so a webhook that arrives while the customer is
+     * still typing can be matched to this attempt.
+     *
+     * Only an order preflight has just prepared — `checkout_started`, with no session recorded
+     * (preflight clears a reused order's old one) — can take this session. Zero rows means something
+     * else got there first: a concurrent attempt for the same bag recorded its own session, or an
+     * event moved the order. Then this session belongs to nothing, so it is expired before anyone can
+     * pay it, and the customer is asked to try again.
+     *
+     * `stripeCheckoutSessionId` is also unique — two orders cannot claim the same payment.
      */
-    await payload.update({
-      collection: 'orders',
-      data: { paymentStatus: 'pending_payment', stripeCheckoutSessionId: session.id },
-      id: preflight.orderId,
-      overrideAccess: true,
-    })
+    const claim = await payload.db.drizzle.execute(
+      sql`UPDATE "orders"
+          SET "payment_status" = 'pending_payment',
+              "stripe_checkout_session_id" = ${session.id}
+          WHERE "id" = ${preflight.orderId}
+            AND "payment_status" = 'checkout_started'
+            AND "stripe_checkout_session_id" IS NULL`,
+    )
+
+    if ((claim.rowCount ?? 0) === 0) {
+      payload.logger.error({
+        msg: 'A Checkout Session was created for an order that had moved on; it was expired unused.',
+        orderId: preflight.orderId,
+      })
+
+      await stripe.checkout.sessions.expire(session.id).catch(() => undefined)
+
+      return { ok: false, reason: 'stripeFailed' }
+    }
 
     return { ok: true, url: session.url }
   } catch (error) {
@@ -123,6 +155,7 @@ export async function createCheckoutSession(
       msg: 'Creating a Stripe Checkout Session failed.',
       orderId: preflight.orderId,
     })
+    reportFailure(error, 'checkout.createSession', { orderId: preflight.orderId })
 
     return { ok: false, reason: 'stripeFailed' }
   }

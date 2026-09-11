@@ -3,7 +3,10 @@
  * product → cart, **2** search → product → cart, **3** filter → product, **4** quick view → add to
  * cart, **5** guest cart → login → cart merge, **8** account → orders, and **9** wishlist.
  *
- * ### This suite has never been executed, and that is a fact about the environment rather than a hedge
+ * ### Why this suite went unrun until Phase 35
+ *
+ * *Status: first run in Phase 35 — 43 passed, 0 failed, 14 skipped, against a local production
+ * build of the development database (`docs/TESTING.md`). What follows is why it had not run before.*
  *
  * Every flow below writes. Flows 1, 2, 3 and 5 create carts and cart items; flows 5, 8 and 9 create a
  * **customer** through the real registration form; flow 9 writes a wishlist row. The only database

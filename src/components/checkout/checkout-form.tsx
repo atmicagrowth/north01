@@ -57,6 +57,18 @@ export function CheckoutForm({
 
   const label = 'font-sans text-meta uppercase text-foreground-muted'
 
+  /*
+   * When the server's refusal is about the address or the delivery method (`state.field`), the
+   * message is tied to what it is about: the address inputs get `aria-invalid` and
+   * `aria-describedby`; the delivery fieldset gets `aria-describedby` only, because `aria-invalid`
+   * is not a supported state on a radio.
+   */
+  const errorId = `${id}-error`
+  const flag = (field: 'address' | 'method') =>
+    state.error && state.field === field
+      ? { 'aria-describedby': errorId, 'aria-invalid': true as const }
+      : {}
+
   return (
     <form action={action} className="flex flex-col gap-l" data-slot="checkout-form">
       <section className="flex flex-col gap-s">
@@ -113,6 +125,7 @@ export function CheckoutForm({
             Address
           </label>
           <Input
+            {...flag('address')}
             autoComplete="address-line1"
             id={`${id}-line1`}
             name="line1"
@@ -139,6 +152,7 @@ export function CheckoutForm({
               City
             </label>
             <Input
+              {...flag('address')}
               autoComplete="address-level2"
               id={`${id}-city`}
               name="city"
@@ -164,6 +178,7 @@ export function CheckoutForm({
               Postcode
             </label>
             <Input
+              {...flag('address')}
               autoComplete="postal-code"
               id={`${id}-postal`}
               name="postalCode"
@@ -184,6 +199,7 @@ export function CheckoutForm({
               delivery for the wrong place. The placeholder says what is wanted.
             */}
             <Input
+              {...flag('address')}
               autoComplete="country"
               className="uppercase"
               id={`${id}-country`}
@@ -209,7 +225,10 @@ export function CheckoutForm({
         </div>
       </section>
 
-      <fieldset className="flex flex-col gap-s">
+      <fieldset
+        aria-describedby={flag('method')['aria-describedby']}
+        className="flex flex-col gap-s"
+      >
         <legend className="mb-s font-sans text-heading-s text-foreground">Delivery</legend>
 
         <div className="flex flex-col gap-2">
@@ -242,7 +261,7 @@ export function CheckoutForm({
       </fieldset>
 
       {state.error ? (
-        <p className="font-sans text-body-sm text-error" role="alert">
+        <p className="font-sans text-body-sm text-error" id={errorId} role="alert">
           {state.error}
         </p>
       ) : null}

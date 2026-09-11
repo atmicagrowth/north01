@@ -16,11 +16,20 @@
  */
 
 /**
- * 25 MB.
+ * 4 MB — set by the platform, not by taste (Phase 36, audit R3-16).
  *
- * Sized for the real input: a full-frame camera JPEG at maximum quality is 15–25 MB, and a short
- * product video comfortably exceeds anything smaller. Below this, an editor with a legitimate file is
- * blocked; far above it, a single upload can exhaust a serverless function's memory.
+ * This was 25 MB, sized for a full-frame camera JPEG, and it promised something production could not
+ * deliver. **Vercel Functions reject a request body over 4.5 MB** with a 413 of their own, before
+ * Payload runs — so `responseOnLimit` below never fired and the editor saw a bare failure. Uploads
+ * pass through that function because the Cloudinary adapter (`payload/storage/cloudinary.ts`) streams
+ * server-side and there are no client-direct uploads. Every file between 4.5 and 25 MB was therefore
+ * refused in production while the admin panel said it was allowed.
+ *
+ * 4 MB (4,194,304 bytes) leaves room under 4.5 MB for the multipart boundaries and the document's own
+ * fields, which travel in the same body. It is enough for a web-ready photograph and a very short
+ * clip; a camera original or a longer video has to be exported smaller first, and the editor-facing
+ * description in `Media.ts` says so. Raising it means uploading directly from the browser to
+ * Cloudinary, which is a feature this project has not built — not a bigger number here.
  *
  * **This number is worthless without `abortOnLimit`.** Payload passes these options straight to
  * Busboy, whose behaviour on exceeding a limit is to *truncate the stream and carry on*: the first N
@@ -30,10 +39,10 @@
  * the editor is told what happened rather than shown a bare status code.
  *
  * **It is also a memory budget, not just a policy.** Payload's `useTempFiles` defaults to `false`, so
- * an upload is buffered whole in RAM before it is written anywhere. 25 MB is the per-request ceiling
- * that choice implies, which is affordable; a number several times larger would not be.
+ * an upload is buffered whole in RAM before it is written anywhere. The limit is the per-request
+ * ceiling that choice implies.
  */
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 
 /**
  * 12,000 pixels on either side.

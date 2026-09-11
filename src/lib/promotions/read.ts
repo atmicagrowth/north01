@@ -121,12 +121,19 @@ export async function findPromotionByCode(
 }
 
 /**
- * How many times this customer has already redeemed this code.
+ * How many times this customer has already redeemed this code — or is redeeming it right now.
  *
- * Counted from **paid** orders only. An order that started checkout and was abandoned has not used a
- * code — `Promotions.ts` puts the increment of `timesUsed` inside Phase 17's payment transaction for
- * the same reason — and a refunded order is not a paid one, which is the case a stored counter gets
- * wrong.
+ * Counted from **paid** orders, and (Phase 36, audit R1-07) from **`pending_payment`** orders too: a
+ * customer who has been sent to Stripe with the code is using it, and counting only paid orders let
+ * one customer open several checkouts, each validated at zero uses, and pay for all of them. An order
+ * that started checkout and never reached Stripe has not used a code, and a refunded order is not a
+ * paid one — the case a stored counter gets wrong.
+ *
+ * **Excluding the current attempt.** The customer's own in-flight order for the bag they are looking
+ * at is `pending_payment` too, and counting it would tell them they had used the code they are
+ * trying to finish paying with. That order belongs to their *active* cart — one order per cart,
+ * `checkout/preflight.ts` — so pending orders whose cart is still active are not counted. A pending
+ * order on any other cart is a different checkout that can still be paid, and is.
  */
 export async function countCustomerUses(
   payload: Payload,
@@ -137,6 +144,19 @@ export async function countCustomerUses(
     return 0
   }
 
+  const { docs: activeCarts } = await payload.find({
+    collection: 'carts',
+    depth: 0,
+    limit: 50,
+    overrideAccess: true,
+    pagination: false,
+    where: {
+      and: [{ customer: { equals: customerId } }, { status: { equals: 'active' } }],
+    },
+  })
+
+  const activeCartIds = activeCarts.map((cart) => cart.id)
+
   const { totalDocs } = await payload.find({
     collection: 'orders',
     depth: 0,
@@ -146,7 +166,23 @@ export async function countCustomerUses(
       and: [
         { promotion: { equals: promotionId } },
         { customer: { equals: customerId } },
-        { paymentStatus: { equals: 'paid' } },
+        {
+          or: [
+            { paymentStatus: { equals: 'paid' } },
+            {
+              and: [
+                { paymentStatus: { equals: 'pending_payment' } },
+                ...(activeCartIds.length > 0
+                  ? [
+                      {
+                        or: [{ cart: { not_in: activeCartIds } }, { cart: { exists: false } }],
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          ],
+        },
       ],
     },
   })

@@ -65,6 +65,18 @@ describe('confirmationCopy — one sentence per payment status', () => {
     }
   })
 
+  it('confirms the payment of an order held for a stock shortfall without promising it is on its way', () => {
+    const held = confirmationCopy('paid', { onHold: true })
+
+    expect(held.title).toBe('Thank you')
+    expect(held.body).toMatch(/payment has been confirmed/i)
+    expect(held.body).toMatch(/sold out/i)
+    expect(held.body).not.toMatch(/is with us|on its way/i)
+    expect(confirmationCopy('paid').body).toBe(
+      'Your payment has been confirmed and your order is with us.',
+    )
+  })
+
   it('gives every status its own label, so the summary row cannot contradict the heading', () => {
     const labels = new Set(ALL.map((status) => confirmationCopy(status).statusLabel))
 

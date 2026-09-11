@@ -331,7 +331,7 @@ describe('the four honest states of a tax amount', () => {
 
 describe('what the shop says while tax is unknown', () => {
   it('defers rather than stating an amount, so no zero is ever promised', () => {
-    expect(TAX_COPY.pending).toBe('Taxes are calculated at checkout.')
+    expect(TAX_COPY.pending).toBe('Tax is calculated from your delivery address.')
     // A total that looks final while tax is unknown is the copy equivalent of a dead control.
     expect(TAX_COPY.pending).not.toMatch(/0\.00|no tax|free/i)
   })

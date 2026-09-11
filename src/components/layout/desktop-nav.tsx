@@ -180,6 +180,14 @@ export function DesktopNav({ items, className }: { items: ShellNavItem[]; classN
         publishes the measured height as a custom property; the transition is on `height` alone, so
         one panel becoming another is a settle rather than a jump.
       */}
+      {/*
+        **A known axe finding, and why it stays.** While a panel is open, Radix renders a focus
+        proxy beside each open trigger: a VisuallyHidden span with `aria-hidden` AND `tabIndex={0}`
+        (`@radix-ui/react-navigation-menu` dist/index.mjs, the `FocusProxy` in `NavigationMenuItem`).
+        axe's `aria-hidden-focus` flags exactly that pairing. The proxy never keeps focus: its
+        `onFocus` forwards Tab into the viewport content (or back out), so keyboard and screen-reader
+        order is correct. Patching it would mean forking the primitive. Phase 36, R2-18.
+      */}
       <div className="absolute left-0 top-full w-full">
         <NavigationMenu.Viewport
           className={cn(

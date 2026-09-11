@@ -52,6 +52,8 @@ export type ConfirmationLine = {
 
 export type ConfirmationView = {
   currency: CurrencyCode
+  /** Paid, but the stock was not there (Phase 36, R3-19) — pass to `confirmationCopy` as `onHold`. */
+  fulfilmentHold: boolean
   lines: ConfirmationLine[]
   locale: string
   orderNumber: string
@@ -121,6 +123,7 @@ export async function readOrderForConfirmation(
 
   return {
     currency: order.currency,
+    fulfilmentHold: order.fulfilmentHold === 'stockShortfall',
     lines: items.map((item) => ({
       id: item.id,
       lineTotalMinor: item.lineTotalMinor,

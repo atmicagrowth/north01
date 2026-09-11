@@ -12,6 +12,7 @@ import { getCustomer } from '@/lib/auth/session'
 import { getCart, hasSignedOutBag } from '@/lib/cart/cart'
 import { CART_COPY } from '@/lib/cart/rules'
 import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
+import { isStripeConfigured } from '@/lib/checkout/stripe'
 import { privateMetadata } from '@/lib/seo/metadata'
 
 export const metadata: Metadata = privateMetadata('Your bag')
@@ -30,8 +31,9 @@ export const metadata: Metadata = privateMetadata('Your bag')
  * because a directive restating what the code already forces is one more thing that can fall out of
  * step with it — the same reasoning `/shop` records.
  *
- * **No Checkout button.** Checkout is Phase 17. See **DEV-57**: the bag page states what happens next
- * in a sentence rather than offering a control that leads nowhere.
+ * **Checkout is the page's `primary` action.** Phase 14 had none because `/checkout` did not exist
+ * (**DEV-57**). When Stripe is not configured the button still leads to `/checkout`, which explains
+ * the state; the muted line under it says so first, so the button promises nothing it cannot keep.
  *
  * **`noindex`, from Phase 24.** §24.1c excludes the cart by name, and a crawler that indexed this
  * page would index an empty bag, forever, under a title promising otherwise.
@@ -136,11 +138,17 @@ export default async function CartPage() {
                     not a mutation — the mutation is on that page, after the customer has told us
                     where the parcel is going.
                   */}
-                  <Button asChild size="lg">
+                  <Button asChild size="lg" variant="primary">
                     <Link href="/checkout" variant="unstyled">
                       Checkout
                     </Link>
                   </Button>
+
+                  {isStripeConfigured() ? null : (
+                    <p className="-mt-2 font-sans text-meta text-foreground-muted">
+                      Checkout isn&rsquo;t open yet.
+                    </p>
+                  )}
 
                   <Link href="/shop" variant="meta">
                     Continue shopping

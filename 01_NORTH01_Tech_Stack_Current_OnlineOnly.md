@@ -12,6 +12,17 @@
 >
 > **Fulfillment model:** inventory represents centralized online fulfillment stock. Orders are paid online, fulfilled remotely, shipped to the customer, tracked, and returned through an online-first process.
 
+> **As built (Phase 36 documentation audit).** The requirements below are unchanged. Where the build departs from them, the deviation register in `NORTH01_Implementation_Notes_and_Deviations.md` §2 governs, and each affected row is annotated:
+>
+> - **Motion** — not installed (DEV-24, DEV-40). Motion is CSS on the duration tokens (ARCHITECTURE D-13, D-34).
+> - **React Hook Form** — not installed. Forms are Server Actions with `useActionState` and Zod (DEV-80).
+> - **Stripe Tax** — not wired. Tax is a provider boundary that answers `unavailable` rather than inventing a number (DEV-61).
+> - **Storybook** — not installed. The in-app `/design-system` route is the equivalent (DEV-20).
+> - **Husky + lint-staged** — not adopted. CI enforces the gate (DEV-81).
+> - **`sharp`** — not installed (DEV-33, ARCHITECTURE D-27).
+>
+> Resolved versions and the evidence for each pin: `docs/STACK_VERSIONS.md`.
+
 ## 1. Stack at a Glance
 
 | Layer | Technology / Service | Role | Required for Demo |
@@ -22,10 +33,10 @@
 | Package manager | pnpm | Dependency/workspace management | Yes |
 | Styling | Tailwind CSS | Styling + design tokens | Yes |
 | UI primitives | shadcn/ui + Radix UI | Accessible primitives, dialogs, drawers, menus, controls | Yes |
-| Animation | Motion | Restrained page/component motion | Yes |
+| Animation | Motion | Restrained page/component motion | Yes — *as built: not installed, CSS instead (DEV-40)* |
 | Icons | Lucide | Consistent iconography | Yes |
 | Fonts | `next/font` with selected project fonts | Typography/loading | Yes |
-| Forms | React Hook Form | Complex forms | Yes |
+| Forms | React Hook Form | Complex forms | Yes — *as built: Server Actions + `useActionState` + Zod (DEV-80)* |
 | Validation | Zod | Shared/server-authoritative validation | Yes |
 | URL state | nuqs | Search/filter/sort query state | Yes |
 | CMS/backend | Payload CMS | Admin, content, auth, access control, REST/API, media metadata | Yes |
@@ -33,7 +44,7 @@
 | Managed DB | Neon Postgres | Hosted PostgreSQL for dev/preview/prod as appropriate | Yes |
 | DB adapter | `@payloadcms/db-postgres` / Payload's Postgres layer | Payload/Postgres integration | Yes |
 | Payment | Stripe | Test-mode checkout, payment state, refunds, webhooks | Yes |
-| Tax | Stripe Tax | Tax calculation when enabled/configured | Yes |
+| Tax | Stripe Tax | Tax calculation when enabled/configured | Yes — *as built: deferred behind a provider boundary (DEV-61)* |
 | Shipping | Internal shipping service/adapter | Online-only delivery rates/rules; future carrier integrations | Yes |
 | Media | Cloudinary | Product/editorial image delivery and transformations | Yes |
 | Search | Algolia | Search/autocomplete/faceting; derived index | Yes |
@@ -52,10 +63,10 @@
 | Component tests | React Testing Library | UI behavior tests | Yes |
 | E2E | Playwright | Browser/critical-path tests | Yes |
 | Accessibility automation | axe-core + Playwright integration | Automated accessibility checks | Yes |
-| Component workbench | Storybook | Reusable component/design-system development | Recommended |
+| Component workbench | Storybook | Reusable component/design-system development | Recommended — *as built: `/design-system` route instead (DEV-20)* |
 | Linting | ESLint | Static analysis | Yes |
 | Formatting | Prettier | Formatting | Yes |
-| Git hooks | Husky + lint-staged | Local quality gates | Recommended |
+| Git hooks | Husky + lint-staged | Local quality gates | Recommended — *as built: not adopted, CI enforces the gate (DEV-81)* |
 
 ## 2. Non-Goals / Deliberate Omissions
 
@@ -86,7 +97,7 @@ Do **not** add these unless a concrete requirement appears:
 | Cart | PostgreSQL for authenticated carts; secure guest-cart mechanism mapped to DB | Stripe checkout session |
 | Orders | PostgreSQL via Payload | Stripe payment events |
 | Payment status | Stripe webhook events | Local order payment state |
-| Tax result | Stripe Tax when enabled | Order snapshot |
+| Tax result | Stripe Tax when enabled (*as built: DEV-61*) | Order snapshot |
 | Shipping method/rate | Internal shipping service/adapter | Order snapshot |
 | Search | Algolia | Rebuilt/synchronized from primary data |
 | Media asset metadata | Payload | Cloudinary delivery |

@@ -4,6 +4,16 @@
 >
 > Visual presentation is governed by `NORTH01_Visual_Guide_OnlineOnly.md` and `NORTH01_Visual_Reference_OnlineOnly.png`.
 
+> **As built (Phase 36 documentation audit).** The structure below is the original specification. Where the build departs from it, the deviation register (`NORTH01_Implementation_Notes_and_Deviations.md` §2) and the gap register (`docs/ARCHITECTURE.md` §3.2) govern:
+>
+> - **ABOUT** — withdrawn from the navigation; there is no page (DEV-07, amended in Phase 30).
+> - **ORDER TRACKING** — no public lookup. Signed-in customers see tracking in `/account/orders`, and guests get the shipped email (DEV-77).
+> - **FAQ / CONTACT / SUPPORT** — `/help/faq`, `/help/shipping` and `/help/returns` exist. Contact does not (G-08, open).
+> - **Online return request** — no return-request flow exists (G-20, open).
+> - **§6 Quick add / quick view** — withdrawn (DEV-76).
+> - **§7 Product page** — no Buy Now (DEV-78). Recommendations are one row with no Complete the Look (DEV-79).
+> - **Legal pages** — not published; they wait on legal text (G-19, owner action).
+
 # 1. Overall Experience
 
 NORTH / 01 should feel like a premium apparel brand that happens to have an excellent online store.
@@ -61,7 +71,7 @@ HOME
 │
 ├── JOURNAL
 │
-└── ABOUT
+└── ABOUT        (as built: withdrawn, no page — DEV-07, amended in Phase 30)
 
 Global:
 SEARCH
@@ -107,6 +117,8 @@ The top navigation should stay short:
 
 **NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK · ABOUT**
 
+> *As built:* **NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK**, five items. ABOUT was withdrawn in Phase 30 because `/about` has no page (DEV-07, as amended).
+
 Journal may live under the editorial/content area or footer unless it becomes a major content channel.
 
 # 3. Header
@@ -149,8 +161,8 @@ Order:
 3. New arrivals.
 4. Editorial / Shop the Look moment.
 5. Best sellers or limited edition.
-6. Brand story.
-7. Community/social.
+6. Brand story. *(As built: an editorial-split block, DEV-43. There is no About page to link to, DEV-07 as amended.)*
+7. Community/social. *(As built: shown only with at least three editorial images, DEV-82.)*
 8. Newsletter/footer.
 
 The homepage is not a catalog. Its role is to introduce the brand and provide several clear routes into shopping.

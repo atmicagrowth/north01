@@ -362,6 +362,36 @@ export const Customers: CollectionConfig = {
 
         return data
       },
+
+      /**
+       * **A new password ends every existing session** — Phase 36, audit R1-13.
+       *
+       * The case is an admin setting a customer's password, usually because the account was taken
+       * over. Without this, whoever held the old cookie kept a seven-day session under the new
+       * password. Emptying `sessions` is what the JWT strategy checks on every request (see the
+       * `afterChange` below), so the old cookie stops working at once.
+       *
+       * **Here rather than in `afterChange`**, because this is the last hook that can see the
+       * password: Payload's update deletes `data.password` after this hook runs and before the write
+       * (`updateDocument`, "Handle potential password update"), so an `afterChange` would never know
+       * one was set. Writing `sessions` in the same row update also means no second write and no
+       * shared `context` flag — the latch the disable hook below records a bulk edit tripping over.
+       *
+       * The reset flow does not reach this hook (`resetPassword` writes through `payload.db`);
+       * `lib/auth/actions.ts` clears the sessions itself after a successful reset.
+       */
+      ({ data, operation }) => {
+        if (
+          operation === 'update' &&
+          data &&
+          typeof data.password === 'string' &&
+          data.password.length > 0
+        ) {
+          return { ...data, sessions: [] }
+        }
+
+        return data
+      },
     ],
 
     /**

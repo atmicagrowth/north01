@@ -44,6 +44,8 @@ export type TaxAddress = {
   city: null | string
   /** ISO 3166-1 alpha-2, upper-case. */
   country: string
+  /** The street line. Optional: a US calculation is more precise with it, and none requires it. */
+  line1?: null | string
   postalCode: null | string
   region: null | string
 }
@@ -127,9 +129,116 @@ export function decideDeferredTax(request: TaxRequest): TaxResult {
   return isCalculableAddress(request.address) ? UNAVAILABLE_TAX : PENDING_TAX
 }
 
+/* -------------------------------------------------------------------------------------------------
+ * Stripe Tax — Phase 36, audit R1-02
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * **The request Stripe Tax is sent**, built from §16.1c's five inputs and nothing else.
+ *
+ * Pure, so the shape is asserted by a unit test rather than by a live call. It lives here, beside
+ * the provider-neutral contract, because it is the one translation *into* Stripe's vocabulary and the
+ * mapper below is the one translation back — `provider.ts` then only makes the call.
+ *
+ * - **One line, the discounted goods** — `max(0, subtotal − discount)`, the same base
+ *   `taxableBaseMinor` uses. A line per product would be a second itemisation that could round
+ *   differently from ours (the argument DEV-63 makes about the Checkout Session).
+ * - **Shipping as `shipping_cost`**, so each jurisdiction decides whether delivery is taxable.
+ * - **Tax exclusive**: our prices are before tax and the tax is added on top — that is what
+ *   `orderTotalMinor` does with the answer.
+ * - **The shipping address, declared as such** (`address_source: 'shipping'`). Tax on goods is owed
+ *   where they are delivered.
+ *
+ * Returns `null` when the address cannot be asked about — the caller answers `pending_address`.
+ */
+export type StripeTaxCalculationParams = {
+  currency: string
+  customer_details: {
+    address: {
+      city?: string
+      country: string
+      line1?: string
+      postal_code?: string
+      state?: string
+    }
+    address_source: 'shipping'
+  }
+  line_items: { amount: number; reference: string; tax_behavior: 'exclusive' }[]
+  shipping_cost: { amount: number; tax_behavior: 'exclusive' }
+}
+
+export function stripeTaxCalculationParams(request: TaxRequest): null | StripeTaxCalculationParams {
+  const { address } = request
+
+  if (address === null || !isCalculableAddress(address)) {
+    return null
+  }
+
+  const present = (value: null | string | undefined): string | undefined =>
+    typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+
+  return {
+    currency: request.currency.toLowerCase(),
+    customer_details: {
+      address: {
+        city: present(address.city),
+        country: address.country.trim().toUpperCase(),
+        line1: present(address.line1),
+        postal_code: present(address.postalCode),
+        state: present(address.region),
+      },
+      address_source: 'shipping',
+    },
+    line_items: [
+      {
+        amount: Math.max(
+          0,
+          toMinorAmount(request.subtotalMinor) - toMinorAmount(request.discountMinor),
+        ),
+        reference: 'bag',
+        tax_behavior: 'exclusive',
+      },
+    ],
+    shipping_cost: { amount: toMinorAmount(request.shippingMinor), tax_behavior: 'exclusive' },
+  }
+}
+
+/**
+ * **Stripe's answer, as §16.1c's three outputs.**
+ *
+ * - `tax_amount_exclusive` is the tax added on top — the amount. `0` is **`not_required`**: Stripe
+ *   answered and no tax applies, which is a fact rather than a placeholder (see the module docblock).
+ *   Note what produces that zero in practice: **a Stripe account with no tax registrations** returns
+ *   zero for every address, so `TODO.md` §4 makes enabling Stripe Tax an operator step.
+ * - The calculation `id` (`taxcalc_…`) is the provider reference.
+ * - An error, or an answer that is not a whole non-negative number, is **`unavailable`** — never a
+ *   guessed zero. Preflight refuses to take payment on it.
+ */
+export function taxResultFromStripeCalculation(
+  outcome: { calculation: unknown } | { error: unknown },
+): TaxResult {
+  if (!('calculation' in outcome)) {
+    return UNAVAILABLE_TAX
+  }
+
+  const calculation = outcome.calculation as { id?: unknown; tax_amount_exclusive?: unknown } | null
+
+  const amount = calculation?.tax_amount_exclusive
+
+  if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount < 0) {
+    return UNAVAILABLE_TAX
+  }
+
+  return {
+    amountMinor: amount,
+    providerRef: typeof calculation?.id === 'string' ? calculation.id : null,
+    status: amount === 0 ? 'not_required' : 'calculated',
+  }
+}
+
 export const TAX_COPY = {
-  /** What the bag says while there is no address. */
-  pending: 'Taxes are calculated at checkout.',
+  /** What the bag says while there is no address (Phase 36, R2-13: says what tax depends on). */
+  pending: 'Tax is calculated from your delivery address.',
   /** §16.1d: the provider is down. Checkout must not proceed on a guess. */
   unavailable: 'We could not calculate tax just now. Please try again in a moment.',
 } as const

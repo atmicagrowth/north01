@@ -684,6 +684,40 @@ try {
     )
   }
 
+  /* ============================================ L2 — R1-21, the transport's own timeout */
+  {
+    /*
+     * A provider that accepts the connection and never answers. Resend's SDK sends through the
+     * global `fetch`, so a `fetch` that never settles is exactly that provider, and no socket opens.
+     */
+    const { createEmailTransport } = await import('../src/lib/email/resend')
+    const realFetch = globalThis.fetch
+
+    globalThis.fetch = (() => new Promise<Response>(() => undefined)) as typeof fetch
+
+    const started = Date.now()
+
+    const outcome = await createEmailTransport({ apiKey: 're_verify_timeout' })({
+      from: 'NORTH / 01 <shop@example.test>',
+      html: '<p>timeout</p>',
+      idempotencyKey: `verify-timeout-${suffix}`,
+      replyTo: null,
+      subject: 'timeout',
+      text: 'timeout',
+      to: 'nobody@example.test',
+    }).finally(() => {
+      globalThis.fetch = realFetch
+    })
+
+    const waited = Date.now() - started
+
+    check(
+      'L2: **R1-21 a provider that never answers fails at the timeout** instead of holding the caller',
+      !outcome.ok && outcome.error === 'timeout' && waited >= 7_500 && waited < 12_000,
+      `${JSON.stringify(outcome)} after ${waited}ms`,
+    )
+  }
+
   /* ============================================ M — the drain */
   {
     const order = await makeOrder('M')

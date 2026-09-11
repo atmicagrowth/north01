@@ -33,8 +33,10 @@ import {
   canTransition,
   formatOrderNumber,
   HANDLED_EVENT_TYPES,
-  intendedStatusFor,
+  planStripeEvent,
+  decidePriorSession,
   isHandledEventType,
+  REUSABLE_ORDER_STATUSES,
   needsPaymentFinalisation,
   orderTotalMinor,
   parseOrderReference,
@@ -163,34 +165,77 @@ check(
  * ============================================================================================== */
 
 check(
-  'C: a completed checkout session means paid',
-  intendedStatusFor('checkout.session.completed') === 'paid',
+  'C: a completed checkout session whose payment_status is paid finalises',
+  planStripeEvent('checkout.session.completed', 'paid').kind === 'finalise',
 )
 
 check(
-  'C: a delayed bank payment succeeding also means paid',
-  intendedStatusFor('checkout.session.async_payment_succeeded') === 'paid',
+  'C: **R1-05 a completed session that is still unpaid waits** — a delayed method has not settled',
+  planStripeEvent('checkout.session.completed', 'unpaid').kind === 'awaitPayment',
 )
 
 check(
-  'C: §17.1h a declined card means payment_failed',
-  intendedStatusFor('payment_intent.payment_failed') === 'payment_failed',
+  'C: R1-05 a session that needed no payment is a mismatch — there are no free orders',
+  planStripeEvent('checkout.session.completed', 'no_payment_required').kind === 'mismatch',
+)
+
+check(
+  'C: a delayed bank payment succeeding finalises',
+  planStripeEvent('checkout.session.async_payment_succeeded', null).kind === 'finalise',
+)
+
+check(
+  'C: …and failing means payment_failed',
+  JSON.stringify(planStripeEvent('checkout.session.async_payment_failed', null)) ===
+    JSON.stringify({ kind: 'transition', to: 'payment_failed' }),
+)
+
+check(
+  'C: **a declined card inside Checkout is recorded only** — the session is still payable',
+  planStripeEvent('payment_intent.payment_failed', null).kind === 'record',
 )
 
 check(
   'C: §17.1h an expired session means cancelled',
-  intendedStatusFor('checkout.session.expired') === 'cancelled',
+  JSON.stringify(planStripeEvent('checkout.session.expired', null)) ===
+    JSON.stringify({ kind: 'transition', to: 'cancelled' }),
 )
 
 check(
   'C: §17.1h an unknown event type asks for nothing rather than throwing',
-  intendedStatusFor('invoice.paid') === null && intendedStatusFor('') === null,
+  planStripeEvent('invoice.paid', null).kind === 'ignore' &&
+    planStripeEvent('', null).kind === 'ignore',
 )
 
 check(
-  'C: every handled type maps to a status, and nothing else does',
-  HANDLED_EVENT_TYPES.every((type) => intendedStatusFor(type) !== null) &&
+  'C: every handled type has a plan, and nothing else does',
+  HANDLED_EVENT_TYPES.every((type) => planStripeEvent(type, 'paid').kind !== 'ignore') &&
     !isHandledEventType('customer.created'),
+)
+
+check(
+  'C: **R1-03/R1-06 an expired (cancelled) order is not reused, a pending one is**',
+  !REUSABLE_ORDER_STATUSES.includes('cancelled') &&
+    REUSABLE_ORDER_STATUSES.includes('pending_payment'),
+)
+
+check(
+  'C: **R1-01 a paid prior session refuses the rewrite; an open one is expired first**',
+  decidePriorSession({
+    orderStatus: 'pending_payment',
+    sessionPaymentStatus: 'paid',
+    sessionStatus: 'complete',
+  }) === 'refuse' &&
+    decidePriorSession({
+      orderStatus: 'pending_payment',
+      sessionPaymentStatus: 'unpaid',
+      sessionStatus: 'open',
+    }) === 'expire' &&
+    decidePriorSession({
+      orderStatus: 'pending_payment',
+      sessionPaymentStatus: 'unpaid',
+      sessionStatus: 'expired',
+    }) === 'proceed',
 )
 
 check(
