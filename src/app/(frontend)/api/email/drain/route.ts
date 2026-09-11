@@ -1,8 +1,11 @@
+import { timingSafeEqual } from 'node:crypto'
+
 import { headers as nextHeaders } from 'next/headers'
 
 import { courierFor } from '@/lib/email/courier'
 import { drainEmails } from '@/lib/email/send'
 import { getPayloadClient } from '@/lib/payload'
+import { serverEnv } from '@/lib/env.server'
 
 /**
  * **§19.1d's *"allow retry where appropriate"*, as something a person can press.**
@@ -63,4 +66,43 @@ export async function POST(): Promise<Response> {
   const tally = await drainEmails(payload, courier, { limit: 50 })
 
   return Response.json(tally)
+}
+
+/**
+ * **Vercel Cron's entry — DEV-67's scheduled drain, Phase 32.**
+ *
+ * `vercel.json` schedules a GET here; Vercel sends `Authorization: Bearer <CRON_SECRET>` when that
+ * variable is set on the project. The POST above stays the staff route. This one answers only a
+ * request carrying the secret — compared in constant time — and 401 otherwise, including when no
+ * secret is configured, so an unset variable can never mean "open".
+ *
+ * Once a day, because that is the one schedule every Vercel plan accepts: a more frequent expression
+ * fails the deployment on a Hobby plan. It is a backstop — the queue also drains on the next webhook
+ * and from the admin — and a Pro project can tighten the expression (docs/DEPLOYMENT.md §7).
+ */
+export async function GET(request: Request): Promise<Response> {
+  const secret = serverEnv.CRON_SECRET
+  const sent = request.headers.get('authorization') ?? ''
+  const expected = `Bearer ${secret ?? ''}`
+
+  const authorised =
+    secret !== undefined &&
+    sent.length === expected.length &&
+    timingSafeEqual(Buffer.from(sent), Buffer.from(expected))
+
+  if (!authorised) {
+    return Response.json({ error: 'Unauthorized.' }, { status: 401 })
+  }
+
+  const payload = await getPayloadClient()
+  const courier = await courierFor(payload)
+
+  if (!courier) {
+    return Response.json(
+      { error: 'Resend is not configured, so nothing could be delivered. The queue is unharmed.' },
+      { status: 503 },
+    )
+  }
+
+  return Response.json(await drainEmails(payload, courier, { limit: 50 }))
 }

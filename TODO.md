@@ -57,13 +57,12 @@ ones, and a shop that cannot send a password reset is a shop nobody can get back
 
 ---
 
-## 3. Cloudinary — images survive a redeploy only once this exists
+## 3. ~~Cloudinary~~ — DONE for Production; Preview still needs it
 
-Currently unset. Anything uploaded through `/admin` is written to the deployment's own filesystem,
-which Vercel discards on the next deploy. The imported photography is already on Cloudinary and is
-unaffected; this is about anything uploaded *from now on*.
-
-`NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`.
+Production has `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET`
+(`vercel env ls`, 2026-09-11), so uploads through `/admin` survive a redeploy. Preview has none, like
+every other Preview variable — see §8. The cloud is **shared** with development: never run
+`generate:media --clean` (docs/DEPLOYMENT.md §5).
 
 ---
 
@@ -150,3 +149,23 @@ hammering, at a moment the attacker can cause. Deviation **DEV-75** records it.
 
 Use the **Managed** widget type unless you have a reason not to; it is the one that challenges only
 when it needs to.
+
+---
+
+## 8. Deployment settings — Phase 32
+
+The full list, with the reason for each, is **[`docs/DEPLOYMENT.md` §9](docs/DEPLOYMENT.md)**. In
+short, all in the Vercel, Neon, Algolia or GitHub dashboards:
+
+- **Production `SITE_URL` → `https://north01apparel.vercel.app`.** It is the team alias today, so
+  canonicals, the sitemap, reset links and Stripe return URLs name a host customers do not use.
+  `pnpm smoke` warns about it.
+- **Populate the Preview environment** — a Neon branch of its own, a new `PAYLOAD_SECRET`, test keys.
+  No preview can build until then.
+- **Build the production search index** — production Algolia keys in Vercel, then `pnpm reindex` once
+  under the production environment (DEPLOYMENT.md §6). Search and three filters are off until then.
+- **`CRON_SECRET`** in Production, for the daily email drain.
+- **Function region `cle1`**, once the production Neon endpoint is confirmed to be `us-east-2`.
+- **Queued production builds**, so two deployments never migrate at once.
+- **CI repository secrets** — `DATABASE_URL` (non-production, read-only role), `PAYLOAD_SECRET`,
+  and the variable `SITE_URL`.

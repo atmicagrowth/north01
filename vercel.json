@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "pnpm build:deploy"
+  "buildCommand": "pnpm build:deploy",
+  "crons": [
+    {
+      "path": "/api/email/drain",
+      "schedule": "0 7 * * *"
+    }
+  ]
 }

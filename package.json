@@ -5,7 +5,7 @@
   "description": "NORTH / 01 — online-only DTC premium apparel storefront",
   "type": "module",
   "engines": {
-    "node": ">=20.9.0"
+    "node": "22.x"
   },
   "packageManager": "pnpm@11.21.0",
   "scripts": {
@@ -13,6 +13,7 @@
     "build": "next build",
     "build:deploy": "payload migrate && next build",
     "start": "next start",
+    "smoke": "node scripts/smoke.mjs",
     "lint": "eslint --max-warnings 0",
     "lint:fix": "eslint --fix",
     "typecheck": "tsc --noEmit",

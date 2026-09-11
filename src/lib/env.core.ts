@@ -98,6 +98,23 @@ const ServerEnvSchema = PublicEnvSchema.extend({
   VERCEL_PROJECT_PRODUCTION_URL: z.string().min(1).optional(),
 
   /**
+   * Set by Vercel on every deployment: this deployment's own hostname (`VERCEL_URL`) and, on a
+   * preview, the branch's stable alias (`VERCEL_BRANCH_URL`), both without a scheme. Read only by
+   * `resolveSiteUrl`, and only on a preview — Phase 32 — so that a preview's password-reset links and
+   * Stripe return URLs name the preview instead of production. Never written into a `.env`.
+   */
+  VERCEL_BRANCH_URL: z.string().min(1).optional(),
+  VERCEL_URL: z.string().min(1).optional(),
+
+  /**
+   * Phase 32 — the bearer secret Vercel Cron sends to `/api/email/drain` (DEV-67's scheduled drain).
+   * Vercel attaches `Authorization: Bearer <CRON_SECRET>` to cron requests when the variable is set on
+   * the project. Unset, the scheduled request is refused with 401 and nothing is drained; staff can
+   * still drain on demand.
+   */
+  CRON_SECRET: z.string().min(16).optional(),
+
+  /**
    * Set by the Next CLI, never written into a `.env`. Defaulted rather than required because the
    * `payload` CLI leaves it undefined: it loads `.env` through `@next/env` but never assigns
    * `NODE_ENV`, so a required enum here would break `pnpm generate:types`.
@@ -295,20 +312,28 @@ export const appEnv: AppEnv = resolveAppEnv(serverEnv)
  *
  * The localhost fallback is for development only in practice, but it is not *conditioned* on the
  * environment, because a wrong-but-harmless link on a laptop is a better failure than a config
- * module that throws during `next build`. Preview and production are expected to set `SITE_URL`
- * explicitly; `VERCEL_PROJECT_PRODUCTION_URL` covers the case where nobody has yet, and it names the
- * production deployment even when read from a preview — which is why it is the fallback and not the
- * first choice.
+ * module that throws during `next build`. Production is expected to set `SITE_URL` explicitly.
+ *
+ * **A preview names itself** (Phase 32). Without a `SITE_URL` of its own, a preview used to fall
+ * through to `VERCEL_PROJECT_PRODUCTION_URL` — so a password-reset email sent from a preview carried a
+ * link to production, and Stripe's test-mode return URLs sent a preview checkout back to the live shop.
+ * A preview now resolves to its branch alias (`VERCEL_BRANCH_URL`), or its own deployment host
+ * (`VERCEL_URL`). Both are set by the platform at deploy time — configuration, not a request header —
+ * so the host-header property above still holds. `VERCEL_PROJECT_PRODUCTION_URL` remains the fallback
+ * for production itself.
  */
-function resolveSiteUrl(env: ServerEnv): string {
+function resolveSiteUrl(env: ServerEnv, current: AppEnv): string {
+  const preview = current === 'preview' ? (env.VERCEL_BRANCH_URL ?? env.VERCEL_URL) : undefined
+
   const explicit =
     env.SITE_URL ??
+    (preview ? `https://${preview}` : undefined) ??
     (env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined)
 
   return (explicit ?? 'http://localhost:3000').replace(/\/+$/, '')
 }
 
-export const siteUrl: string = resolveSiteUrl(serverEnv)
+export const siteUrl: string = resolveSiteUrl(serverEnv, appEnv)
 
 /**
  * §4.1c: "Never use production Stripe credentials in local or preview."

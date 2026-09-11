@@ -268,6 +268,7 @@ document; Phase 4 chose them, recorded as **DEV-26**.
 | `VERCEL_ENV` | server | Supplied by Vercel when the project exposes system environment variables. Absent locally by design |
 | `VERCEL` | server | Set by Vercel alongside `VERCEL_ENV`. Used only to detect the awkward case: plainly on Vercel, but `VERCEL_ENV` missing — which resolves to `preview`, not `production` |
 | `VERCEL_PROJECT_PRODUCTION_URL` | server | Set by Vercel. The production deployment's hostname, no scheme. Read **only** as the fallback for `SITE_URL` |
+| `VERCEL_BRANCH_URL`, `VERCEL_URL` | server | Set by Vercel. A preview's branch alias and its own deployment host. Read **only** on a preview, as its `SITE_URL` when none is set (Phase 32) |
 
 ### Project-owned
 
@@ -275,10 +276,12 @@ document; Phase 4 chose them, recorded as **DEV-26**.
 |---|---|---|---|
 | `DATABASE_PUSH_TARGET` | server | **Phase 4** — local development only | Derived from your own `DATABASE_URL`: `host[:port]/database`, credentials stripped |
 | `SITE_URL` | server | **Phase 7** | The deployment's canonical origin, no trailing slash |
+| `CRON_SECRET` | server | **Phase 32** — Production | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Vercel sends it to the scheduled email drain; unset, the drain refuses the cron (DEV-67) |
 
 `SITE_URL` earned a paragraph of its own in Phase 7, because it stopped being a value nothing reads.
 
-It resolves to `SITE_URL`, then `https://$VERCEL_PROJECT_PRODUCTION_URL`, then `http://localhost:3000`,
+It resolves to `SITE_URL`, then — on a preview only — `https://$VERCEL_BRANCH_URL` or `https://$VERCEL_URL`
+(Phase 32), then `https://$VERCEL_PROJECT_PRODUCTION_URL`, then `http://localhost:3000`,
 and the result is set on the Payload config as `serverURL`. Everything that has to name this
 application in a link somebody else follows reads it: the password-reset email (Phase 7), Stripe's
 success and cancel URLs (Phase 17), canonical tags and the sitemap (Phase 24).

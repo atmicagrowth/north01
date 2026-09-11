@@ -103,7 +103,7 @@ jobs:
         run: |
           echo "::notice title=Build skipped::DATABASE_URL is not configured for this repository."
           echo "Prerendering reads the catalogue through Payload, so the build cannot run without it."
-          echo "See TODO.md section 1."
+          echo "See docs/DEPLOYMENT.md section 8 (CI) for the repository secrets it needs."
 
   e2e:
     name: E2E (where environment permits)

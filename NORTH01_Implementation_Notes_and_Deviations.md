@@ -8730,6 +8730,80 @@ architecture document.
   render-path `catch` calls `unstable_rethrow` first; an undecodable URL is a 404) and **D-42** (the bag
   cookie survives sign-in, and why that exposes nothing).
 
+## 1.37 Phase 32 — deployment to Vercel
+
+Plan §32.1a–§32.1d. No dependency and no migration. The Vercel project, its production deployment
+and its build command existed since Phase 2; this phase is the procedure around them, the parts of
+the configuration that live in the repository, and a precise list of the parts that do not.
+
+### 1.37.1 What the phase could change, and what it could only document
+
+Phase 32's prompt asks for separate Preview and Production environments, safe migrations, a deployment
+checklist and a post-deployment smoke test. Four of those are dashboard settings — Vercel variables,
+Vercel project settings, Neon branches, GitHub secrets — which this application cannot set, and which
+this phase deliberately did not set from the CLI on the owner's behalf: changing production's
+environment is an owner decision with the owner's credentials. Each is in
+[`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) §9 with its reason, and in TODO.md §8.
+
+What the repository could carry, it now does:
+
+- **`docs/DEPLOYMENT.md`** (plan §38's missing deployment document, audit DOC-10): the project settings,
+  the three environments side by side, how to set up Preview, **the six-step migration procedure**
+  (§32.1d: backup as a Neon branch, migrate by the build with expand/contract, deploy, verify with
+  `migrate:status`, smoke-test, monitor), rollback, the shared Cloudinary hazard, the production search
+  index, the scheduled drain, CI, and the owner's list.
+- **`pnpm smoke <url>`** (`scripts/smoke.mjs`) — the post-deployment smoke test §32 asks for: the
+  homepage and its canonical host, the shop, a product and its JSON-LD, search, the bag, checkout's
+  empty-bag redirect, the admin, the Stripe webhook's refusal of an unsigned POST, `robots.txt`, the
+  sitemap's host, a 404, and that `/reset-password` loads no analytics script (the Phase 31 hotfix, now a
+  permanent check). Read-only, no dependencies, safe against production.
+- **Node 22.x** in `package.json` `engines`. The range was `>=20.9.0`, and Vercel ran **24.x** — a major
+  no gate had exercised, which would also have floated to the next major by itself (audit R3-22). `.nvmrc`,
+  CI and `STACK_VERSIONS.md` all say 22.
+- **A preview names itself.** Without its own `SITE_URL`, a preview fell through to
+  `VERCEL_PROJECT_PRODUCTION_URL`, so a reset email sent from a preview linked to production and
+  Stripe's return URLs sent a preview checkout to the live shop. On a preview `siteUrl` now resolves to
+  `VERCEL_BRANCH_URL`, then `VERCEL_URL` — both set by the platform at deploy time, so the Phase 7 rule
+  that a URL is never built from a request header still holds.
+- **DEV-67's scheduled drain.** `vercel.json` schedules a daily `GET /api/email/drain`; the route
+  answers only `Authorization: Bearer <CRON_SECRET>`, compared in constant time, and 401 otherwise —
+  including when no secret is set, so an unset variable can never mean open. Daily, because it is the
+  one schedule every Vercel plan accepts; a more frequent expression fails a Hobby deployment.
+- CI's build-skip notice pointed at a closed TODO section; it points at DEPLOYMENT.md §8. README lists
+  DEPLOYMENT.md and SEARCH.md.
+
+### 1.37.2 The smoke test's first run against production
+
+**9 passed, 3 warnings, 0 failed.** The three warnings are two findings the other session's audit had
+made, now measured by a check anyone can rerun:
+
+- **The canonical and the sitemap name `north01apparel-mi-ca-growth.vercel.app`** — production's
+  `SITE_URL` is the team alias, not the public host (R3-09). Every canonical, all 40 sitemap URLs, reset
+  links and Stripe return URLs name a host customers do not use.
+- **Search is not available** — production has no Algolia keys, and the `north01_products` index has
+  never been built (R3-01). DEPLOYMENT.md §6 is the procedure; keys alone will not fix it.
+
+Everything else passed, including the webhook refusing an unsigned request (503, Stripe unconfigured)
+and no analytics script on `/reset-password`.
+
+### 1.37.3 Two platform facts recorded rather than changed
+
+- **A malformed percent-encoding is answered 400 by Vercel's edge**, before the application. The Phase 31
+  proxy rule matters under `next start` and in development, where it produces the branded 404.
+- **`NEXT_PUBLIC_` variables are fixed at build.** The Phase 30 deploy switched on six integrations at once
+  because their keys had been added in the dashboard without a build (§1.36.1). DEPLOYMENT.md §10 says
+  so, and the Preview environment is what would have rehearsed it.
+
+### 1.37.4 What was verified
+
+| Check | Result |
+|---|---|
+| `pnpm typecheck`, `pnpm lint --max-warnings 0`, `pnpm format:check`, `pnpm build` | pass |
+| `pnpm test:run` | 829 |
+| `pnpm smoke`, production and local | 0 failed; the three production warnings are §1.37.2's |
+| The scheduled drain, with a test `CRON_SECRET` | no header **401**; wrong secret **401**; right secret passes authorisation (then **503**, Resend unconfigured, queue untouched); the staff `POST` still **403** without a staff session |
+
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -10639,4 +10713,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 29 — content seeding and demo data | 2026-09-10 | Notes **§1.34**. **No dependency and no migration.** Ten products became **twenty-eight** across all ten categories §29.1b names, and **every harness in the project ran and passed for the first time — 1,819 checks across twenty-two**, plus 813 Vitest tests. The seed writes customers, orders and reviews, reversing an argument it had made since Phase 6 (*"a commerce demo whose order list is fiction is worse than one whose order list is empty"*) — because four features cannot be demonstrated empty, and the docblock now makes that argument rather than contradicting it. Kept honest by `@example.test` addresses that cannot receive mail (Phase 19's queue would try), a `verifiedPurchase` badge set only where a paid order really exists, varied ratings including a pending and a rejected, and passwords in a git-ignored file. **`generate:media` duplicated all 78 assets on a second run** — and the obvious repair, `--clean`, would have taken **production's images down**, because development and production address the same Cloudinary objects; every field was repointed at the ORIGINAL instead and only the new copies deleted. Every loop is incremental now. **Sweep 1 ran twenty-two harnesses and four were wrong**: `verify:lookbook` and `verify:editorial` could not start at all (the third instance of the `server-only`-under-the-CLI trap, fixed with a tsconfig path whose safety was **verified** by making the build refuse a real leak); `verify:account` failed nine checks against correct behaviour, its Phase 20 fixture having never run; `verify:shell` asserted a footer row Phase 28 deliberately emptied. And **`verify:catalog` found a real defect twenty-seven phases could not**: Postgres broke a price tie on `slug` and the Algolia replicas broke it on nothing, which passed for ten products with ten distinct prices and failed the moment twenty-eight produced four ties — both engines now end on `asc(sortOrder)`, a total order on both sides. The harness itself was also wrong, filtering its fixtures out of one engine's page after fetching rather than in the query. **Sweep 2: eighteen of twenty-eight products belonged to no collection**, so they were reachable only from the shop grid — absent from `/collections/*`, the homepage feature and the collection filter facet. Idempotency is asserted by running both scripts twice and comparing counts, not by reading the upserts and believing them. |
 | Phase 30 — performance and responsive polish | 2026-09-11 | Notes **§1.35**. **No dependency and no migration.** The phase opened by asking a browser for every navigation href and found four 404s: Phase 23 had built `/edits/[slug]` while every link in the shop said `/edit/`, and `/collections` and `/edit` had no index at all. **The product page spent 2.1s before its first byte**, none of it images: a depth-2 read populating a discarded variants join, two independent reads awaited in series, and no storefront read anywhere turning off joins — 2.09s → 1.07s, with collection and edit pages close behind. **First-load JavaScript fell about a third** (home 369,897 → 256,295 B gzip): all of Zod shipped to every route to re-check ten public strings the server had validated at boot, and the Sentry SDK shipped with no DSN configured; ESLint now forbids both in the files every client graph contains. **Sweep 1's worst finding was the phase's own regression** — a populate-select without `status` dropped every lookbook hotspot, missed by a DOM diff whose fixtures had no hotspot to lose; `verify:editorial` now resolves every lookbook two ways and was proven by putting the bug back. Sweep 1 also fixed a 0.36-CLS gallery shift on choosing a size, a mobile filter drawer that closed after every tick (it lived inside a keyed Suspense boundary), a cart page that scrolled sideways at 320, a cart drawer that showed no lines in landscape, 14px inputs that made iOS zoom, and a CLI path that orphaned a search-index record on every `verify:search` run. **Sweep 2 found that no shop-the-look hotspot had ever opened** — since Phase 22, a `preventDefault` meant to stop the anchor also stopped Radix's toggle — and that Add to bag opened nothing, though structure §13 draws the drawer. Mid-sweep the development database stopped accepting its password after production moved to a new Neon account; it was rebuilt on `ep-wandering-surf-ax7ia116` with the project's own idempotent scripts, and every harness passed on it: **1,829 checks**, plus 815 Vitest tests. **DEV-07 amended** from six primary items to five: ABOUT had no page behind it. |
 | Phase 31 — error, empty and loading states | 2026-09-11 | Notes **§1.36**. **One migration** (`cart_items.price_seen_minor`, nullable, display only), no dependency. **Began with a live leak from Phase 30's deploy**: the GA4 ID was already in Vercel, so that build was the first to load `gtag`, whose `page_location` carried every opened password-reset link's token to Google — hotfixed (`95c040b`) and verified with every vendor request intercepted, with one source of page views and idle loading. **The storefront now survives a database outage**: measured with a second server on a wrong password, every route including `/help/faq` was a bare 500 because the root layout's customer and bag reads threw; they degrade to a signed-out shell, and a new `(frontend)/error.tsx` renders inside it with retry. A malformed URL is a branded 404, not a 21-byte 500. Turnstile explains itself when blocked (it was locking sign-in with "try again") and the footer newsletter loads it on first focus. The success page says what happened for each payment status; an unreadable order is not reported as a missing one; an expired session is a sign-in, not "your bag is empty" — which required keeping the bag cookie through sign-in. "Price changed" now exists. The degraded search no longer announces "No products" or offers controls that can change nothing. **The build caught one of the phase's own fixes**: a `try/catch` swallowed Next's dynamic-usage interrupt and would have made per-visitor routes static with a signed-out shell baked in — `unstable_rethrow` first. 829 tests; all 22 harnesses. |
+| Phase 32 — deployment to Vercel | 2026-09-11 | Notes **§1.37**. No dependency, no migration. **The dashboard settings were documented, not changed from the CLI** — production's environment is the owner's decision — in a new `docs/DEPLOYMENT.md` (plan §38's missing deployment document) and TODO.md §8: Production `SITE_URL` is the team alias, Preview has no variables so no preview can build, the production search index has never been built, no function region, no queued builds, no CI secrets. **What the repository could carry, it now does**: the six-step migration procedure (§32.1d) and rollback; `pnpm smoke <url>`, a read-only post-deployment smoke test whose first production run passed 9, warned 3 (the canonical and sitemap host, and search) and failed none; Node pinned to 22.x (Vercel was running 24.x, which no gate had exercised); a preview's `SITE_URL` resolves to its own branch alias instead of production, so preview reset links and Stripe returns stop pointing at the live shop; and DEV-67's scheduled drain, a daily Vercel Cron answering only a constant-time-compared `CRON_SECRET`. |
 > **Append this table, and the sections above it, at the end of every phase.**
