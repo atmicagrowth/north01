@@ -1,4 +1,4 @@
-kl# NORTH / 01 — Master Implementation Plan for Claude
+# NORTH / 01 — Master Implementation Plan for Claude
 
 > **Purpose:** This document is the master implementation specification for Claude to build NORTH / 01 from an empty repository to a polished, testable, deployable application. It coordinates the six canonical project artifacts so that architecture, features, UX flow, and visual direction remain synchronized.
 >
