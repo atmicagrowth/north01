@@ -23,6 +23,7 @@ import {
   cartTotals,
   clampQuantity,
   mergeCartLines,
+  priceMovedFrom,
   shippingProgress,
   type CartLineInput,
   type CartTotals,
@@ -137,6 +138,11 @@ export type CartLineView = {
    * line means checkout does not re-read every variant it has already read.
    */
   sku: null | string
+  /**
+   * The unit price when the customer last added or changed this line, formatted — present only when
+   * it differs from today's. Plan §31.1e; see `priceMovedFrom`.
+   */
+  priceChangedFromLabel?: null | string
   /** `null` when the variant has no usable price. */
   unitPriceLabel: null | string
   unitPriceMinor: null | number
@@ -395,6 +401,45 @@ function availabilityOf(
  * `cache` so the drawer, the header count and the page can each ask without three round trips inside
  * one render.
  */
+/**
+ * **Plan §31.1f's "session expired": is there a bag on this device that belongs to someone signed out?**
+ *
+ * A signed-in customer's bag is theirs; `resolveCart` deliberately does not hand it to an anonymous
+ * request, even one carrying the right cookie. So when the session expires — seven days, or a sign-out
+ * in another tab — `getCart(null)` answers `null`, and checkout and the bag both said *"Your bag is
+ * empty"*, which was false: the bag is intact and waiting. This tells the two apart, so the answer can
+ * be *sign in*.
+ *
+ * Only ever called with no signed-in customer. Reads; never writes, never reassigns ownership.
+ */
+export async function hasSignedOutBag(): Promise<boolean> {
+  const jar = await cookies()
+  const token = jar.get(CART_COOKIE)?.value ?? null
+
+  if (!token) {
+    return false
+  }
+
+  const payload = await getPayloadClient()
+
+  const { docs } = await payload.find({
+    collection: 'carts',
+    depth: 0,
+    limit: 1,
+    overrideAccess: true,
+    where: {
+      and: [
+        { token: { equals: token } },
+        { status: { equals: 'active' } },
+        { expiresAt: { greater_than: new Date().toISOString() } },
+        { customer: { exists: true } },
+      ],
+    },
+  })
+
+  return docs.length > 0
+}
+
 export const getCart = cache(async (customerId: null | number): Promise<CartView | null> => {
   const payload = await getPayloadClient()
   const settings = await getCatalogSettings()
@@ -457,6 +502,7 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
       asDoc<Media>(variant?.image) ?? asDoc<Media>((product?.gallery ?? [])[0]?.image) ?? null
 
     const unitPriceMinor = availability?.priceMinor ?? null
+    const movedFrom = priceMovedFrom(item.priceSeenMinor, unitPriceMinor)
 
     return {
       availability,
@@ -464,6 +510,8 @@ export const getCart = cache(async (customerId: null | number): Promise<CartView
       id: item.id,
       image,
       maxQuantity: ceiling.quantity,
+      priceChangedFromLabel:
+        movedFrom === null ? null : formatMinorUnits(movedFrom, settings.currency, settings.locale),
       productId: product?.id ?? (relatedId(item.product) as number),
       productName: product?.name ?? 'This item',
       productSlug: product?.slug ?? '',
@@ -740,7 +788,8 @@ export async function addToCart(
   if (existing) {
     await payload.update({
       collection: 'cart-items',
-      data: { quantity: clamped.quantity },
+      /* The price they are looking at as they add it — plan §31.1e, `priceSeenMinor`. */
+      data: { priceSeenMinor: found.availability?.priceMinor ?? null, quantity: clamped.quantity },
       id: existing.id,
       overrideAccess: true,
     })
@@ -749,6 +798,7 @@ export async function addToCart(
       collection: 'cart-items',
       data: {
         cart: cart.id,
+        priceSeenMinor: found.availability?.priceMinor ?? null,
         product: found.product.id,
         quantity: clamped.quantity,
         variant: variantId,
@@ -796,7 +846,8 @@ export async function setCartLineQuantity(
 
   await payload.update({
     collection: 'cart-items',
-    data: { quantity: clamped.quantity },
+    /* Changing the quantity in the bag is looking at today's price — so it becomes the seen one. */
+    data: { priceSeenMinor: found?.availability?.priceMinor ?? null, quantity: clamped.quantity },
     id: lineId,
     overrideAccess: true,
   })
@@ -907,7 +958,13 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
     const guestCart = guestCarts[0]
 
     if (!guestCart || relatedId(guestCart.customer) !== null) {
-      await clearCookie()
+      /*
+       * A bag this customer already owns stays pointed at — see the note at the end of this function.
+       * Anyone else's bag, or none, is forgotten.
+       */
+      if (!guestCart || relatedId(guestCart.customer) !== customerId) {
+        await clearCookie()
+      }
 
       return
     }
@@ -937,8 +994,7 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
         overrideAccess: true,
       })
 
-      await clearCookie()
-
+      /* The cookie already names this bag, which is now theirs; it stays — see the end of this function. */
       return
     }
 
@@ -998,7 +1054,23 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
     }
 
     await payload.delete({ collection: 'carts', id: guestCart.id, overrideAccess: true })
-    await clearCookie()
+
+    /*
+     * **The cookie now names the customer's bag, instead of being cleared** — plan §31.1f's "session
+     * expired", Phase 31. It was cleared at every sign-in, so when a session later ran out the device
+     * had nothing left to recognise the bag by, and checkout and the bag both said *"Your bag is
+     * empty"* to someone whose bag was intact. Keeping it lets `hasSignedOutBag` answer *sign in*.
+     *
+     * It exposes nothing: `resolveCart` refuses an owned bag to an anonymous request whatever the
+     * cookie says (Phase 14's second sweep), so the cookie can only ever lead to a sign-in prompt.
+     * An explicit sign-out still forgets it (`logout` → `forgetCartCookie`) — leaving a shared
+     * computer is a decision, and an expired session is not.
+     */
+    if (customerCart.token) {
+      await issueCookie(customerCart.token)
+    } else {
+      await clearCookie()
+    }
   } catch (error) {
     payload.logger.error({
       err: error,

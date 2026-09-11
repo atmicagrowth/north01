@@ -1,72 +1,121 @@
 'use client'
 
 import Script from 'next/script'
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { publicEnv } from '@/lib/env.public'
 import { TURNSTILE_FIELD } from '@/lib/security/turnstile'
 
 /**
- * **Plan §26.1a's widget — and it is the half that is not security.**
+ * **Cloudflare Turnstile, on the four public forms** — plan §26.1a, decision DEV-75.
  *
- * > *"Client-side widget alone is not security."*
+ * The server fails closed (`lib/security/turnstile.ts`): no valid token, no sign-in, no account, no
+ * review, no newsletter address. This component is the browser half, and Phase 31 gave it the two
+ * things it was missing.
  *
- * This renders a challenge and writes a token into the form. Whether that token means anything is
- * decided in `lib/security/guard.ts`, on the server, with a secret this file has never seen. If this
- * component were deleted, every guarded form would start **refusing** rather than start accepting —
- * which is the right way round, and worth stating because the opposite arrangement is the common one.
+ * ### It says so when it cannot load
  *
- * ### Nothing renders without a site key
+ * A content blocker, a corporate filter or a Cloudflare outage stops `api.js`. Before, the reserved
+ * box simply stayed empty, no token was ever written, and every submit came back *"We could not verify
+ * that request. Please try again"* — which could never work, on sign-in included, with nothing saying
+ * why. Now the script's `onError`, the widget's `error-callback`, and an eight-second check that
+ * `window.turnstile` exists all put the same explanation in the box, in an alert the customer and a
+ * screen reader both get.
  *
- * No key, no `<Script>`, no widget, no token — and `verifyTurnstile` independently reaches the same
- * conclusion from the **server** environment and skips. The two halves agree because they read the
- * same pair of variables, not because one tells the other.
+ * ### It can wait to be needed
  *
- * ### Implicit rendering, deliberately
+ * `active={false}` renders nothing and loads nothing. The footer newsletter renders on every page,
+ * and mounted eagerly it ran a third-party challenge on every page view before anyone had touched
+ * the form (§30.1c: *"avoid large third-party scripts before interaction"*). It now activates the
+ * widget on the form's first focus. Sign-in, registration and reviews stay eager: their forms are
+ * the page.
  *
- * Cloudflare's script scans for `.cf-turnstile` and renders into it. The explicit
- * `window.turnstile.render()` API would need this component to wait for the script, hold a widget
- * id, and re-render on navigation — three pieces of state to keep in step with a script that may not
- * have loaded. The implicit path is one `<div>` and a `data-` attribute.
+ * ### Explicit rendering
  *
- * `data-response-field-name` is set explicitly rather than left to Cloudflare's default, so the field
- * name is a **constant shared with the server** rather than a string written out twice.
- *
- * ### It resets after a submission
- *
- * A Turnstile token is single-use, and Cloudflare's reply to a replayed one is
- * `timeout-or-duplicate`. A form the customer submits twice — a validation error, then a fix — would
- * fail the second time complaining about verification, on a form whose actual problem was an email
- * address. `submissionCount` changes on every attempt, so resetting on it hands the next attempt a
- * fresh token.
+ * `api.js?render=explicit`, and each widget renders itself with `turnstile.render()` once the script
+ * is ready. Implicit rendering scans the page once, when the script loads — so a widget mounted
+ * afterwards (the newsletter's, after a focus; a form after a client navigation) was never rendered.
+ * `onReady` fires on every mount, including when the script is already on the page.
  */
-export function TurnstileWidget({ submissionCount = 0 }: { submissionCount?: number }) {
+
+type Turnstile = {
+  remove: (widgetId: string) => void
+  render: (container: HTMLElement, options: Record<string, unknown>) => string | undefined
+  reset: (widgetId: string) => void
+}
+
+declare global {
+  interface Window {
+    turnstile?: Turnstile
+  }
+}
+
+/** How long a working connection needs to fetch `api.js`, generously. */
+const LOAD_TIMEOUT_MS = 8000
+
+export function TurnstileWidget({
+  active = true,
+  submissionCount = 0,
+}: {
+  /** `false` loads nothing and renders nothing — see "It can wait to be needed". */
+  active?: boolean
+  /** Changes after every submission, so a spent token is replaced with a fresh challenge. */
+  submissionCount?: number
+}) {
   const siteKey = publicEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY
   const container = useRef<HTMLDivElement>(null)
-  const id = useId()
+  const widget = useRef<string | undefined>(undefined)
+  const [ready, setReady] = useState(false)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
-    if (!siteKey || submissionCount === 0) {
-      return
-    }
+    if (!siteKey || !active) return
 
-    /*
-     * `window.turnstile` exists only once the script has loaded, and `reset` on a container that was
-     * never rendered into throws. Both are ordinary states here, so both are guarded rather than
-     * assumed — a third-party script must never be able to break a form.
-     */
-    try {
-      const turnstile = (window as { turnstile?: { reset: (target: Element) => void } }).turnstile
+    const timer = window.setTimeout(() => {
+      if (!window.turnstile) setFailed(true)
+    }, LOAD_TIMEOUT_MS)
 
-      if (turnstile && container.current) {
-        turnstile.reset(container.current)
+    return () => window.clearTimeout(timer)
+  }, [active, siteKey])
+
+  useEffect(() => {
+    const turnstile = window.turnstile
+
+    if (!siteKey || !active || !ready || !turnstile || !container.current) return
+
+    widget.current = turnstile.render(container.current, {
+      'error-callback': () => {
+        setFailed(true)
+      },
+      'response-field-name': TURNSTILE_FIELD,
+      sitekey: siteKey,
+      theme: 'light',
+    })
+
+    return () => {
+      if (widget.current) {
+        try {
+          turnstile.remove(widget.current)
+        } catch {
+          /* Already gone with its container. */
+        }
       }
+
+      widget.current = undefined
+    }
+  }, [active, ready, siteKey])
+
+  useEffect(() => {
+    if (submissionCount === 0 || !widget.current) return
+
+    try {
+      window.turnstile?.reset(widget.current)
     } catch {
       /* A widget that will not reset is a widget the customer can simply solve again. */
     }
-  }, [siteKey, submissionCount])
+  }, [submissionCount])
 
-  if (!siteKey) {
+  if (!siteKey || !active) {
     return null
   }
 
@@ -74,24 +123,32 @@ export function TurnstileWidget({ submissionCount = 0 }: { submissionCount?: num
     <>
       <Script
         id="cf-turnstile"
-        src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+        onError={() => setFailed(true)}
+        onReady={() => setReady(true)}
+        src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
         strategy="afterInteractive"
       />
 
-      <div
-        /*
-         * `min-h` reserves the widget's box before `api.js` renders into it (after hydration). With a
-         * bare div the 73px iframe arrived late and pushed the submit button down — measured with
-         * Cloudflare's always-pass test key: 0.022 CLS at 375 on /login. The component returns null
-         * without a site key, so the space is reserved only when a widget will actually render.
-         */
-        className="cf-turnstile min-h-[73px]"
-        data-response-field-name={TURNSTILE_FIELD}
-        data-sitekey={siteKey}
-        data-theme="light"
-        id={id}
-        ref={container}
-      />
+      {/*
+        `min-h`: the widget's 73px is reserved before it renders, so the submit button does not move
+        when it arrives (Phase 30). The explanation takes the same box.
+      */}
+      <div className="min-h-[73px]">
+        {failed ? (
+          <p className="font-sans text-body-sm text-error" role="alert">
+            The security check couldn’t load, so this form can’t be sent. Allow
+            challenges.cloudflare.com, or try another connection, then reload the page.
+          </p>
+        ) : (
+          <div ref={container} />
+        )}
+
+        <noscript>
+          <p className="font-sans text-body-sm text-foreground-muted">
+            This form needs JavaScript for its security check.
+          </p>
+        </noscript>
+      </div>
     </>
   )
 }

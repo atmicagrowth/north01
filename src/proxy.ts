@@ -39,7 +39,38 @@ import type { NextRequest } from 'next/server'
  */
 const SESSION_COOKIE = 'payload-token'
 
+/**
+ * **Plan §31.1a — a URL that cannot be decoded is a page that does not exist, not a server error.**
+ *
+ * `/product/%E0%A4%A` is an incomplete UTF-8 sequence. Next throws decoding it into the dynamic
+ * segment's params, before any route code runs, and answered with a bare 21-byte *Internal Server
+ * Error* — no shell, no way back, and a 500 in the logs for what is a mistyped link. Rewritten to a
+ * path no route claims, it lands on the branded not-found page with a 404.
+ */
+export function isUndecodablePath(pathname: string): boolean {
+  try {
+    decodeURIComponent(pathname)
+
+    return false
+  } catch {
+    return true
+  }
+}
+
+const isAccountPath = (pathname: string) =>
+  pathname === '/account' || pathname.startsWith('/account/')
+
 export function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  if (isUndecodablePath(pathname)) {
+    return NextResponse.rewrite(new URL('/__not-found', request.url))
+  }
+
+  if (!isAccountPath(pathname)) {
+    return NextResponse.next()
+  }
+
   if (request.cookies.has(SESSION_COOKIE)) {
     return NextResponse.next()
   }
@@ -65,5 +96,18 @@ export function proxy(request: NextRequest) {
  * protected" question something you answer by reading a regular expression backwards.
  */
 export const config = {
-  matcher: ['/account', '/account/:path*'],
+  /*
+   * `/account` for the sign-in gate; the rest are the routes with a dynamic segment, which are the
+   * ones a malformed percent-encoding can break. Nothing else pays for the proxy.
+   */
+  matcher: [
+    '/account',
+    '/account/:path*',
+    '/product/:path*',
+    '/shop/:path*',
+    '/collections/:path*',
+    '/edit/:path*',
+    '/journal/:path*',
+    '/lookbook/:path*',
+  ],
 }

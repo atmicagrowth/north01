@@ -67,6 +67,19 @@ const relatedId = (value: unknown): null | number =>
       ? ((value as { id: number }).id ?? null)
       : null
 
+/**
+ * Payload's `findByID` throws `NotFound` (status 404) for an id with no row — that is "no such
+ * order". Anything else, the database being unreachable above all, is NOT, and is rethrown so the
+ * page can say so instead of telling someone who may have just paid that their order does not exist.
+ */
+function notFoundAsNull(error: unknown): null {
+  if ((error as { status?: unknown } | null)?.status === 404) {
+    return null
+  }
+
+  throw error
+}
+
 export async function readOrderForConfirmation(
   rawId: string | string[] | undefined,
   customerId: null | number,
@@ -81,7 +94,7 @@ export async function readOrderForConfirmation(
 
   const order = await payload
     .findByID({ collection: 'orders', depth: 0, id, overrideAccess: true })
-    .catch(() => null)
+    .catch(notFoundAsNull)
 
   if (!order) {
     return null
@@ -158,7 +171,7 @@ async function isViewable(
 
   const cart = await payload
     .findByID({ collection: 'carts', depth: 0, id: cartId, overrideAccess: true })
-    .catch(() => null)
+    .catch(notFoundAsNull)
 
   return cart?.token === token
 }

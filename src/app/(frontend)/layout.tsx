@@ -10,9 +10,8 @@ import { CartDrawer } from '@/components/shell/cart-drawer'
 import { WishlistSync } from '@/components/wishlist/wishlist-sync'
 import { ShellOverlayProvider } from '@/components/shell/overlay-context'
 import { SearchOverlay } from '@/components/shell/search-overlay'
-import { getCustomer } from '@/lib/auth/session'
-import { getCart } from '@/lib/cart/cart'
 import { getShell } from '@/lib/navigation/shell'
+import { getShellSession } from '@/lib/navigation/shell-session'
 import { getSeoDefaults, getSiteUrl } from '@/lib/seo/site'
 
 import { fontVariables } from './fonts'
@@ -87,8 +86,7 @@ export default async function FrontendLayout({ children }: { children: ReactNode
    * the same thing for its badge is free — the two must agree, and sharing the read is what makes
    * that structural rather than coincidental.
    */
-  const customer = await getCustomer()
-  const cart = await getCart(customer?.id ?? null)
+  const { cart, customer, failed: bagUnavailable } = await getShellSession()
 
   return (
     <html lang="en" className={fontVariables}>
@@ -101,7 +99,7 @@ export default async function FrontendLayout({ children }: { children: ReactNode
           <SiteFooter newsletter={<NewsletterSignup />} />
 
           <SearchOverlay />
-          <CartDrawer cart={cart} items={navigation.primary} />
+          <CartDrawer cart={cart} items={navigation.primary} unavailable={bagUnavailable} />
 
           {/*
             §20.1a's *"on login, merge into customer wishlist"*. Renders nothing and does nothing

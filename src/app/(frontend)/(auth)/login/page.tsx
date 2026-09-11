@@ -35,14 +35,20 @@ export default async function LoginPage({
     redirect(next ?? '/account')
   }
 
+  /*
+   * `expired`: checkout or the bag sent them here because their session ended with a bag still
+   * waiting (plan §31.1f). Say so — "sign in" alone reads as if something went wrong on their side.
+   */
   const notice =
-    params.reset !== undefined
-      ? 'Your password has been changed. Sign in with your new password.'
-      : params.signedOut !== undefined
-        ? 'You are signed out.'
-        : params.registered !== undefined
-          ? 'Your account was created. Sign in to continue.'
-          : null
+    params.expired !== undefined
+      ? 'Your session has ended. Sign in to continue — your bag is saved.'
+      : params.reset !== undefined
+        ? 'Your password has been changed. Sign in with your new password.'
+        : params.signedOut !== undefined
+          ? 'You are signed out.'
+          : params.registered !== undefined
+            ? 'Your account was created. Sign in to continue.'
+            : null
 
   return (
     <div className="flex flex-col gap-l">

@@ -8488,6 +8488,203 @@ and `campaigns.collection` / `campaigns.products`, still read by nothing.
 including the performance work, and the Sentry, analytics and Turnstile keys added to Vercel on
 2026-09-10, which reach a build only when one is made.
 
+## 1.36 Phase 31 — error, empty and loading states
+
+Plan §31.1a–§31.1f. **One migration** (`cart_items.price_seen_minor`, nullable, display only) and no
+dependency. The phase began with a live privacy leak, which is recorded first because it shipped in
+this project's own previous phase.
+
+### 1.36.1 Before the phase: Phase 30's deploy sent password-reset tokens to Google Analytics
+
+Phase 30 was pushed the evening before this phase began. The GA4 measurement ID had been added to
+Vercel the same day, so that deploy was the first build to load `gtag` — and `gtag('config')` sends
+`page_location = window.location.href`. The reset email links to `/reset-password?token=…`, a one-hour
+credential in the query, so **every reset link a customer opened sent its token to Google**. PostHog's
+`$current_url` would have done the same the day its key is built. The redaction Phase 25 wrote
+(`lib/observability/redact.ts`) covered Sentry and nothing else. The other session's audit
+(`docs/PHASE_35_36_AUDIT.md`, R1-16) had named it as a pre-deploy blocker; the deploy happened first.
+
+Fixed and pushed as a hotfix (`95c040b`) before any Phase 31 work, and confirmed live on production:
+
+- `/reset-password` is not reported at all — neither SDK loads for a session that starts there, and
+  no page view is sent for it later.
+- Every other URL goes through `redactUrl` before either vendor sees it: GA page views and
+  `gtag('set', { page_location })`, and PostHog's `before_send` on `$current_url`, `$referrer` and
+  their `$initial_` copies. `session_id` joined `SENSITIVE_PARAM`, so a Stripe session id is not
+  reported either.
+- **One source of GA page views.** The old code sent one from `config` and one per navigation while
+  GA4's enhanced measurement sent another on every history change: every navigation counted twice.
+  `config` now runs with `send_page_view: false` and the component sends every page view. The GA4
+  "page changes based on browser history events" toggle has to be switched off in the dashboard —
+  TODO.md §6.
+- Both SDKs load when the page is idle, and `redact.ts` loads with them, so a keyless build ships none
+  of it.
+- `begin_checkout` no longer fires on the payment-unavailable checkout.
+
+**Verified against a build with test keys and every vendor request intercepted:** a reset link
+produced no GA script, no page view and no PostHog event; `/shop?token=…&email=…` produced one page
+view with both values redacted; the token and the email appeared in no `dataLayer` entry and no
+intercepted request.
+
+### 1.36.2 The storefront survives a database outage now
+
+Measured by pointing a second server at the development database with a wrong password. **Before:
+every route answered a bare 500 with no header, navigation or footer — including `/help/faq`.** The
+root layout and the header read the signed-in customer and the bag for its badge; those reads threw,
+and an error in the root layout is one no boundary inside it can catch. `getShell` and
+`getSeoDefaults` already fell back; these did not.
+
+- `getShellSession()` (`lib/navigation/shell-session.ts`) wraps the two reads: a failure means a
+  signed-out shell with no badge, and the cart drawer says `CART_COPY.failed` (*"We could not load
+  your bag just now"*) rather than claiming the bag is empty.
+- `(frontend)/error.tsx` is new: the branded error **inside** the shell, with `retry()` (Next 16's
+  re-fetch, not `reset()`), a different sentence when `navigator.onLine` is false, the error's digest
+  as a reference, a DSN-guarded Sentry capture, and `noindex`.
+
+**After:** `/` and `/shop` render normally; `/help/faq`, `/journal`, `/product/field-jacket` and `/cart`
+return **500** and render *"This page could not be shown."* with header, footer and *Try again*; the
+order page renders its own sentence (§1.36.4). The raw HTML of an erroring page is Next's error shell,
+replaced on hydration by the boundary — which is how Next delivers a server error to a client boundary,
+and why the check was made in a browser rather than with `curl`.
+
+**A malformed URL is a 404, not a 500.** `/product/%E0%A4%A` — an incomplete UTF-8 sequence — made Next
+throw decoding the dynamic segment and answered with a 21-byte *Internal Server Error*. The proxy now
+matches the dynamic-segment routes and rewrites an undecodable path to a path no route claims, which
+renders the branded not-found with a 404. `tests/unit/proxy.test.ts` pins which paths it touches.
+
+### 1.36.3 Security checks that explain themselves, and one that waits to be used
+
+The Turnstile keys were in Vercel for the same deploy, so two more of the audit's pre-deploy items
+became live: a blocked widget left every guarded form — **sign-in included** — answering *"Please try
+again"*, which could never work (R1-22); and the footer newsletter, on every page, ran a Cloudflare
+challenge on every page view (R3-07).
+
+- **Explicit rendering** (`api.js?render=explicit`, `turnstile.render()` on `onReady`). Implicit
+  rendering scans the page once, so a widget mounted later — after a client navigation, or on demand —
+  was never rendered.
+- **It says so when it cannot load:** the script's `onError`, the widget's `error-callback` and an
+  eight-second check for `window.turnstile` all put *"The security check couldn't load… Allow
+  challenges.cloudflare.com, or try another connection"* in the reserved box, as an alert.
+- **The newsletter activates it on the form's first focus.** Sign-in, registration and reviews stay
+  eager — their forms are the page.
+
+Verified with Cloudflare's always-pass test keys: `/login` writes a token and sign-in succeeds through
+the server check; with `challenges.cloudflare.com` blocked the explanation appears; the footer makes
+**no** Cloudflare request until the email field is focused, then renders and writes a token.
+
+### 1.36.4 Plan §31.1f — checkout states
+
+- **The success page says what happened.** It had one branch — paid, or *"Confirming your payment…
+  we will email you either way"* — which a declined, abandoned or never-sent order also received.
+  `confirmationCopy(status)` (`lib/checkout/confirmation-copy.ts`) gives each payment status its own
+  heading, sentence and summary label; only `pending_payment` promises an email; a failed or
+  incomplete order offers the bag back. `tests/unit/checkout-confirmation.test.ts` asserts every
+  status.
+- **An unreadable order is not a missing one.** `readOrderForConfirmation` caught every error as
+  "not found", so during an outage a customer who had just paid read *"We could not find that order…
+  it may belong to a different account"*. Only Payload's 404 means not found now; anything else gets
+  *"We can't show your order right now. If you paid, your payment is safe and your confirmation email
+  is on its way."* Verified on the outage server.
+- **Session expired mid-checkout** said *"Your bag is empty"* to someone whose bag was intact. Two
+  changes, because the first alone could not work:
+  - `hasSignedOutBag()` recognises a bag on this device that belongs to a signed-out customer; the
+    bag page then says *"Your session has ended. Sign in to see your bag — everything in it is
+    saved"*, checkout redirects to `/login?next=/checkout&expired=1`, and the sign-in page says why.
+  - **The bag cookie is no longer cleared at sign-in** — it now names the customer's bag. It was
+    cleared at every sign-in, which left an expired session nothing to recognise the bag by. It
+    exposes nothing: `resolveCart` refuses an owned bag to an anonymous request whatever the cookie
+    says (Phase 14's second sweep). An explicit sign-out still forgets it; an expiry does not. This
+    is a deliberate change to Phase 14's merge, recorded here.
+
+  Verified end to end: a guest bag carried through sign-in; with the session cookie removed, `/cart`
+  said the session had ended, `/checkout` went to sign-in with the notice, and signing in returned to
+  `/checkout` with the bag intact.
+- The payment-unavailable checkout's only action is a button, not a 17px link.
+
+Invalid address, shipping unavailable, payment declined, payment pending and the webhook-not-yet-landed
+states already existed (Phases 16–18) and are unchanged.
+
+### 1.36.5 Plan §31.1e — "price changed", the one cart state that did not exist
+
+Cart lines stored no price — a recorded decision, and still true of anything charged. The customer was
+charged the live price, which is right, but nothing ever said a price had moved since they added it.
+
+`cart_items.price_seen_minor` records the unit price the customer was looking at when they last added
+or changed the line. **Never charged, never trusted** — the collection description still holds. When it
+differs from today's price, the line says *"Was £X when you added it"* and the bag, the drawer and the
+checkout page say *"A price in your bag has changed since you added it. You pay the price shown."*
+Changing the quantity is looking at today's price, so it becomes the seen one. Lines from before the
+migration, and lines a sign-in merge carried over, have no seen price and show no notice — the shop
+cannot vouch for them. `priceMovedFrom` is pure and unit-tested; the notice was verified by giving a
+test bag a different seen price.
+
+The migration was generated (`pnpm migrate:create`), not written, and trimmed to `{ db }` as
+`docs/DATABASE.md` §4 requires; the development branch received it by push. **Production receives it
+on the next deploy**, through `pnpm build:deploy` (`payload migrate && next build`); it adds one
+nullable column.
+
+Empty, stale item, out-of-stock item and expired promotion were already handled (Phases 14–15).
+
+### 1.36.6 Plan §31.1c — "search service unavailable" read as an empty shop
+
+- The polite live region above the unavailable panel announced **"No products"** first, so a screen
+  reader heard an outage as an empty catalogue. The toolbar says nothing when the engine failed.
+- *"Search is briefly unavailable"* is false when search is not configured at all — production's state
+  until TODO.md's Algolia item is done. The sentences are now true for both an outage and a service
+  that is off.
+- With search unconfigured, `/search` no longer shows the Filter drawer and sort select, which could
+  only rewrite the URL of a search that cannot run. A configured index that is merely down keeps them:
+  clearing a facet is a real escape there.
+
+Empty filter and no products were already distinct states (Phases 11–12).
+
+### 1.36.7 What was already right, and the decisions this phase records
+
+- **§31.1b product states** — unpublished, deleted and scheduled products 404 through
+  `publishedProductWhere` (Phase 13), sold-out and unavailable variants are disabled and explained
+  (Phase 13), missing media renders `MediaImage`'s placeholder (Phase 8). `verify:product` asserts them.
+- **§31.1d account states** — signed out redirects to sign-in with `next` (the proxy), and no orders,
+  an empty wishlist and no addresses each have their own copy.
+- **Unauthorized** is the sign-in redirect. **Forbidden** is deliberately rendered as *not found*: a
+  customer asking for another customer's order is told it does not exist, so an order number cannot
+  be used to learn that one exists. Next's experimental `forbidden()`/`unauthorized()` are not used.
+- **Loading.** No route-level `loading.tsx`, deliberately: a route that can 404 must decide that before
+  the first byte, and a `loading.tsx` streams a 200 first. The catalogue's own `Suspense` fallback
+  is the loading state that matters, and its card skeleton now uses the real card's line boxes (it
+  was 6–7px short per card, about 80px over a page of 24).
+- **Maintenance.** No maintenance mode: the error boundary inside the shell, and `global-error.tsx`
+  for the layout itself, are the fallback §31.1a lists. A planned maintenance window would be a Vercel
+  deployment decision, not application code.
+- **A streamed error on `/shop` still answers 200** (audit R3-25): the results stream inside a
+  `Suspense` boundary after the first byte. The error boundary marks it `noindex`; changing the status
+  would mean resolving the catalogue before the first byte, which is the streaming Phase 12 chose.
+
+### 1.36.8 The build caught one of this phase's own fixes, and what was verified
+
+**`getShellSession` swallowed Next's interrupts.** Its `try/catch` caught everything — including the
+dynamic-usage signal `cookies()` and `headers()` throw while a route is prerendered. The build then
+treated `/help/faq` and `/collections` as static and would have baked a signed-out shell with an empty
+bag into both, for every visitor. The build log said so (*"Route /help/faq couldn't be rendered
+statically because it used `headers`"*, printed from inside the new catch). Both catches now call
+`unstable_rethrow(error)` first — Next's documented way to let `notFound`, `redirect` and dynamic-usage
+through a `try/catch` — and the rebuilt route table shows `/help/faq`, `/collections`, `/journal`,
+`/lookbook`, `/edit` and `/shop` dynamic again. A guest with a bag sees *"Bag, 1 item"* on each; the
+outage server still renders the shell and the branded error.
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck`, `pnpm lint --max-warnings 0`, `pnpm format:check` | pass |
+| `pnpm build` | pass; per-visitor routes dynamic |
+| `pnpm test:run` | **829** (fourteen new: confirmation copy per status, the malformed-path rule, the price-changed rule) |
+| Twenty-two `verify:*` harnesses | **all pass** |
+| Analytics redaction | no token or email in any `dataLayer` entry or intercepted vendor request |
+| Turnstile, with Cloudflare's test keys | token written; sign-in through the server check; explanation when blocked; newsletter silent until focused |
+| Database outage, second server with a wrong password | shell and branded error with 500 where a page needs the database; `/` and `/shop` render; the order page's own sentence |
+| Malformed URL | 404, branded, in the shell |
+| Session expiry, end to end | bag intact after signing back in; checkout resumed |
+| Price changed | line and bag notices |
+| Dynamic 404s (`/product/…`, `/journal/…`, `/shop/…`) | 404, branded, `noindex`, in the shell |
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -10396,4 +10593,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 28 — admin experience | 2026-09-09 | Notes **§1.33**. **No dependency and no migration** — `migrate:create` reports no schema changes, because everything here is admin metadata, field access, a hook or a validation; the one new field, `promotions.liveNow`, is `virtual`. **Two findings were bugs, not missing config.** `admin.readOnly` on `products.derived` was decorative — Payload's readOnly is a widget attribute and the value stays in the submit body — so the ordinary flow (open product → add sizes in the drawer → save) **wrote back the pre-variant copy of `derived`**, nulled `priceFromMinor` and withdrew the product from the shop on a save the editor thought was a no-op. And every money column on an order was freely editable by staff, in the panel and over REST, on a record with no version history: the closest thing to a fake refund this admin permitted was typing a smaller total. **§28.1d's one missing guardrail** was publishing a product with no active priced variant — the save succeeded, the sidebar said Published, and `publishedProductWhere` then hid it from the shop, search and the sitemap with no message anywhere, because the rule that hid it lives in a query an editor never sees. Now refused on the transition, reading the same column that query reads. Duplicate deliberately slips past it (verified against Payload's source: a duplicate saves immediately, so refusing leaves an error with no form to act on it), and a missing image is deliberately not malformed, because §8.1d answers one with a placeholder. The other four guardrails already existed and were **verified rather than assumed**, including that Postgres refuses negative stock (23514) and duplicate SKUs (23505) past validation entirely. **No `admin.components` were added at all** — the prompt forbids unnecessary dashboard complexity, and everything is description, access, validate, filterOptions or a hook. **Sweep 1: the footer pointed at eight routes and none of them existed** — every Help and legal link, on every page. Three are now real and their content had been in the CMS for phases (`/help/faq` renders a collection that rendered NOWHERE — Phase 23's defect again); the rest are removed rather than faked, and Privacy/Terms are refused on principle because inventing privacy copy is a false statement about personal data on the page a regulator reads first (gap **G-19**). Also: `seoField()`'s `publishedAt` description was true of products and false for the four editorial collections, and a moderator could rewrite a customer's review body and rating — §21.1b defines moderation as three states, not as authoring. **Sweep 2** verified the Duplicate escape against Payload's own source rather than a report, and found the hole in the **harness**: it proved the payment axis could not be typed and never touched the amounts Phase 28 had just locked. New harness `pnpm verify:admin` — **87/87**. |
 | Phase 29 — content seeding and demo data | 2026-09-10 | Notes **§1.34**. **No dependency and no migration.** Ten products became **twenty-eight** across all ten categories §29.1b names, and **every harness in the project ran and passed for the first time — 1,819 checks across twenty-two**, plus 813 Vitest tests. The seed writes customers, orders and reviews, reversing an argument it had made since Phase 6 (*"a commerce demo whose order list is fiction is worse than one whose order list is empty"*) — because four features cannot be demonstrated empty, and the docblock now makes that argument rather than contradicting it. Kept honest by `@example.test` addresses that cannot receive mail (Phase 19's queue would try), a `verifiedPurchase` badge set only where a paid order really exists, varied ratings including a pending and a rejected, and passwords in a git-ignored file. **`generate:media` duplicated all 78 assets on a second run** — and the obvious repair, `--clean`, would have taken **production's images down**, because development and production address the same Cloudinary objects; every field was repointed at the ORIGINAL instead and only the new copies deleted. Every loop is incremental now. **Sweep 1 ran twenty-two harnesses and four were wrong**: `verify:lookbook` and `verify:editorial` could not start at all (the third instance of the `server-only`-under-the-CLI trap, fixed with a tsconfig path whose safety was **verified** by making the build refuse a real leak); `verify:account` failed nine checks against correct behaviour, its Phase 20 fixture having never run; `verify:shell` asserted a footer row Phase 28 deliberately emptied. And **`verify:catalog` found a real defect twenty-seven phases could not**: Postgres broke a price tie on `slug` and the Algolia replicas broke it on nothing, which passed for ten products with ten distinct prices and failed the moment twenty-eight produced four ties — both engines now end on `asc(sortOrder)`, a total order on both sides. The harness itself was also wrong, filtering its fixtures out of one engine's page after fetching rather than in the query. **Sweep 2: eighteen of twenty-eight products belonged to no collection**, so they were reachable only from the shop grid — absent from `/collections/*`, the homepage feature and the collection filter facet. Idempotency is asserted by running both scripts twice and comparing counts, not by reading the upserts and believing them. |
 | Phase 30 — performance and responsive polish | 2026-09-11 | Notes **§1.35**. **No dependency and no migration.** The phase opened by asking a browser for every navigation href and found four 404s: Phase 23 had built `/edits/[slug]` while every link in the shop said `/edit/`, and `/collections` and `/edit` had no index at all. **The product page spent 2.1s before its first byte**, none of it images: a depth-2 read populating a discarded variants join, two independent reads awaited in series, and no storefront read anywhere turning off joins — 2.09s → 1.07s, with collection and edit pages close behind. **First-load JavaScript fell about a third** (home 369,897 → 256,295 B gzip): all of Zod shipped to every route to re-check ten public strings the server had validated at boot, and the Sentry SDK shipped with no DSN configured; ESLint now forbids both in the files every client graph contains. **Sweep 1's worst finding was the phase's own regression** — a populate-select without `status` dropped every lookbook hotspot, missed by a DOM diff whose fixtures had no hotspot to lose; `verify:editorial` now resolves every lookbook two ways and was proven by putting the bug back. Sweep 1 also fixed a 0.36-CLS gallery shift on choosing a size, a mobile filter drawer that closed after every tick (it lived inside a keyed Suspense boundary), a cart page that scrolled sideways at 320, a cart drawer that showed no lines in landscape, 14px inputs that made iOS zoom, and a CLI path that orphaned a search-index record on every `verify:search` run. **Sweep 2 found that no shop-the-look hotspot had ever opened** — since Phase 22, a `preventDefault` meant to stop the anchor also stopped Radix's toggle — and that Add to bag opened nothing, though structure §13 draws the drawer. Mid-sweep the development database stopped accepting its password after production moved to a new Neon account; it was rebuilt on `ep-wandering-surf-ax7ia116` with the project's own idempotent scripts, and every harness passed on it: **1,829 checks**, plus 815 Vitest tests. **DEV-07 amended** from six primary items to five: ABOUT had no page behind it. |
+| Phase 31 — error, empty and loading states | 2026-09-11 | Notes **§1.36**. **One migration** (`cart_items.price_seen_minor`, nullable, display only), no dependency. **Began with a live leak from Phase 30's deploy**: the GA4 ID was already in Vercel, so that build was the first to load `gtag`, whose `page_location` carried every opened password-reset link's token to Google — hotfixed (`95c040b`) and verified with every vendor request intercepted, with one source of page views and idle loading. **The storefront now survives a database outage**: measured with a second server on a wrong password, every route including `/help/faq` was a bare 500 because the root layout's customer and bag reads threw; they degrade to a signed-out shell, and a new `(frontend)/error.tsx` renders inside it with retry. A malformed URL is a branded 404, not a 21-byte 500. Turnstile explains itself when blocked (it was locking sign-in with "try again") and the footer newsletter loads it on first focus. The success page says what happened for each payment status; an unreadable order is not reported as a missing one; an expired session is a sign-in, not "your bag is empty" — which required keeping the bag cookie through sign-in. "Price changed" now exists. The degraded search no longer announces "No products" or offers controls that can change nothing. **The build caught one of the phase's own fixes**: a `try/catch` swallowed Next's dynamic-usage interrupt and would have made per-visitor routes static with a signed-out shell baked in — `unstable_rethrow` first. 829 tests; all 22 harnesses. |
 > **Append this table, and the sections above it, at the end of every phase.**

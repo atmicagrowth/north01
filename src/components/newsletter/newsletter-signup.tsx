@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 
 import { useActionResult } from '@/components/analytics/use-action-result'
 import { trackEvent } from '@/lib/analytics/track'
@@ -46,6 +46,12 @@ import { TurnstileWidget } from '@/components/security/turnstile-widget'
  */
 export function NewsletterSignup() {
   const [state, action, pending] = useActionState(subscribe, initialNewsletterFormState)
+  /*
+   * The security check waits for the form to be used. This footer is on every page, and mounted
+   * eagerly Turnstile ran a third-party challenge on every page view before anyone touched it
+   * (§30.1c). The first focus inside the form loads it — long before the customer can submit.
+   */
+  const [engaged, setEngaged] = useState(false)
 
   /*
    * **§25.1a's `newsletter_signup`, on a successful subscribe.** Not on submit: the action
@@ -82,6 +88,7 @@ export function NewsletterSignup() {
         aria-labelledby="newsletter-heading"
         className="mt-m flex flex-col gap-4"
         noValidate
+        onFocusCapture={() => setEngaged(true)}
       >
         <FormStatus state={state} />
 
@@ -102,7 +109,7 @@ export function NewsletterSignup() {
           error={state.fieldErrors.newsletterEmail}
         />
 
-        <TurnstileWidget submissionCount={state.submissionCount} />
+        <TurnstileWidget active={engaged} submissionCount={state.submissionCount} />
 
         <Button type="submit" variant="secondary" loading={pending}>
           Sign up

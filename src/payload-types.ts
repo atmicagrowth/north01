@@ -1946,6 +1946,10 @@ export interface CartItem {
    * Availability is checked against live stock on every mutation, not by this bound.
    */
   quantity: number;
+  /**
+   * The unit price, in minor units, the customer saw when they last added or changed this line. Display only — never charged.
+   */
+  priceSeenMinor?: number | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -2843,6 +2847,7 @@ export interface CartItemsSelect<T extends boolean = true> {
   product?: T;
   variant?: T;
   quantity?: T;
+  priceSeenMinor?: T;
   updatedAt?: T;
   createdAt?: T;
 }

@@ -239,9 +239,19 @@ export function ProductCardSkeleton() {
     <div data-slot="product-card-skeleton">
       <Skeleton className="aspect-[4/5] w-full" />
 
-      <div className="mt-s flex flex-col gap-2">
-        <Skeleton className="h-4 w-2/3" />
-        <Skeleton className="h-3 w-1/3" />
+      {/*
+        The real card's line boxes, not guessed bar heights: `gap-1` and the same two type sizes, with
+        each bar sitting inside a line of that size. The guessed version was 6-7px short per card —
+        about 80px over a page of 24 — so the page grew when the products arrived (Phase 30's
+        measurement, fixed in Phase 31).
+      */}
+      <div className="mt-s flex flex-col gap-1">
+        <div className="font-sans text-body-sm">
+          <Skeleton className="inline-block h-4 w-2/3 align-middle" />
+        </div>
+        <div className="font-sans text-meta">
+          <Skeleton className="inline-block h-3 w-1/3 align-middle" />
+        </div>
       </div>
     </div>
   )

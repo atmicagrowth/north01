@@ -22,6 +22,7 @@ export function CatalogToolbar({
   ignored,
   params,
   total,
+  unavailable = false,
 }: {
   basePath: string
   /** False when the engine stopped counting precisely — the label then says "About …". */
@@ -29,6 +30,12 @@ export function CatalogToolbar({
   ignored: IgnoredFilter[]
   params: CatalogParams
   total: number
+  /**
+   * The engine failed, so there is no count. The polite live region announced "No products" above
+   * the unavailable panel, and a screen reader heard that first — a service outage read as an
+   * empty shop, which §11.1d forbids.
+   */
+  unavailable?: boolean
 }) {
   return (
     <div className="flex flex-col gap-m" data-slot="catalog-toolbar">
@@ -40,7 +47,7 @@ export function CatalogToolbar({
           newsletter form, which announced nothing on a failed submit.
         */}
         <p aria-live="polite" className="font-sans text-meta uppercase text-foreground-muted">
-          {productCountLabel(total, exhaustive)}
+          {unavailable ? null : productCountLabel(total, exhaustive)}
         </p>
 
         {/*

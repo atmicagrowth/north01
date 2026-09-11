@@ -10,6 +10,7 @@ import * as migration_20260907_073432_phase_12_search from './20260907_073432_ph
 import * as migration_20260908_054841_phase_17_checkout from './20260908_054841_phase_17_checkout';
 import * as migration_20260908_071034_phase_18_order_system from './20260908_071034_phase_18_order_system';
 import * as migration_20260909_053604_phase_19_email from './20260909_053604_phase_19_email';
+import * as migration_20260911_142556_cart_item_price_seen from './20260911_142556_cart_item_price_seen';
 
 export const migrations = [
   {
@@ -70,6 +71,11 @@ export const migrations = [
   {
     up: migration_20260909_053604_phase_19_email.up,
     down: migration_20260909_053604_phase_19_email.down,
-    name: '20260909_053604_phase_19_email'
+    name: '20260909_053604_phase_19_email',
+  },
+  {
+    up: migration_20260911_142556_cart_item_price_seen.up,
+    down: migration_20260911_142556_cart_item_price_seen.down,
+    name: '20260911_142556_cart_item_price_seen'
   },
 ];

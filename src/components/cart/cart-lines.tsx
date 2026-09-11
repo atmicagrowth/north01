@@ -136,6 +136,12 @@ export function CartLineRow({
           </span>
         </div>
 
+        {line.priceChangedFromLabel ? (
+          <p className="font-sans text-meta text-foreground-muted">
+            {`Was ${line.priceChangedFromLabel} when you added it.`}
+          </p>
+        ) : null}
+
         {buyable && reduced ? (
           <p className="font-sans text-meta text-foreground-muted">
             {`You asked for ${line.quantity}. Only ${line.maxQuantity} left, so that is what this line is for.`}

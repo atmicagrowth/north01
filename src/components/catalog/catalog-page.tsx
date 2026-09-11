@@ -30,6 +30,7 @@ import {
 } from '@/lib/catalog/query'
 import { SEARCH_PATH } from '@/lib/catalog/search'
 import { formatMinorUnits } from '@/lib/money'
+import { integrationStatus } from '@/lib/env.server'
 
 /**
  * **`/shop` and `/shop/<category>`, which are the same page.**
@@ -162,13 +163,23 @@ export async function CatalogPage({
               `flex-wrap`: at 320px the Filter button and a readable sort select cannot share 280px,
               so Sort takes its own line rather than truncating its label ("Featurec").
             */}
-            <div className="mb-m flex flex-wrap items-center gap-m lg:justify-end">
-              <div className="lg:hidden">
-                <FilterDrawer routeCategory={routeCategory} vocabulary={vocabulary} />
-              </div>
+            {/*
+              **No controls that cannot change anything** (plan §31.1c, audit R1-20). Every search
+              result, sort and facet comes from the index, so with search not configured — production's
+              state until TODO.md's Algolia item is done — the Filter drawer's forty controls and the
+              sort select could only rewrite the URL of a search that cannot run. The category links
+              the unavailable panel offers are the working way on. A configured index that is merely
+              down keeps them, since clearing a facet is a real escape there.
+            */}
+            {scope === 'search' && integrationStatus('algolia') !== 'configured' ? null : (
+              <div className="mb-m flex flex-wrap items-center gap-m lg:justify-end">
+                <div className="lg:hidden">
+                  <FilterDrawer routeCategory={routeCategory} vocabulary={vocabulary} />
+                </div>
 
-              <SortControl value={canonical.sort} />
-            </div>
+                <SortControl value={canonical.sort} />
+              </div>
+            )}
 
             <Suspense
               key={canonicalHref}
@@ -266,6 +277,7 @@ async function CatalogResults({
         ignored={ignored}
         params={params}
         total={result.totalProducts}
+        unavailable={result.engine === 'unavailable'}
       />
 
       <ActiveFilters

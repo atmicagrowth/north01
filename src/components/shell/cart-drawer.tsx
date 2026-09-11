@@ -47,7 +47,16 @@ import type { ShellNavItem } from '@/lib/navigation/resolve'
  * page load. The trade is that the drawer's contents are as fresh as the last server render, which is
  * exactly what `revalidatePath` in the actions guarantees after every mutation.
  */
-export function CartDrawer({ cart, items }: { cart: CartView | null; items: ShellNavItem[] }) {
+export function CartDrawer({
+  cart,
+  items,
+  unavailable = false,
+}: {
+  cart: CartView | null
+  items: ShellNavItem[]
+  /** The bag could not be read — plan §31.1a/§14.1e. It is not empty, and must not say it is. */
+  unavailable?: boolean
+}) {
   const { close, isOpen, setOpen, handleCloseAutoFocus } = useShellOverlay()
 
   /*
@@ -95,11 +104,15 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
       >
         {lines.length === 0 ? (
           <div className="flex flex-col items-start gap-m px-m py-xl">
-            <p className="font-display text-heading-m text-foreground">{CART_COPY.empty}</p>
-
-            <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
-              {CART_COPY.emptyDetail}
+            <p className="font-display text-heading-m text-foreground">
+              {unavailable ? CART_COPY.failed : CART_COPY.empty}
             </p>
+
+            {unavailable ? null : (
+              <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
+                {CART_COPY.emptyDetail}
+              </p>
+            )}
 
             {browse ? (
               /*
@@ -140,6 +153,15 @@ export function CartDrawer({ cart, items }: { cart: CartView | null; items: Shel
                 role="status"
               >
                 {CART_COPY.revalidated}
+              </p>
+            ) : null}
+
+            {lines.some((line) => line.priceChangedFromLabel) ? (
+              <p
+                className="mb-m rounded-sm border border-border bg-surface px-m py-2 font-sans text-body-sm text-foreground-muted"
+                role="status"
+              >
+                {CART_COPY.priceChanged}
               </p>
             ) : null}
 

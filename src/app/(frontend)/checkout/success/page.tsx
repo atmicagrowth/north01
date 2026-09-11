@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { unstable_rethrow } from 'next/navigation'
 
 import { TrackPurchase } from '@/components/analytics/track-purchase'
 import { PageContainer } from '@/components/layout/page-container'
@@ -8,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Link } from '@/components/ui/link'
 import { getCustomer } from '@/lib/auth/session'
 import { readOrderForConfirmation } from '@/lib/checkout/confirmation'
+import { CONFIRMATION_UNREADABLE, confirmationCopy } from '@/lib/checkout/confirmation-copy'
 import { formatMinorUnits } from '@/lib/money'
 import { privateMetadata } from '@/lib/seo/metadata'
 
@@ -57,8 +59,41 @@ export default async function CheckoutSuccessPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>
 }) {
   const params = await searchParams
-  const customer = await getCustomer()
-  const order = await readOrderForConfirmation(params.order, customer?.id ?? null)
+  /*
+   * **A read that throws is the database, not the order** (plan §31.1f, audit R3-14). This caught
+   * every error as "no such order", so during an outage a customer who had just paid was told "We
+   * could not find that order … it may belong to a different account". A missing or foreign order
+   * still gets that answer below; an unreadable one gets the truth.
+   */
+  let order: Awaited<ReturnType<typeof readOrderForConfirmation>>
+
+  try {
+    const customer = await getCustomer()
+
+    order = await readOrderForConfirmation(params.order, customer?.id ?? null)
+  } catch (error) {
+    /*
+     * Next's own interrupts first. `cookies()` and `headers()` throw a dynamic-usage signal while a
+     * route is being prerendered, and `notFound()`/`redirect()` throw too; swallowing them turned
+     * per-visitor routes into static ones with a signed-out, empty-bag shell baked in. Phase 31's
+     * build caught exactly that on /help/faq and /collections.
+     */
+    unstable_rethrow(error)
+
+    console.error('[checkout] The order could not be read for the confirmation page.', error)
+
+    return (
+      <Section spacing="tight">
+        <PageContainer>
+          <PageTitle eyebrow="Order">{CONFIRMATION_UNREADABLE.title}</PageTitle>
+
+          <p className="mt-m max-w-measure font-sans text-body text-foreground-muted">
+            {CONFIRMATION_UNREADABLE.body}
+          </p>
+        </PageContainer>
+      </Section>
+    )
+  }
 
   if (!order) {
     return (
@@ -83,6 +118,7 @@ export default async function CheckoutSuccessPage({
 
   const money = (minor: number) => formatMinorUnits(minor, order.currency, order.locale) ?? '—'
   const paid = order.paymentStatus === 'paid'
+  const copy = confirmationCopy(order.paymentStatus)
 
   return (
     <>
@@ -113,15 +149,20 @@ export default async function CheckoutSuccessPage({
 
       <Section spacing="tight">
         <PageContainer>
-          <PageTitle eyebrow={paid ? 'Order confirmed' : 'Order received'}>
-            {paid ? 'Thank you' : 'Confirming your payment'}
-          </PageTitle>
+          {/* Plan §31.1f: what happened, by status — see `lib/checkout/confirmation-copy.ts`. */}
+          <PageTitle eyebrow={copy.eyebrow}>{copy.title}</PageTitle>
 
           <p className="mt-m max-w-measure font-sans text-body text-foreground-muted">
-            {paid
-              ? 'Your payment has been confirmed and your order is with us.'
-              : 'Your payment is being confirmed. This usually takes a few seconds — refresh this page, and we will email you either way.'}
+            {copy.body}
           </p>
+
+          {copy.offerBag ? (
+            <Button asChild className="mt-l">
+              <Link href="/cart" variant="unstyled">
+                Back to your bag
+              </Link>
+            </Button>
+          ) : null}
         </PageContainer>
       </Section>
 
@@ -141,7 +182,7 @@ export default async function CheckoutSuccessPage({
             <div className="flex items-baseline justify-between">
               <dt className="text-foreground-muted">Status</dt>
               <dd className="text-foreground" data-slot="order-status">
-                {paid ? 'Paid' : 'Awaiting confirmation'}
+                {copy.statusLabel}
               </dd>
             </div>
 

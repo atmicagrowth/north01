@@ -437,10 +437,26 @@ export const CART_COPY = {
   /** §14.1e's *"product becomes unavailable"* — the line is still shown, and cannot be bought. */
   lineUnavailable: 'No longer available',
   mutationFailed: 'That did not save. Your bag has been reloaded — please try again.',
+  /** Plan §31.1e — above the lines when any line's price moved since it was added. */
+  priceChanged: 'A price in your bag has changed since you added it. You pay the price shown.',
   /** Shown once, above the lines, after a merge or a revalidation changed something. */
   revalidated: 'Your bag was updated to match what is in stock.',
   soldOut: 'Sold out',
 } as const
+
+/**
+ * **The price a line was added at, if it is no longer the price.** Plan §31.1e.
+ *
+ * `seen` is the stored `cart-items.priceSeenMinor`; `live` is today's price, read fresh. Returns the
+ * old price only when both are real prices and they differ — an unknown on either side is not a
+ * change, and claiming one would be the notice lying rather than the price.
+ */
+export function priceMovedFrom(seen: unknown, live: null | number): null | number {
+  if (typeof seen !== 'number' || !Number.isSafeInteger(seen) || seen < 0) return null
+  if (live === null || !Number.isSafeInteger(live)) return null
+
+  return seen === live ? null : seen
+}
 
 /** The sentence for a clamp, or `null` when the customer got what they asked for. */
 export function clampNotice(clamped: ClampedQuantity): null | string {

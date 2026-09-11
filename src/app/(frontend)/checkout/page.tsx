@@ -9,9 +9,11 @@ import { CheckoutForm } from '@/components/checkout/checkout-form'
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
+import { Button } from '@/components/ui/button'
 import { Link } from '@/components/ui/link'
 import { getCustomer } from '@/lib/auth/session'
-import { getCart } from '@/lib/cart/cart'
+import { CART_COPY } from '@/lib/cart/rules'
+import { getCart, hasSignedOutBag } from '@/lib/cart/cart'
 import { isStripeConfigured } from '@/lib/checkout/stripe'
 import { getCatalogSettings } from '@/lib/catalog/catalog'
 import { shippingProvider } from '@/lib/shipping/provider'
@@ -43,6 +45,11 @@ export default async function CheckoutPage() {
   const cart = await getCart(customer?.id ?? null)
 
   if (!cart || cart.lines.length === 0) {
+    /* Plan §31.1f: a session that ended mid-checkout is a sign-in, not an empty bag. */
+    if (!cart && !customer && (await hasSignedOutBag())) {
+      redirect('/login?next=%2Fcheckout&expired=1')
+    }
+
     redirect('/cart')
   }
 
@@ -109,6 +116,16 @@ export default async function CheckoutPage() {
         <PageContainer>
           <div className="grid gap-l lg:grid-cols-12">
             <div className="lg:col-span-7">
+              {/* Plan §31.1e, carried to the last page before payment: the price moved, and this is it. */}
+              {cart.lines.some((line) => line.priceChangedFromLabel) ? (
+                <p
+                  className="mb-m rounded-sm border border-border bg-surface px-m py-3 font-sans text-body-sm text-foreground-muted"
+                  role="status"
+                >
+                  {CART_COPY.priceChanged}
+                </p>
+              ) : null}
+
               {configured ? (
                 <CheckoutForm
                   currency={cart.currency}
@@ -127,9 +144,15 @@ export default async function CheckoutPage() {
                     Card payment is the last piece and it is not switched on for this environment.
                   </p>
 
-                  <Link href="/cart" variant="meta">
-                    Back to your bag
-                  </Link>
+                  {/*
+                    A button, not a 17px text link: it is the only action on this screen, and a phone
+                    user needs to be able to hit it. The same shape `checkout/cancelled` uses.
+                  */}
+                  <Button asChild className="self-start">
+                    <Link href="/cart" variant="unstyled">
+                      Back to your bag
+                    </Link>
+                  </Button>
                 </div>
               )}
             </div>

@@ -100,5 +100,25 @@ export const CartItems: CollectionConfig = {
           ? true
           : 'A whole number between 1 and 99.',
     },
+    {
+      /**
+       * **The unit price the customer was shown when they last put this line in the bag** — plan
+       * §31.1e's "price changed". Never charged and never trusted: the charge is always the live
+       * price, read fresh on every request, which is why the collection description above still holds.
+       * It exists only so the bag can say *"this was £X when you added it"* instead of letting a price
+       * move without a word.
+       *
+       * Written when a line is added and when its quantity is changed — both moments the customer is
+       * looking at the current price. `null` for lines from before Phase 31 and for lines a sign-in
+       * merge carried over, which the shop cannot vouch for; `null` simply shows no notice.
+       */
+      name: 'priceSeenMinor',
+      type: 'number',
+      admin: {
+        readOnly: true,
+        description:
+          'The unit price, in minor units, the customer saw when they last added or changed this line. Display only — never charged.',
+      },
+    },
   ],
 }

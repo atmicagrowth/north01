@@ -1,9 +1,8 @@
 import { AnnouncementBar } from '@/components/layout/announcement-bar'
 import { HeaderBar } from '@/components/shell/header-bar'
-import { getCustomer } from '@/lib/auth/session'
-import { getCart } from '@/lib/cart/cart'
 import { cn } from '@/lib/cn'
 import { getShell } from '@/lib/navigation/shell'
+import { getShellSession } from '@/lib/navigation/shell-session'
 
 /**
  * SiteHeader — plan §9.1a, mounted in the storefront root layout.
@@ -33,8 +32,7 @@ export async function SiteHeader() {
    * drawer below reads the same object — one query, two consumers. It returns `null` when there is
    * no cart at all, which is the common case and costs a single indexed lookup.
    */
-  const customer = await getCustomer()
-  const cart = await getCart(customer?.id ?? null)
+  const { cart } = await getShellSession()
 
   return (
     <>

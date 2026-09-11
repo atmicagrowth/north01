@@ -516,7 +516,8 @@ export async function logout(): Promise<void> {
   await clearSessionCookie(payload, payload.collections.customers.config)
 
   /*
-   * The bag cookie is a guest identity, and this session is over. `resolveCart` refuses an owned
+   * The bag cookie points at this customer's bag (Phase 31 keeps it through sign-in, so an
+   * EXPIRED session can still say "sign in to see your bag"), and this session is over by choice. `resolveCart` refuses an owned
    * cart by token anyway — Phase 14's second sweep made sure of that after measuring the previous
    * account holder's bag surviving a sign-out — so this is the tidy half of a two-part fix.
    */

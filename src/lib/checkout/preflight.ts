@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 
 import type { Payload } from 'payload'
 
-import { getCart, type CartView } from '@/lib/cart/cart'
+import { getCart, hasSignedOutBag, type CartView } from '@/lib/cart/cart'
 import { getCatalogSettings } from '@/lib/catalog/catalog'
 import { getPayloadClient } from '@/lib/payload'
 import { shippingProvider } from '@/lib/shipping/provider'
@@ -122,6 +122,11 @@ export async function runPreflight(
   const cart = await getCart(customerId)
 
   if (!cart || cart.lines.length === 0) {
+    /* A signed-out owner's bag is not an empty bag — see `hasSignedOutBag`. */
+    if (!cart && customerId === null && (await hasSignedOutBag())) {
+      return { ok: false, reason: 'sessionExpired' }
+    }
+
     return { ok: false, reason: 'emptyCart' }
   }
 

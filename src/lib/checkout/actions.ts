@@ -69,6 +69,10 @@ export async function startCheckoutAction(
   const preflight = await runPreflight(customer?.id ?? null, contact)
 
   if (!preflight.ok) {
+    if (preflight.reason === 'sessionExpired') {
+      redirect('/login?next=%2Fcheckout&expired=1')
+    }
+
     if (preflight.reason === 'totalMismatch' || preflight.reason === 'lineUnavailable') {
       redirect('/cart?changed=1')
     }

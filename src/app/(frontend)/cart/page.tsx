@@ -9,7 +9,7 @@ import { Section, SectionHeading } from '@/components/layout/section'
 import { Button } from '@/components/ui/button'
 import { Link } from '@/components/ui/link'
 import { getCustomer } from '@/lib/auth/session'
-import { getCart } from '@/lib/cart/cart'
+import { getCart, hasSignedOutBag } from '@/lib/cart/cart'
 import { CART_COPY } from '@/lib/cart/rules'
 import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import { privateMetadata } from '@/lib/seo/metadata'
@@ -40,6 +40,8 @@ export default async function CartPage() {
   const customer = await getCustomer()
   const cart = await getCart(customer?.id ?? null)
   const lines = cart?.lines ?? []
+  /* Plan §31.1f: the bag is saved, the session is not — see `hasSignedOutBag`. */
+  const signedOutBag = !customer && !cart ? await hasSignedOutBag() : false
 
   return (
     <>
@@ -53,7 +55,21 @@ export default async function CartPage() {
 
       <Section spacing="tight">
         <PageContainer>
-          {lines.length === 0 || !cart ? (
+          {signedOutBag ? (
+            <div className="flex flex-col items-start gap-m">
+              <p className="font-display text-heading-m text-foreground">Your session has ended.</p>
+
+              <p className="max-w-measure font-sans text-body text-foreground-muted">
+                Sign in to see your bag — everything in it is saved.
+              </p>
+
+              <Button asChild className="mt-m">
+                <Link href="/login?next=%2Fcart" variant="unstyled">
+                  Sign in
+                </Link>
+              </Button>
+            </div>
+          ) : lines.length === 0 || !cart ? (
             <div className="flex flex-col items-start gap-m">
               <p className="font-display text-heading-m text-foreground">{CART_COPY.empty}</p>
 
@@ -82,6 +98,15 @@ export default async function CartPage() {
                     role="status"
                   >
                     {CART_COPY.revalidated}
+                  </p>
+                ) : null}
+
+                {lines.some((line) => line.priceChangedFromLabel) ? (
+                  <p
+                    className="mb-m rounded-sm border border-border bg-surface px-m py-3 font-sans text-body-sm text-foreground-muted"
+                    role="status"
+                  >
+                    {CART_COPY.priceChanged}
                   </p>
                 ) : null}
 

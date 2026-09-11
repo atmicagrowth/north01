@@ -131,6 +131,7 @@ export type PreflightFailure =
   | 'lineUnavailable'
   | 'noShippingMethod'
   | 'promotionInvalid'
+  | 'sessionExpired'
   | 'stripeUnconfigured'
   | 'taxUnavailable'
   | 'totalMismatch'
@@ -143,6 +144,7 @@ export const PREFLIGHT_COPY: Record<PreflightFailure, string> = {
     'Something in your bag is no longer available. Your bag has been updated — please review it.',
   noShippingMethod: 'No delivery option is available for that address.',
   promotionInvalid: 'Your discount code is no longer valid. Remove it to continue.',
+  sessionExpired: 'Your session has ended. Sign in to continue — your bag is saved.',
   stripeUnconfigured: 'Payment is not available right now. Please try again shortly.',
   taxUnavailable: 'We could not calculate tax just now. Please try again in a moment.',
   totalMismatch: 'Your bag changed while you were checking out. Please review it.',

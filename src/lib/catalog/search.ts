@@ -431,9 +431,14 @@ export const SEARCH_COPY: Record<SearchState, { body: string; title: string }> =
     title: 'Those pieces have just gone.',
   },
   tooShort: { body: 'Keep typing — two characters or more.', title: 'Keep going.' },
+  /*
+   * Not "briefly". Without search keys — production's state until TODO.md's Algolia item is done —
+   * this is permanent, and a promise that it will pass shortly is one the shop cannot keep. The
+   * sentence has to be true both for an outage and for a service that is not switched on.
+   */
   unavailable: {
-    body: 'Search is not responding right now. Browsing by category still works normally.',
-    title: 'Search is briefly unavailable.',
+    body: 'Browsing by category works normally, and every product is in the shop.',
+    title: 'Search isn’t available right now.',
   },
 }
 
@@ -448,8 +453,8 @@ export function unavailableCopy(scope: 'filters' | 'search'): { body: string; ti
   return scope === 'search'
     ? SEARCH_COPY.unavailable
     : {
-        body: 'Colour, size and collection filters are not responding. The shop itself is unaffected — browse by category, or clear the filters to see everything.',
-        title: 'Filtering is briefly unavailable.',
+        body: 'Colour, size and collection filters aren’t available right now. The shop itself is unaffected — browse by category, or clear the filters to see everything.',
+        title: 'Filtering isn’t available right now.',
       }
 }
 
