@@ -8713,6 +8713,23 @@ could fail, the route walk above repeated with the database up, and the eight-wi
   anyone else). An explicit sign-out has always been the way to leave a shared computer, and it still
   forgets the bag.
 
+### 1.36.10 Sweep 2
+
+A different angle from sweep 1: the new states themselves, at phone width and under axe-core, and the
+architecture document.
+
+- **Every new state at 320, 375 and 1440:** the session-ended bag (after a real guest-bag, sign-in,
+  session-cookie-removed journey), the price-changed bag and its line note — no horizontal overflow at
+  any width.
+- **axe-core** (WCAG 2 A/AA, 2.1 AA, 2.2 AA) on the session-ended bag, the sign-in page with its
+  *"Your session has ended"* notice, the missing-order success page, the degraded search and the
+  price-changed bag: **no violations**.
+- **`docs/ARCHITECTURE.md` still said the storefront does not survive a database outage** (D-32's
+  closing paragraph, and the fallback's "six" primary destinations). D-32 is amended, and two decisions
+  are added: **D-41** (a page fails inside the shell; the shell's per-visitor reads degrade; every
+  render-path `catch` calls `unstable_rethrow` first; an undecodable URL is a 404) and **D-42** (the bag
+  cookie survives sign-in, and why that exposes nothing).
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

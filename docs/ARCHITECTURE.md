@@ -803,8 +803,8 @@ throwing there would report failure for a change that happened.
 
 **Failure.** The `try` is around the *call*, not inside the cached function. A function that throws
 stores nothing, so a database blip degrades one request instead of pinning a degraded header in the data
-cache for five minutes. What it degrades to is `lib/navigation/fallback.ts`: the six primary
-destinations and the structural footer columns — facts about this site's information architecture — and
+cache for five minutes. What it degrades to is `lib/navigation/fallback.ts`: the five primary
+destinations (six until Phase 30 withdrew ABOUT, which had no page) and the structural footer columns — facts about this site's information architecture — and
 **no mega menu, no featured panel, no social links**, because those are merchandising and fabricating
 them would put words in an editor's mouth.
 
@@ -820,6 +820,12 @@ fallback is one of them, and it is **not** the outermost:
 
 So the fallback protects *the shell's own two reads*. It is not, and should not be read as, a promise
 that the storefront survives a database outage; the first row is what does that, and it does it better.
+
+**Amended in Phase 31.** The third row was the whole storefront, not just `/login` and `/account`: the
+root layout and the header also read the signed-in customer and the bag for its badge, those reads
+threw, and an error in the root layout is one no boundary inside it can catch — so with the database
+unreachable, *every* dynamic route, `/help/faq` included, was a bare 500 with no header. D-41 closes
+that: the shell now survives all four of its reads, and a page that needs the database fails inside it.
 
 ---
 
@@ -1016,6 +1022,52 @@ URL can redirect twice — the fixed-point property `verify-catalog` check B2 as
 record as the fix for Phase 11's highest-severity defect.
 
 *Recorded in Phase 12.*
+
+---
+
+### D-41 — A page fails inside the shell; the shell's per-visitor reads degrade, and Next's interrupts pass through
+
+Phase 31, measured with a second server pointed at the database with a wrong password.
+
+- **`lib/navigation/shell-session.ts`** wraps the layout's and the header's two per-visitor reads —
+  the signed-in customer and the bag. A failure is logged and becomes a signed-out shell with no badge;
+  the cart drawer says `CART_COPY.failed` rather than that the bag is empty. `cache()` makes it one read
+  and one failure per render.
+- **`(frontend)/error.tsx`** renders a failed page inside the layout, so the header, navigation and
+  footer survive: branded copy, `retry()` (Next 16's re-fetch — `reset()` only re-renders what failed),
+  an offline sentence when `navigator.onLine` is false, the digest as a reference, `noindex`.
+  `global-error.tsx` remains for the one case it cannot catch, the layout itself.
+- **Every `try/catch` on a render path calls `unstable_rethrow(error)` first.** `cookies()` and
+  `headers()` throw a dynamic-usage signal while a route is prerendered, and `notFound()` and
+  `redirect()` throw too. The first version of the shell wrapper swallowed that signal, and the build
+  would have prerendered `/help/faq` and `/collections` as static pages with a signed-out, empty-bag
+  shell baked in for every visitor. The build log caught it.
+- **An undecodable URL is a 404.** Next throws decoding a malformed percent-encoding into a dynamic
+  segment's params; the proxy (`src/proxy.ts`) matches the dynamic-segment routes and rewrites such a
+  path to one no route claims, which renders the branded not-found.
+
+| With the database unreachable | Before Phase 31 | After |
+|---|---|---|
+| `/`, `/shop` | 500 (root layout) | **200**, signed-out shell |
+| `/help/faq`, `/journal`, a product, `/cart` | 500, no shell | **500**, branded error **inside** the shell, *Try again* |
+| `/checkout/success` | "We could not find that order" | *"We can't show your order right now"* |
+
+A streamed error inside a `Suspense` boundary still answers 200 once the first byte is sent (`/shop`'s
+results): the boundary marks it `noindex`, and changing the status would mean giving up the streaming
+Phase 12 chose.
+
+### D-42 — The bag cookie survives sign-in, so an expired session can be told apart from an empty bag
+
+Phase 14 cleared the bag cookie at every sign-in, treating it as a guest identity only. Phase 31
+(plan §31.1f, "session expired") needed the opposite: once the cookie was gone, a customer whose session
+ran out mid-checkout was told *"Your bag is empty"*, with nothing on the device left to recognise their
+intact bag by. `mergeGuestCart` now leaves the cookie naming the customer's bag, and `hasSignedOutBag()`
+turns *no customer + a cookie that names an owned bag* into *"Your session has ended — sign in"*.
+
+It exposes nothing Phase 14's second sweep protects against: `resolveCart` still refuses an owned bag
+to an anonymous request whatever the cookie says, so the cookie can only ever lead to a sign-in
+prompt. An explicit sign-out still forgets it (`logout` → `forgetCartCookie`); an expiry does not;
+signing in as someone else forgets a bag owned by anyone but them.
 
 ---
 
