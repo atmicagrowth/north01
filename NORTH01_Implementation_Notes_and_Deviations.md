@@ -9342,6 +9342,52 @@ shop and searched for it. The harness's cleanup only removed what the current ru
 crashed run's debris was permanent. It now clears earlier runs' fixtures by their `vs-`/`VS-` prefixes
 before it starts; re-run, it removed the product, passed 210/210, and flow 2 passed.
 
+### 1.41.7 Sweep 2 — the review changes, used
+
+A real browser against the production build of the reseeded development database, exercising what the
+three passes changed rather than re-reading it:
+
+| Check | Result |
+|---|---|
+| Add to Bag opens the drawer; its Checkout is the primary button; Shipping / Returns / Continue shopping present | yes (screenshot) |
+| The bag says checkout is not open yet, with no Stripe keys | yes |
+| `/checkout` lists the line being bought and says "Online checkout isn't open yet." once | yes |
+| A partially refunded, delivered order: order page shows "Refunded −$165.00", delivery address and help links | yes — the history keeps "Delivered" as its label, by design: a partial refund is the headline only before picking starts (`toSummary`) |
+| Mobile menu links, once a section is open | every one at least 44 px (9 measured) |
+| Admin → Orders filtered by `fulfilmentHold` | loads, no error |
+| Uncaught page errors across all of it | 0 |
+
+Nothing was found that needed changing. The two results that first read as failures were the script's
+— a drawer checked before it had finished opening, and a case-sensitive match against uppercase text.
+
+## 1.42 Plan §37 — the final acceptance gates, as of 2026-09-11
+
+Plan §37: *"The project is complete only when all of the following are true."* Each gate below is
+marked **met** with its evidence, or **owner** where it cannot be met without an account, key or
+dashboard setting only the owner holds. None is marked met on the strength of code alone where the
+plan asks for it to work.
+
+| Gate | State | Evidence / what is owed |
+|---|---|---|
+| **37.1b Development** — install, `.env.example` complete, documented setup, admin loads, DB connects, seed works | met | CI installs from the lockfile; `.env.example` now lists every variable the schema reads except the platform-set ones and three Cloudinary names the schema refuses by design (`CRON_SECRET` added in Phase 36); `docs/DEVELOPMENT.md`; `verify:admin`; the development database was rebuilt by `pnpm seed` in Phases 35 and 36 |
+| **37.1c Quality** — typecheck, ESLint, Prettier, unit, component, Playwright, build | met | Phase 36 sweep 1 gate (§1.41.6): 936 unit and component tests, 43/0/14 E2E, build, all 22 harnesses |
+| **37.1d Commerce** — variants, guest and account bags, merge, server totals | met | `verify:product`, `verify:cart`, E2E flows 1–5 |
+| 37.1d — Stripe test checkout works; webhook works end to end | **owner** | No Stripe keys in any environment (TODO.md §4). The paths are harness-tested with offline-signed events (`verify:webhook` 67, `verify:checkout` 67); the first test-mode purchase is owed |
+| 37.1d — webhook idempotent; order and inventory correct; confirmation email not duplicated | met (offline) | `verify:webhook` — duplicate, reclaim and reprocessing exactly once; stock once; email dedupe keys (`verify:email`) |
+| **37.1e CMS** — products, collections, edits, homepage, lookbook, journal, FAQ, navigation editable | met | `docs/CMS.md`; `verify:access`, `verify:admin`, `verify:editorial`, `verify:lookbook` |
+| **37.1f UX** — desktop, mobile, tablet, search, filters, drawer, wishlist, account, shop the look, empty/error/loading states | met locally; search **owner** in production | E2E (incl. the mobile project); Phase 35 screenshots at three widths; production search needs its index (R3-01) |
+| **37.1g Security** — no secrets in Git, none exposed, online-only audit, ownership, admin auth, Stripe signatures, public forms, uploads | met | `scan:secrets`; `NEXT_PUBLIC_` audit (SECURITY.md); a source search for store locator / pickup / POS / in-store finds only two comments; `verify:access`, `verify:security`, `verify:media` |
+| 37.1g — online returns and support complete and remote-only | **owner** | Returns are arranged with the team (G-20) and no support address exists yet (G-08); the copy no longer promises otherwise (TODO.md §12) |
+| **37.1h Deployment** — production deploys; variables documented; DB connects; webhook route reachable | met | Vercel production deploys from `main`; `docs/DEPLOYMENT.md` §9, `docs/ENVIRONMENT.md`; `pnpm smoke` (the webhook refuses an unsigned body) |
+| 37.1h — Vercel Preview works | **owner** | Preview has no variables (R3-03) |
+| 37.1h — Sentry receives an intentional test error in non-production | **owner** | No DSN outside production; set one on Preview or locally and throw from `/design-system` |
+| 37.1h — analytics events visible | **owner** | Keys are in production; verifying arrival needs the owner's GA4/PostHog accounts (TODO.md §6) |
+
+**Where that leaves the project.** Every gate that code and a development database can satisfy is
+met. The remaining gates all depend on accounts only the owner holds — Stripe, Resend, Algolia's
+production index, a Preview environment, and the owner's analytics properties — plus two content
+decisions (a support channel, the legal text). TODO.md is the complete list, in order.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
