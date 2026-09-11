@@ -157,9 +157,13 @@ export async function submitReviewAction(
         title: parsed.data.reviewTitle || undefined,
         verifiedPurchase,
       } as never,
-      context: { turnstileVerified: true },
-      overrideAccess: false,
-      user: { ...customer, collection: 'customers' } as never,
+      /*
+       * `overrideAccess: true` because `verifiedPurchase` is computed here and field access closes it
+       * to every access-controlled write — so `customer` has to be named, since no `req.user` is
+       * there for `enforceCustomerOwnership` to take it from. Phase 34 found it missing: every first
+       * review failed validation and was reported as a duplicate.
+       */
+      overrideAccess: true,
     })
   } catch (error) {
     if (isDuplicateReview(error)) {

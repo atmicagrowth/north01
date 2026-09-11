@@ -8966,8 +8966,10 @@ Found by the trace. The Server Action created the review with `overrideAccess: t
 `customer` in the data; `enforceCustomerOwnership` only fills `customer` from `req.user`, so the
 required field was empty, validation failed, and `isDuplicateReview` read the `customer` path as a
 duplicate — every first review was told *"You've already reviewed this."* `verify:reviews` passed
-because it passes `customer` itself. The action now writes as the customer, with the verified flag and
-`overrideAccess: false`, and `verify:access` asserts that the same write without the flag is refused.
+because it passes `customer` itself. The action now names `customer` explicitly. It stays
+`overrideAccess: true` — `verifiedPurchase` is computed there and field access closes it to every
+access-controlled write (the first version of this fix dropped the badge that way; caught in sweep 1).
+`verify:access` asserts that an access-controlled create without the verified flag is refused.
 
 ### 1.39.4 Minimisation
 
@@ -9008,6 +9010,24 @@ could break Stripe, Turnstile or the admin. `docs/SECURITY.md` §6 is the step t
 | REST, on a production build | login/forgot/reset 403; locks and preferences 403 customer / 200 staff; customer password/email PATCH 403; public reviews carry no account id; `POST /api/reviews` 403; sweep without the secret 401 |
 | Browser | sign-in works; a 250-character address line refused; two reset requests, one email, masked in the log |
 | Headers on `/` | all five present, no `X-Powered-By` |
+
+### 1.39.8 Sweep 1
+
+An independent review of the phase commit, plus my own re-read of the review fix.
+
+- **My review fix would have removed the verified-purchase badge.** Switching the action to
+  `overrideAccess: false` made field access strip `verifiedPurchase`, which the action computes. Back
+  to `overrideAccess: true` with `customer` named explicitly — the actual bug.
+- **The Carts admin list broke for editors.** `token` became admin-only while it was still the
+  collection's `useAsTitle`, and Payload refuses a search on a field the user cannot read (*"cannot be
+  queried"*). The title is now the id.
+- **The CSP would never have run clean**, so the recorded step to enforce it could not have been
+  taken: `connect-src` lacked Stripe's and Cloudinary's APIs and `frame-src` lacked `'self'`. Added.
+
+Checked and clean: `updateByID` reaches `beforeOperation` as `update`; Payload's own login and lockout
+writes bypass the hooks; an editor saving an unchanged customer passes the email comparison; no code
+writes orders with `overrideAccess: false`; the internal-collection access holds on every
+`getPayload` init.
 
 # 2. Deviations
 

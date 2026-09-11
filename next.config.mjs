@@ -16,7 +16,7 @@ const nextConfig = {
    * - `Referrer-Policy: strict-origin-when-cross-origin` — another site learns the origin, never the
    *   path (and so never an order number or a reset token in a query string).
    * - `X-Frame-Options: SAMEORIGIN` — no other site can frame the shop or the admin (clickjacking);
-   *   Payload's live preview frames the site from its own origin, which stays allowed.
+   *   a same-origin frame (a future Payload live preview) stays allowed.
    * - `Permissions-Policy` — the shop needs no camera, microphone, location or topics.
    * - **CSP in Report-Only.** Enforcing a policy first would risk breaking Stripe, Turnstile, GA,
    *   PostHog, Sentry, Cloudinary and the admin panel on a guess; report-only surfaces every
@@ -34,8 +34,8 @@ const nextConfig = {
       "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://www.googletagmanager.com https://*.posthog.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' data: https://fonts.gstatic.com",
-      "connect-src 'self' https://*.algolia.net https://*.algolianet.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://*.posthog.com https://*.sentry.io https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
-      'frame-src https://challenges.cloudflare.com https://js.stripe.com https://checkout.stripe.com',
+      "connect-src 'self' https://api.stripe.com https://api.cloudinary.com https://*.algolia.net https://*.algolianet.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://*.posthog.com https://*.sentry.io https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
+      "frame-src 'self' https://challenges.cloudflare.com https://js.stripe.com https://checkout.stripe.com",
     ].join('; ')
 
     return [

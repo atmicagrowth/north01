@@ -40,8 +40,12 @@ export const Carts: CollectionConfig = {
   slug: 'carts',
 
   admin: {
-    useAsTitle: 'token',
-    defaultColumns: ['token', 'customer', 'status', 'currency', 'updatedAt'],
+    /*
+     * Not `token`: Phase 34 made it admin-only, and an editor's list search on a field they cannot
+     * read is refused by Payload outright ("cannot be queried") — the title field is what it searches.
+     */
+    useAsTitle: 'id',
+    defaultColumns: ['id', 'customer', 'status', 'currency', 'updatedAt'],
     group: 'Commerce',
     description:
       'Server-side bags. Totals are never stored here — they are recalculated from the live catalogue on every request.',
