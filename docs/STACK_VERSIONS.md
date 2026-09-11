@@ -14,7 +14,7 @@
 
 | Tool | Installed | Required by stack | Status |
 |---|---|---|---|
-| Node.js | 22.14.0 | `>=20.9.0` (Next 16), `^18.20.2 \|\| >=20.9.0` (Payload 3) | OK |
+| Node.js | 22.14.0 | `>=20.9.0` (Next 16), `^18.20.2 \|\| >=20.9.0` (Payload 3); **`engines.node` pinned to `22.x` in Phase 32** | OK — Vercel had been running 24.x under the open range, a major no gate had exercised |
 | pnpm | 11.21.0 | canonical package manager | OK |
 | Git | 2.47.1.windows.2 | — | OK |
 | Corepack | 0.31.0 | — | available |

@@ -298,7 +298,9 @@ Verified end to end in Phase 5 against a real database: a rolled-back database, 
 **Do not let two deployments migrate at once.** Vercel builds concurrently by default; a second
 build starting while the first is mid-migration is two processes issuing DDL against one database.
 Serialize deployments in the project's deployment settings, or promote from a single queued
-pipeline. This is a platform setting, not something the repository can enforce.
+pipeline. This is a platform setting, not something the repository can enforce. The full release procedure —
+a Neon branch as the backup, the migration by the build, `migrate:status`, the smoke test — is
+[`DEPLOYMENT.md`](DEPLOYMENT.md) §4 (Phase 32).
 
 **Migrations must be backward compatible with the code already running.** The migration lands while
 the *previous* deployment is still serving. Dropping or renaming a column that the live code still
