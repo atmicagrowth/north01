@@ -8890,6 +8890,16 @@ Do not change DNS records blindly; inspect current records first and preserve un
 | R1-14, reproduced and fixed on a non-canonical origin | *"Address saved."*; old token `user: null` after sign-out |
 | Production before the fix | HTTPS and HSTS present; the public host's signed-in actions affected |
 
+### 1.38.4 Sweep 1
+
+- **The admin panel on a non-canonical origin.** It authenticates through the same allowlist, so it was
+  exposed to the same defect. Signed in at `localhost:3211` (while `SITE_URL` is `:3000`): the dashboard
+  loads, `fetch('/api/users/me')` from the page — which sends `Origin` — returns the staff user, and the
+  products list renders.
+- **Production after the push:** `pnpm smoke` 9 passed, 3 warnings, 0 failed — the same two owner
+  settings.
+- TODO.md §8 now points at the domain procedure for the day a domain is bought.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

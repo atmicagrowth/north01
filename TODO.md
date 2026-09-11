@@ -169,3 +169,6 @@ short, all in the Vercel, Neon, Algolia or GitHub dashboards:
 - **Queued production builds**, so two deployments never migrate at once.
 - **CI repository secrets** — `DATABASE_URL` (non-production, read-only role), `PAYLOAD_SECRET`,
   and the variable `SITE_URL`.
+- **When a custom domain is bought** — follow [`docs/DEPLOYMENT.md` §11](docs/DEPLOYMENT.md) in order:
+  Vercel domains with the `www` redirect, unproxied Cloudflare records, then `SITE_URL`, Turnstile's
+  hostnames, the Stripe webhook endpoint, and Resend's DNS (Phase 33).
