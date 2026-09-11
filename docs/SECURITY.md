@@ -99,7 +99,9 @@ on every route (`next.config.mjs`): `X-Content-Type-Options: nosniff`,
 `Permissions-Policy`, and no `X-Powered-By`.
 
 The Content Security Policy ships as **Report-Only**. It lists every origin the site uses (Stripe,
-Turnstile, GA4, PostHog, Sentry, Algolia, Cloudinary, Google Fonts). The next step is to run a release
+Turnstile, GA4, PostHog, Sentry, Algolia, Cloudinary, Google Fonts). Measured locally on 2026-09-11:
+nine storefront page types and four admin pages report nothing (after the admin's Gravatar avatar was
+switched off). The next step is to run a release
 with the browser console open on each page type and the admin, confirm it reports nothing, then rename
 the header to `Content-Security-Policy`. `'unsafe-inline'` scripts stay allowed until Next's inline
 bootstrap is served with nonces.

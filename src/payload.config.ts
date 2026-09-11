@@ -209,6 +209,11 @@ export default buildConfig({
 
   admin: {
     user: Users.slug,
+    /*
+     * Plan §34, found by the CSP in sweep 2: Payload's default avatar is Gravatar, which sends a hash
+     * of every staff member's email address to a third party on every admin page load.
+     */
+    avatar: 'default',
     importMap: {
       baseDir: path.resolve(dirname),
     },

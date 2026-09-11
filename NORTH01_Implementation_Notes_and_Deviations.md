@@ -9029,6 +9029,18 @@ writes bypass the hooks; an editor saving an unchanged customer passes the email
 writes orders with `overrideAccess: false`; the internal-collection access holds on every
 `getPayload` init.
 
+### 1.39.9 Sweep 2 — the review form, used; and what the CSP actually reports
+
+- **The review form, end to end.** Signed in as a demo customer, a real review submitted through the
+  product page was stored — `pending`, `verifiedPurchase: false` for an account with no paid order,
+  owned by that customer — and the page moved to its "already reviewed" state. Removed afterwards.
+  Before Phase 34 this submission could not have been saved.
+- **The report-only CSP, measured.** Nine storefront page types (home, shop, product, bag, sign-in,
+  register, forgot-password, journal, search) reported **nothing**. The admin reported one source on
+  every page: `www.gravatar.com`. Payload's default avatar is Gravatar, which sends a hash of each staff
+  member's email address to a third party on every admin page load. `admin.avatar: 'default'` — a
+  privacy fix the policy found, rather than an origin to allow.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
