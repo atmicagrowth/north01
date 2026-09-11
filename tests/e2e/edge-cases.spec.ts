@@ -45,6 +45,8 @@
  * alone, so this file runs once, in `chromium`.
  */
 
+import { confirmationCopy } from '@/lib/checkout/confirmation-copy'
+import type { PaymentStatus } from '@/lib/checkout/rules'
 import type { Page } from '@playwright/test'
 
 import {
@@ -102,15 +104,26 @@ async function waitForShell(page: Page): Promise<void> {
 /**
  * Read the confirmation page and require its heading and its status row to agree.
  *
- * `checkout/success/page.tsx` has exactly three renderings, and the heading is the customer-facing
- * claim in each: **Thank you** only when `paymentStatus === 'paid'`, **Confirming your payment**
- * while the webhook has not arrived, and **We could not find that order** when there is nothing to
- * show. `[data-slot="order-status"]` is the same boolean rendered as a word, so the two can be
+ * `checkout/success/page.tsx` renders one heading per payment status (Phase 31, §31.1f —
+ * `confirmationCopy`) and **We could not find that order** when there is nothing to show. **Thank
+ * you** appears only when `paymentStatus === 'paid'`, and **Confirming your payment** only while the
+ * webhook has not arrived; a declined, abandoned or refunded order has its own heading. `[data-slot="order-status"]` is the same boolean rendered as a word, so the two can be
  * checked against each other — which is what makes this meaningful for a paid order as well as for
  * the not-found one this suite can actually reach today.
  *
  * Returns the heading, so a caller can compare two readings of the same URL.
  */
+/** Every status the success page can be asked about — `Orders.paymentStatus`'s options. */
+const PAYMENT_STATUSES: PaymentStatus[] = [
+  'cancelled',
+  'checkout_started',
+  'draft',
+  'paid',
+  'payment_failed',
+  'pending_payment',
+  'refunded',
+]
+
 async function readHonestConfirmation(page: Page): Promise<string> {
   const text = ((await page.getByRole('heading', { level: 1 }).textContent()) ?? '').trim()
 
@@ -137,11 +150,15 @@ async function readHonestConfirmation(page: Page): Promise<string> {
     return text
   }
 
-  expect(text, 'the confirmation heading must be one of the three §17.1g renderings').toBe(
-    'Confirming your payment',
+  const rendering = PAYMENT_STATUSES.map((status) => confirmationCopy(status)).find(
+    (copy) => copy.title === text,
   )
 
-  await expect(status).toHaveText('Awaiting confirmation')
+  if (!rendering) {
+    throw new Error(`"${text}" is not one of the §31.1f confirmation headings`)
+  }
+
+  await expect(status).toHaveText(rendering.statusLabel)
 
   return text
 }

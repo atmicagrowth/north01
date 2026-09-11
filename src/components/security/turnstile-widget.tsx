@@ -124,7 +124,14 @@ export function TurnstileWidget({
       <Script
         id="cf-turnstile"
         onError={() => setFailed(true)}
-        onReady={() => setReady(true)}
+        /*
+         * Clearing `failed` too: the eight-second check is a guess about a slow connection, and a
+         * script that arrives at nine seconds should replace the explanation with the widget.
+         */
+        onReady={() => {
+          setReady(true)
+          setFailed(false)
+        }}
         src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
         strategy="afterInteractive"
       />

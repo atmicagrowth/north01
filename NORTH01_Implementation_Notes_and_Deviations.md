@@ -8685,6 +8685,34 @@ outage server still renders the shell and the branded error.
 | Price changed | line and bag notices |
 | Dynamic 404s (`/product/…`, `/journal/…`, `/shop/…`) | 404, branded, `noindex`, in the shell |
 
+### 1.36.9 Sweep 1
+
+Done in the main session, against the committed phase: a re-read of the diff for the ways each fix
+could fail, the route walk above repeated with the database up, and the eight-width audit.
+
+- **A Turnstile script that arrives after the eight-second check stayed "failed".** The check is a
+  guess about a slow connection; a script that loads at nine seconds now clears the explanation and
+  renders the widget (`onReady` resets `failed`).
+- **The E2E suite asserted "exactly three renderings" of the success page.** Phase 31 made it one per
+  payment status. `readHonestConfirmation` now takes the headings and summary labels from
+  `confirmationCopy` itself, so the test and the page cannot drift apart — and a heading that is none
+  of them still fails.
+- **Route walk, database up:** every dynamic route's missing slug is a 404 with the branded page,
+  `noindex` and the shell (`/product/…`, `/journal/…`, `/lookbook/…`, `/collections/…`, `/edit/…`,
+  `/shop/<unknown category>`); `/search` with no query is its idle state and `?q=` redirects to it;
+  `/checkout/cancelled` says nothing was charged; an empty-bag `/checkout` goes to the bag; an
+  account route signed out goes to sign-in with `next`.
+- **An invalid reset link is answered on submit, not on arrival** — *"This link is no longer valid — it
+  may have expired, or it may already have been used. Ask for a new one."* (Phase 7). Checking the token
+  before the form would mean looking up a credential on every page view of `/reset-password`; the one
+  wasted field is the better trade, and it is recorded rather than changed.
+- **The eight-width audit** (13 routes × 8 widths) reports only the 134 inline links §1.35.4 accepted.
+- **A shared device with an expired session** now shows the next visitor *"Your session has ended.
+  Sign in to see your bag"* for the previous customer's bag. It reveals that a bag exists, never what is
+  in it, and signing in as someone else clears the pointer (`mergeGuestCart` forgets a bag owned by
+  anyone else). An explicit sign-out has always been the way to leave a shared computer, and it still
+  forgets the bag.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
