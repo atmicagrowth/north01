@@ -9,6 +9,7 @@ import type { ShippingRate } from '@/lib/shipping/rules'
 import { cn } from '@/lib/cn'
 import { formatMinorUnits } from '@/lib/money'
 import type { CurrencyCode } from '@/payload/fields/money'
+import { ADDRESS_MAX_LENGTH } from '@/lib/address-limits'
 
 /**
  * **Structure §14's checkout form**: customer information, shipping, shipping method — then Stripe.
@@ -96,6 +97,7 @@ export function CheckoutForm({
               className={field}
               id={`${id}-first`}
               name="firstName"
+              maxLength={ADDRESS_MAX_LENGTH.firstName}
               required
             />
           </div>
@@ -109,6 +111,7 @@ export function CheckoutForm({
               className={field}
               id={`${id}-last`}
               name="lastName"
+              maxLength={ADDRESS_MAX_LENGTH.lastName}
               required
             />
           </div>
@@ -123,6 +126,7 @@ export function CheckoutForm({
             className={field}
             id={`${id}-line1`}
             name="line1"
+            maxLength={ADDRESS_MAX_LENGTH.line1}
             required
           />
         </div>
@@ -131,7 +135,13 @@ export function CheckoutForm({
           <label className={label} htmlFor={`${id}-line2`}>
             Apartment, suite, etc. <span className="normal-case">(optional)</span>
           </label>
-          <input autoComplete="address-line2" className={field} id={`${id}-line2`} name="line2" />
+          <input
+            autoComplete="address-line2"
+            className={field}
+            id={`${id}-line2`}
+            name="line2"
+            maxLength={ADDRESS_MAX_LENGTH.line2}
+          />
         </div>
 
         <div className="grid gap-s sm:grid-cols-3">
@@ -144,6 +154,7 @@ export function CheckoutForm({
               className={field}
               id={`${id}-city`}
               name="city"
+              maxLength={ADDRESS_MAX_LENGTH.city}
               required
             />
           </div>
@@ -157,6 +168,7 @@ export function CheckoutForm({
               className={field}
               id={`${id}-region`}
               name="region"
+              maxLength={ADDRESS_MAX_LENGTH.region}
             />
           </div>
 
@@ -169,6 +181,7 @@ export function CheckoutForm({
               className={field}
               id={`${id}-postal`}
               name="postalCode"
+              maxLength={ADDRESS_MAX_LENGTH.postalCode}
               required
             />
           </div>
@@ -204,6 +217,7 @@ export function CheckoutForm({
               className={field}
               id={`${id}-phone`}
               name="phone"
+              maxLength={ADDRESS_MAX_LENGTH.phone}
               type="tel"
             />
           </div>

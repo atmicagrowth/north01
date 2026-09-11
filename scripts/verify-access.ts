@@ -677,8 +677,27 @@ try {
 
   /* ---- Reviews: moderation state is not the author's to set ---- */
 
+  /* Phase 34: without the Server Action's verified flag — i.e. `POST /api/reviews` — a customer is refused. */
+  await denied('a review that skipped the Turnstile guard is refused', () =>
+    payload.create({
+      collection: 'reviews',
+      overrideAccess: false,
+      user: aliceUser,
+      data: {
+        product: draft.id,
+        customer: alice.id,
+        displayName: 'Verify Alice',
+        rating: 5,
+        body: 'Written by the verification script.',
+        status: 'pending',
+        verifiedPurchase: false,
+      },
+    }),
+  )
+
   const review = await payload.create({
     collection: 'reviews',
+    context: { turnstileVerified: true },
     overrideAccess: false,
     user: aliceUser,
     data: {

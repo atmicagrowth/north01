@@ -19,6 +19,7 @@ import type { TaxAddress, TaxResult } from '@/lib/tax/rules'
 
 import { formatOrderNumber, orderTotalMinor, type PreflightFailure } from './rules'
 import { isStripeConfigured } from './stripe'
+import { addressFits } from '@/lib/address-limits'
 
 /**
  * **Plan §17.1a, all eleven steps, in the plan's order.**
@@ -94,7 +95,8 @@ const trimmed = (value: null | string | undefined): string => (value ?? '').trim
  *
  * `region` is optional because a great many countries have no state or county, and `line2` because
  * most addresses do not have one. Everything else is required, and the country must be the two-letter
- * code `fields/address.ts` enforces the format of.
+ * code `fields/address.ts` enforces the format of. And every line must fit the schema's bound
+ * (`lib/address-limits.ts`, plan §34) — otherwise the order write would refuse it with no useful answer.
  */
 function addressIsComplete(address: CheckoutContact['shippingAddress']): boolean {
   return (
@@ -103,7 +105,8 @@ function addressIsComplete(address: CheckoutContact['shippingAddress']): boolean
     trimmed(address.line1) !== '' &&
     trimmed(address.city) !== '' &&
     trimmed(address.postalCode) !== '' &&
-    /^[A-Za-z]{2}$/.test(trimmed(address.country))
+    /^[A-Za-z]{2}$/.test(trimmed(address.country)) &&
+    addressFits(address)
   )
 }
 

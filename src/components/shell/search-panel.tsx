@@ -352,7 +352,10 @@ export function SearchPanel() {
        * the alternative, firing this after the grid renders, would miss every search that navigated
        * away or failed. An event that describes intent belongs at the moment of the intent.
        */
-      trackEvent('search_submitted', { term: normalised })
+      /* Plan §34: a search box is where people paste an email address or an order number. */
+      trackEvent('search_submitted', {
+        term: /@|\d{6,}/.test(normalised) ? '[redacted]' : normalised,
+      })
 
       go(`${SEARCH_PATH}?q=${encodeURIComponent(normalised)}`)
     },

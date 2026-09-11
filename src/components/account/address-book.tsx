@@ -6,6 +6,7 @@ import type { AddressActionState } from '@/lib/account/addresses'
 
 import { Button } from '@/components/ui/button'
 import { addAddressAction, removeAddressAction } from '@/lib/account/addresses'
+import { ADDRESS_MAX_LENGTH } from '@/lib/address-limits'
 
 /**
  * **The address book's two controls** — plan §20.1d's `/account/addresses`.
@@ -51,6 +52,7 @@ export function AddAddressForm() {
               /* 44px and 16px, as every other field in the shop: iOS zooms the page on anything smaller. */
               className="h-11 border border-border-control bg-surface px-3 font-sans text-body text-foreground"
               name={field.name}
+              maxLength={field.name === 'country' ? undefined : ADDRESS_MAX_LENGTH[field.name]}
               required={field.required}
               type="text"
             />

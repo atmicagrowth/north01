@@ -40,6 +40,11 @@ export async function applyCodeAction(
     return { notice: 'Enter a code.', ok: false }
   }
 
+  /* Plan §34 (audit R1-24): no code is this long, so no lookup is spent on one that is. */
+  if (code.trim().length > 32) {
+    return { notice: 'That is not a code we recognise.', ok: false }
+  }
+
   const customer = await getCustomer()
   const customerId = customer?.id ?? null
   const cart = await getCart(customerId)

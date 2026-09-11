@@ -1,11 +1,12 @@
 import type { CollectionConfig } from 'payload'
-import { AuthenticationError, ValidationError } from 'payload'
+import { AuthenticationError, Forbidden, ValidationError } from 'payload'
 
 import { checkPassword } from '../../lib/password-policy'
 import {
   ACCOUNT_STATUS_OPTIONS,
   activeCustomer,
   isAdmin,
+  isAdminUser,
   isStaffField,
   staffUser,
   verifiedPublicWrite,
@@ -13,6 +14,7 @@ import {
 import { resetPasswordEmail } from '../email/resetPasswordEmail'
 import { normaliseEmail } from '../fields/slug'
 import { cascadeDelete } from '../hooks/cascadeDelete'
+import { RESET_TOKEN_LIFETIME_MS } from '../../lib/auth/reset-cooldown'
 
 /**
  * The shopper's account — and a **separate auth collection from `users`**, which is staff.
@@ -76,7 +78,7 @@ export const Customers: CollectionConfig = {
        * well as time-limited: `resetPassword` clears `resetPasswordToken` when it succeeds, so the
        * second use of a link fails the same way the twenty-fifth hour does.
        */
-      expiration: 60 * 60 * 1000,
+      expiration: RESET_TOKEN_LIFETIME_MS,
 
       /**
        * Without this override the link in the mail points at `/admin/reset/<token>` — Payload builds
@@ -293,6 +295,75 @@ export const Customers: CollectionConfig = {
   ],
 
   hooks: {
+    /**
+     * **Payload's REST auth endpoints are closed to shoppers** — plan §34, audit R1-15.
+     *
+     * The storefront signs customers in, sends reset links and resets passwords through Server
+     * Actions that call the Local API, and those actions carry the controls: Turnstile, the password
+     * policy (which `resetPassword` bypasses, since it writes through `payload.db`), and the reset
+     * cooldown. Payload's own `/api/customers/login`, `/forgot-password` and `/reset-password` sat
+     * beside them with none of it — measured by the audit: a reset through REST accepted the password
+     * `abc` and signed the customer in, and forgot-password re-issued a token on every request.
+     *
+     * Nothing in this application calls those endpoints; the admin panel authenticates `users`, not
+     * customers. So they refuse anything that is not the Local API. `logout`, `me` and `refresh`
+     * stay open — they carry no credential worth guessing and the session needs them.
+     */
+    beforeOperation: [
+      ({ args, operation, req }) => {
+        if (
+          (operation === 'login' ||
+            operation === 'forgotPassword' ||
+            operation === 'resetPassword') &&
+          req.payloadAPI !== 'local'
+        ) {
+          throw new Forbidden(req.t)
+        }
+
+        /*
+         * **A password is changed through the reset flow, or by an admin** — plan §34.1d. `update`
+         * lets a customer edit their own row and an editor edit anyone's, and neither rule knew
+         * about credentials: a signed-in customer could `PATCH` a new password onto their account
+         * with no current password (so a stolen cookie became a permanent takeover — the account
+         * page deliberately offers no such change), and an editor could set any customer's. The
+         * admin panel only sends `password` when someone chooses to change it.
+         */
+        if (
+          operation === 'update' &&
+          req.payloadAPI !== 'local' &&
+          !isAdminUser(req.user) &&
+          typeof args.data === 'object' &&
+          args.data !== null &&
+          'password' in args.data &&
+          Boolean((args.data as { password?: unknown }).password)
+        ) {
+          throw new Forbidden(req.t)
+        }
+      },
+    ],
+
+    /**
+     * **The sign-in address is changed by an admin only** — the same rule as the password above,
+     * for the same two reasons. The admin form sends the email unchanged on every save, so this
+     * compares against the stored value rather than refusing the key.
+     */
+    beforeChange: [
+      ({ data, operation, originalDoc, req }) => {
+        if (
+          operation === 'update' &&
+          req.payloadAPI !== 'local' &&
+          !isAdminUser(req.user) &&
+          typeof data?.email === 'string' &&
+          typeof originalDoc?.email === 'string' &&
+          data.email.trim().toLowerCase() !== originalDoc.email.trim().toLowerCase()
+        ) {
+          throw new Forbidden(req.t)
+        }
+
+        return data
+      },
+    ],
+
     /**
      * Three dependants carry a **required** customer reference, which Postgres stores as `NOT NULL`
      * with `ON DELETE SET NULL` — so a permanent delete fails unless they go first. See

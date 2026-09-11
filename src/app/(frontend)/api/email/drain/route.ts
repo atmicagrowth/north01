@@ -1,11 +1,9 @@
-import { timingSafeEqual } from 'node:crypto'
-
 import { headers as nextHeaders } from 'next/headers'
 
 import { courierFor } from '@/lib/email/courier'
 import { drainEmails } from '@/lib/email/send'
 import { getPayloadClient } from '@/lib/payload'
-import { serverEnv } from '@/lib/env.server'
+import { cronRefusal, isCronRequest } from '@/lib/security/cron-auth'
 
 /**
  * **§19.1d's *"allow retry where appropriate"*, as something a person can press.**
@@ -81,18 +79,7 @@ export async function POST(): Promise<Response> {
  * and from the admin — and a Pro project can tighten the expression (docs/DEPLOYMENT.md §7).
  */
 export async function GET(request: Request): Promise<Response> {
-  const secret = serverEnv.CRON_SECRET
-  const sent = request.headers.get('authorization') ?? ''
-  const expected = `Bearer ${secret ?? ''}`
-
-  const authorised =
-    secret !== undefined &&
-    sent.length === expected.length &&
-    timingSafeEqual(Buffer.from(sent), Buffer.from(expected))
-
-  if (!authorised) {
-    return Response.json({ error: 'Unauthorized.' }, { status: 401 })
-  }
+  if (!isCronRequest(request)) return cronRefusal()
 
   const payload = await getPayloadClient()
   const courier = await courierFor(payload)

@@ -2,7 +2,7 @@ import { randomInt } from 'crypto'
 
 import type { CollectionConfig } from 'payload'
 
-import { isAdmin, isStaff, nobody, nobodyField, ownedByCustomer } from '../access'
+import { isAdmin, isAdminField, isStaff, nobody, nobodyField, ownedByCustomer } from '../access'
 import { addressFields } from '../fields/address'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
@@ -317,6 +317,8 @@ export const Orders: CollectionConfig = {
               type: 'relationship',
               relationTo: 'customers',
               index: true,
+              /* Plan §34.1d: re-pointing this hands the order to another account. Server-written only. */
+              access: { update: nobodyField },
               admin: {
                 description: 'Empty for a guest purchase, and after an account is deleted.',
               },
@@ -339,6 +341,8 @@ export const Orders: CollectionConfig = {
               type: 'relationship',
               relationTo: 'carts',
               index: true,
+              /* Plan §34.1d: re-pointing this hands the order to another account. Server-written only. */
+              access: { update: nobodyField },
               admin: {
                 readOnly: true,
                 description: 'The bag this order came from, while that bag still exists.',
@@ -349,6 +353,8 @@ export const Orders: CollectionConfig = {
               type: 'email',
               required: true,
               index: true,
+              /* Plan §34.1d: changing it redirects every later email about the order. Server-written only. */
+              access: { update: nobodyField },
               admin: {
                 description:
                   'Where the confirmation was sent, as given at checkout. A snapshot — not read from the customer record.',
@@ -543,6 +549,8 @@ export const Orders: CollectionConfig = {
               name: 'shippingAddress',
               type: 'group',
               label: 'Shipping address (snapshot)',
+              /* Plan §34.1d: correcting where a parcel goes is an admin's call, not an editor's. */
+              access: { update: isAdminField },
               admin: {
                 description:
                   'Frozen at purchase. Empty on a draft order — checkout preflight is what requires it (plan §17.1a, DEV-11).',
@@ -553,6 +561,8 @@ export const Orders: CollectionConfig = {
               name: 'billingAddress',
               type: 'group',
               label: 'Billing address (snapshot)',
+              /* Plan §34.1d: correcting where a parcel goes is an admin's call, not an editor's. */
+              access: { update: isAdminField },
               admin: {
                 description: 'Frozen at purchase. Defaults to the shipping address at checkout.',
               },

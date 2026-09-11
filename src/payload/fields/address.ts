@@ -1,5 +1,7 @@
 import type { Field, TextFieldSingleValidation } from 'payload'
 
+import { ADDRESS_MAX_LENGTH } from '../../lib/address-limits'
+
 /**
  * A postal address, defined once and used in two structurally different ways.
  *
@@ -52,6 +54,11 @@ type AddressOptions = {
   required: boolean
 }
 
+/*
+ * Plan §34 (audit R1-24): every free-text line has a domain-sized `maxLength` (`lib/address-limits.ts`) —
+ * Payload's default is 40,000 characters a field. Validation only: Postgres stores these as unbounded `varchar`, so no
+ * migration, and a too-long value is refused before it is written.
+ */
 export const addressFields = ({ required }: AddressOptions): Field[] => [
   {
     type: 'row',
@@ -59,12 +66,14 @@ export const addressFields = ({ required }: AddressOptions): Field[] => [
       {
         name: 'firstName',
         type: 'text',
+        maxLength: ADDRESS_MAX_LENGTH.firstName,
         required,
         admin: { width: '50%' },
       },
       {
         name: 'lastName',
         type: 'text',
+        maxLength: ADDRESS_MAX_LENGTH.lastName,
         required,
         admin: { width: '50%' },
       },
@@ -73,17 +82,20 @@ export const addressFields = ({ required }: AddressOptions): Field[] => [
   {
     name: 'company',
     type: 'text',
+    maxLength: ADDRESS_MAX_LENGTH.company,
     admin: { description: 'Optional.' },
   },
   {
     name: 'line1',
     type: 'text',
+    maxLength: ADDRESS_MAX_LENGTH.line1,
     required,
     label: 'Address line 1',
   },
   {
     name: 'line2',
     type: 'text',
+    maxLength: ADDRESS_MAX_LENGTH.line2,
     label: 'Address line 2',
     admin: { description: 'Optional. Apartment, suite, floor.' },
   },
@@ -93,12 +105,14 @@ export const addressFields = ({ required }: AddressOptions): Field[] => [
       {
         name: 'city',
         type: 'text',
+        maxLength: ADDRESS_MAX_LENGTH.city,
         required,
         admin: { width: '50%' },
       },
       {
         name: 'region',
         type: 'text',
+        maxLength: ADDRESS_MAX_LENGTH.region,
         label: 'State / province / county',
         admin: {
           width: '50%',
@@ -113,6 +127,7 @@ export const addressFields = ({ required }: AddressOptions): Field[] => [
       {
         name: 'postalCode',
         type: 'text',
+        maxLength: ADDRESS_MAX_LENGTH.postalCode,
         required,
         admin: { width: '50%' },
       },
@@ -152,6 +167,7 @@ export const addressFields = ({ required }: AddressOptions): Field[] => [
   {
     name: 'phone',
     type: 'text',
+    maxLength: ADDRESS_MAX_LENGTH.phone,
     admin: {
       description: 'Optional. Used by carriers for delivery contact.',
     },

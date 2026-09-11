@@ -49,6 +49,7 @@ payment success. All of it is recalculated server-side.
 | [`docs/STACK_VERSIONS.md`](docs/STACK_VERSIONS.md) | Every version pin and the evidence for it |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Local setup and day-to-day workflow |
 | [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) | Every environment variable, its tier, its source, and the guards around them |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | What personal data the shop collects, who can see it, where it goes, how long it is kept, what is kept out of logs, and the security headers |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Vercel environments, the migration procedure, the production search index, the scheduled drain, rollback, and the post-deployment smoke test |
 | [`docs/SEARCH.md`](docs/SEARCH.md) | The Algolia index, what it holds, and how it is rebuilt |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | Connection rules, the migration workflow and its commit policy, the production and rollback procedures, and the schema conventions |

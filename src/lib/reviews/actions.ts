@@ -150,13 +150,16 @@ export async function submitReviewAction(
       collection: 'reviews',
       data: {
         body: parsed.data.reviewBody,
+        customer: customer.id,
         displayName: parsed.data.reviewDisplayName,
         product: productId,
         rating: parsed.data.reviewRating,
         title: parsed.data.reviewTitle || undefined,
         verifiedPurchase,
       } as never,
-      overrideAccess: true,
+      context: { turnstileVerified: true },
+      overrideAccess: false,
+      user: { ...customer, collection: 'customers' } as never,
     })
   } catch (error) {
     if (isDuplicateReview(error)) {

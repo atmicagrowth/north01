@@ -5,8 +5,55 @@ import { withPayload } from '@payloadcms/next/withPayload'
 const nextConfig = {
   reactStrictMode: true,
 
-  // Media, image remote patterns, redirects and headers are added by the phases that
-  // introduce them. Keep this surface minimal - see docs/ARCHITECTURE.md.
+  /** Plan §34 (audit R3-10): no `X-Powered-By: Next.js` advertising the framework on every response. */
+  poweredByHeader: false,
+
+  /**
+   * **Security headers** — plan §34, audit R3-10. Before this, the only one any response carried was
+   * Vercel's HSTS. All of them apply to every route, the admin panel included.
+   *
+   * - `X-Content-Type-Options: nosniff` — a response is the type it says it is.
+   * - `Referrer-Policy: strict-origin-when-cross-origin` — another site learns the origin, never the
+   *   path (and so never an order number or a reset token in a query string).
+   * - `X-Frame-Options: SAMEORIGIN` — no other site can frame the shop or the admin (clickjacking);
+   *   Payload's live preview frames the site from its own origin, which stays allowed.
+   * - `Permissions-Policy` — the shop needs no camera, microphone, location or topics.
+   * - **CSP in Report-Only.** Enforcing a policy first would risk breaking Stripe, Turnstile, GA,
+   *   PostHog, Sentry, Cloudinary and the admin panel on a guess; report-only surfaces every
+   *   violation in the browser console without blocking anything. Enforcing it is the recorded next
+   *   step (docs/SECURITY.md §6), once a release has run clean against it.
+   */
+  async headers() {
+    const csp = [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "form-action 'self' https://checkout.stripe.com",
+      "frame-ancestors 'self'",
+      "object-src 'none'",
+      "img-src 'self' data: blob: https://res.cloudinary.com https://*.google-analytics.com https://*.googletagmanager.com",
+      "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://www.googletagmanager.com https://*.posthog.com",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "connect-src 'self' https://*.algolia.net https://*.algolianet.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://*.posthog.com https://*.sentry.io https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
+      'frame-src https://challenges.cloudflare.com https://js.stripe.com https://checkout.stripe.com',
+    ].join('; ')
+
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(), microphone=(), geolocation=(), browsing-topics=()',
+          },
+          { key: 'Content-Security-Policy-Report-Only', value: csp },
+        ],
+      },
+    ]
+  },
 
   experimental: {
     /**

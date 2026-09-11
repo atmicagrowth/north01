@@ -172,3 +172,24 @@ short, all in the Vercel, Neon, Algolia or GitHub dashboards:
 - **When a custom domain is bought** — follow [`docs/DEPLOYMENT.md` §11](docs/DEPLOYMENT.md) in order:
   Vercel domains with the `www` redirect, unproxied Cloudflare records, then `SITE_URL`, Turnstile's
   hostnames, the Stripe webhook endpoint, and Resend's DNS (Phase 33).
+
+## 9. A privacy policy and terms — the site collects personal data with no notice
+
+Gap G-19, audit DOC-08. The shop takes names, email addresses, postal addresses and phone numbers,
+and it keeps order history, and there is no privacy notice and no terms of sale. The footer's legal row
+is empty on purpose (`src/lib/navigation/utility.ts`): these are legal texts somebody has to write and
+answer for, so no page with made-up wording was built.
+
+- **Supply the two texts** — a lawyer's, or a reviewed template's. [`docs/SECURITY.md`](docs/SECURITY.md)
+  lists what the shop actually collects, where it goes (Stripe, Resend, analytics, logs) and how long
+  it is kept. That is the factual input a privacy policy needs.
+- **Say where they should live** — pages in the admin, or files in the repository. When the text
+  exists, adding the two routes and the footer links is a small change.
+
+## 10. How long personal data is kept — five decisions
+
+[`docs/SECURITY.md` §4](docs/SECURITY.md) lists them with the reasoning. In short: how long an
+**unpaid** order keeps its email and address; how long the email outbox is kept; what an erasure
+request does to orders; a self-service newsletter unsubscribe before the first marketing email; and
+whether editors, not only admins, should read the subscriber list and the outbox. Each is a small
+change once the answer exists.

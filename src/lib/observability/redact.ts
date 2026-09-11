@@ -57,6 +57,7 @@ export const REDACTED = '[redacted]'
  * this function means something has gone wrong that is worth not making worse.
  */
 const SENSITIVE_SEGMENTS: ReadonlySet<string> = new Set([
+  'address',
   'auth',
   'authorization',
   'card',
@@ -70,10 +71,15 @@ const SENSITIVE_SEGMENTS: ReadonlySet<string> = new Set([
   'iban',
   'jwt',
   'key',
+  'line1',
+  'line2',
   'pan',
   'password',
   'passwd',
+  'phone',
   'pin',
+  'postal',
+  'postcode',
   'secret',
   'session',
   'signature',
@@ -82,7 +88,14 @@ const SENSITIVE_SEGMENTS: ReadonlySet<string> = new Set([
 ])
 
 /** Two-segment families that only mean something together. Compared against the joined key. */
-const SENSITIVE_PHRASES: readonly string[] = ['connectionstring', 'databaseurl', 'paymentmethod']
+const SENSITIVE_PHRASES: readonly string[] = [
+  'connectionstring',
+  'databaseurl',
+  'firstname',
+  'fullname',
+  'lastname',
+  'paymentmethod',
+]
 
 /** Split `STRIPE_SECRET_KEY` and `stripeSecretKey` alike into `['stripe', 'secret', 'key']`. */
 function segmentsOf(key: string): string[] {
@@ -139,9 +152,12 @@ const SENSITIVE_VALUE: readonly RegExp[] = [
   /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g,
 ]
 
-/** Query parameters that carry a credential in a URL. Reset links, OAuth codes, session handoffs. */
+/**
+ * Query parameters that carry a credential in a URL. Reset links, OAuth codes, session handoffs — and
+ * (plan §34) `order`, the serial id on checkout's return URLs, which D-17 keeps out of public view.
+ */
 const SENSITIVE_PARAM =
-  /^(access_token|code|email|key|password|secret|session|session_id|sig|signature|token)$/i
+  /^(access_token|code|email|key|order|password|secret|session|session_id|sig|signature|token)$/i
 
 const MAX_DEPTH = 6
 const MAX_ARRAY = 50
@@ -321,4 +337,17 @@ function redactUser(user: unknown): unknown {
   const id = (user as { id?: unknown }).id
 
   return id === undefined ? undefined : { id: String(id) }
+}
+
+/**
+ * `jane.doe@example.com` → `j***@example.com`. For a log line that has to say *which* customer a
+ * failure concerned without saying who they are — plan §34.1c, *"never log sensitive personal data
+ * unnecessarily"*. Anything that is not an address is redacted outright.
+ */
+export function maskEmail(value: string): string {
+  const at = value.lastIndexOf('@')
+
+  if (at <= 0) return REDACTED
+
+  return `${value[0]}***${value.slice(at)}`
 }

@@ -8915,6 +8915,100 @@ different `Origin` headers:
 
 CSRF protection is intact: the list grew by the deployment's own hosts and nothing else.
 
+## 1.39 Phase 34 — security, privacy and data minimisation
+
+Plan §34.1a–§34.1d and its prompt: *"Trace customer data from browser input through Next.js,
+Payload/Postgres, Stripe, Resend, analytics, and logs… Fix all issues found and document the data flow
+and retention assumptions."* The trace is `docs/SECURITY.md`; this is what it found and what changed.
+No dependency, no migration (`migrate:create --skip-empty` produced nothing).
+
+### 1.39.1 Every reset link was being written to the production logs
+
+`serviceEmailAdapter` logged the whole unsent email — body and recipient — in every environment, and
+production has no Resend key yet, so every password-reset request put a live one-hour reset token and
+the customer's address into Vercel's logs. The body is now logged on a local machine only; deployed,
+the line carries the subject and a masked recipient (`maskEmail`, `j***@example.com`), and so do the
+failure logs. The reset email's idempotency key — stored forever and sent to Resend — was the raw
+address; it is now a digest.
+
+### 1.39.2 Doors beside the guarded ones (audit R1-15, R1-18, and the trace)
+
+Each of these is the same shape as Phase 26's `POST /api/customers`: the form was guarded, the REST
+route next to it was not.
+
+- **Customer login, forgot-password and reset-password over REST** now refuse anything but the Local
+  API (`Customers.ts` `beforeOperation`). The audit had reset a password to `abc` through REST.
+  Measured: all three 403; storefront sign-in unaffected.
+- **Forgot-password** gained Turnstile (the fifth public form) and a five-minute cooldown per address
+  (`lib/auth/reset-cooldown.ts`, computed from the stored expiry since the issue time is not stored).
+  The answer is the same sentence either way. Measured: two requests, one email.
+- **Payload's own collections** — `payload-locked-documents`, `payload-preferences` — were open to any
+  signed-in *customer*, because Payload gives them `Boolean(user)` and this project has two auth
+  collections. Narrowed to staff in `onInit` (they are created after every plugin runs). Measured:
+  customer 403, staff 200.
+- **A customer could `PATCH` their own password or email** with no current password — so a stolen
+  cookie became a permanent takeover — and **an editor could set any customer's**. Both now need an
+  admin (email compared against the stored value, since the admin form resends it on every save).
+  Measured: customer 403 on both, phone 200, admin 200.
+- **Order ownership** — `customer`, `email`, `cart` — is server-written only (`nobodyField`); the address
+  snapshots are admin-only. Re-pointing `customer` handed an order to another account; changing
+  `email` redirected its dispatch emails. Measured: an admin PATCH of the email leaves it unchanged.
+- **`POST /api/reviews`** skipped the review form's Turnstile. The rule is now the one `customers`
+  uses: an active customer **and** the action's verified flag, which REST cannot supply.
+- **Public reviews carried the author's account id**, so `where[customer]` profiled one person. The
+  field is readable by staff and the author only; the published name is `displayName`. Measured: 0 of
+  5 public reviews carry it; the query by customer is 400.
+- **Guest bag tokens** — bearer credentials — are admin-only in the panel.
+
+### 1.39.3 The review form could never have worked
+
+Found by the trace. The Server Action created the review with `overrideAccess: true`, no `user` and no
+`customer` in the data; `enforceCustomerOwnership` only fills `customer` from `req.user`, so the
+required field was empty, validation failed, and `isDuplicateReview` read the `customer` path as a
+duplicate — every first review was told *"You've already reviewed this."* `verify:reviews` passed
+because it passes `customer` itself. The action now writes as the customer, with the verified flag and
+`overrideAccess: false`, and `verify:access` asserts that the same write without the flag is refused.
+
+### 1.39.4 Minimisation
+
+- **Expired bags are deleted** (R1-27): a second daily cron, `/api/carts/sweep`, 200 per run, `active`
+  only. Both cron routes now share `lib/security/cron-auth.ts`.
+- **Length bounds** (R1-24): every address line has a `maxLength` from one table
+  (`lib/address-limits.ts`) used by the schema, checkout preflight (so an overlong line is the address
+  message, not a failed write) and both forms. Discount codes over 32 characters are refused before a
+  lookup.
+- **Analytics and Sentry**: `order` joined the redacted URL parameters (the serial id on checkout's
+  return URLs reached GA4 and PostHog — D-17); a search that looks like an email or a long number is
+  sent as `[redacted]`; Sentry's key redaction now covers address, line, postcode, phone and name keys.
+
+### 1.39.5 Headers (R3-10)
+
+`nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: SAMEORIGIN`, a
+`Permissions-Policy`, no `X-Powered-By`, and a CSP in **Report-Only** — enforcing a guessed policy
+could break Stripe, Turnstile or the admin. `docs/SECURITY.md` §6 is the step to enforce it.
+
+### 1.39.6 Not done, and why
+
+- **Retention periods** for unpaid orders and the email outbox, erasure of orders, a newsletter
+  unsubscribe, and editors' read access to the subscriber list — legal and business decisions, listed
+  in `docs/SECURITY.md` §4 and TODO.md §10 rather than guessed.
+- **Privacy policy and terms** (G-19, DOC-08) — legal text; TODO.md §9. The footer row stays empty.
+- **Error objects are logged whole**; a Postgres or Stripe error can quote an email. Recorded as a
+  residual in `docs/SECURITY.md` §5 rather than replacing Payload's logger configuration late.
+- The Stripe line-item description and return URLs still carry the internal order id; analytics no
+  longer receives it, and the confirmation page checks ownership.
+
+### 1.39.7 What was verified
+
+| Check | Result |
+|---|---|
+| `pnpm typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
+| `pnpm test:run` | **845** (nine new: cooldown, address bounds, email mask) |
+| All 22 `verify:*` harnesses, `scan:secrets` | pass; `verify:access` 50/50 with the new review check |
+| REST, on a production build | login/forgot/reset 403; locks and preferences 403 customer / 200 staff; customer password/email PATCH 403; public reviews carry no account id; `POST /api/reviews` 403; sweep without the secret 401 |
+| Browser | sign-in works; a 250-character address line refused; two reset requests, one email, masked in the log |
+| Headers on `/` | all five present, no `X-Powered-By` |
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

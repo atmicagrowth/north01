@@ -4,6 +4,7 @@ import { useActionState } from 'react'
 
 import { Field } from '@/components/auth/field'
 import { FormStatus } from '@/components/auth/form-status'
+import { TurnstileWidget } from '@/components/security/turnstile-widget'
 import { Button } from '@/components/ui/button'
 import { forgotPassword } from '@/lib/auth/actions'
 import { initialAuthFormState } from '@/lib/auth/form-state'
@@ -36,6 +37,8 @@ export function ForgotPasswordForm() {
         required
         error={state.fieldErrors.email}
       />
+
+      <TurnstileWidget submissionCount={state.submissionCount} />
 
       <Button type="submit" variant="primary" size="lg" block loading={pending}>
         Send reset link

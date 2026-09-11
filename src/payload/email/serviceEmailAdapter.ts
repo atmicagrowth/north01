@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto'
+
 import type { PayloadEmailAdapter } from 'payload'
 
 import type { Courier } from '@/lib/email/send'
 
 import { dedupeKeyFor } from '@/lib/email/rules'
 import { sendEmail } from '@/lib/email/send'
+import { maskEmail } from '@/lib/observability/redact'
 
 /**
  * **The transport Phase 19 replaces `logEmailAdapter` with.**
@@ -81,11 +84,20 @@ export const serviceEmailAdapter =
               'Resend is not configured, so this message was not delivered. Set RESEND_API_KEY and ' +
               'EMAIL_FROM — see docs/ENVIRONMENT.md.',
             subject,
-            to,
+            to: maskEmail(to),
           })
         }
 
-        payload.logger.info({ body: html || text, msg: `Email (not sent): ${subject}`, to })
+        /*
+         * **The body is logged locally only** — plan §34.1c. This line ran in every environment, so
+         * in production — where Resend is not yet configured — every password-reset request wrote the
+         * whole email to the platform's logs: the recipient's address and the reset link, **with its
+         * live one-hour token**, readable by anyone with log access. Locally it is how a developer
+         * completes a reset; deployed, the subject and a masked address are enough.
+         */
+        if (isLocal) {
+          payload.logger.info({ body: html || text, msg: `Email (not sent): ${subject}`, to })
+        }
 
         return
       }
@@ -94,8 +106,9 @@ export const serviceEmailAdapter =
         payload,
         {
           data: { resetHref: '' },
+          /* Plan §34: a digest, not the address — the key is stored forever and sent to Resend. */
           dedupeKey: dedupeKeyFor('passwordReset', {
-            id: to,
+            id: createHash('sha256').update(to.trim().toLowerCase()).digest('hex').slice(0, 24),
             issuedAt: new Date().toISOString(),
           }),
           kind: 'passwordReset',
@@ -115,7 +128,7 @@ export const serviceEmailAdapter =
         payload.logger.error({
           msg: 'A password reset email could not be delivered.',
           reason: 'reason' in outcome ? outcome.reason : 'unknown',
-          to,
+          to: maskEmail(to),
         })
       }
     },

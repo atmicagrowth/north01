@@ -6,6 +6,10 @@
     {
       "path": "/api/email/drain",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/carts/sweep",
+      "schedule": "30 3 * * *"
     }
   ]
 }

@@ -56,6 +56,7 @@ import { SizeGuides } from './payload/collections/SizeGuides'
 import { Users } from './payload/collections/Users'
 import { WishlistItems } from './payload/collections/WishlistItems'
 import { serviceEmailAdapter } from './payload/email/serviceEmailAdapter'
+import { restrictInternalCollections } from './payload/access/internal-collections'
 import { cloudinaryStorage } from './payload/storage/cloudinary'
 import { Homepage } from './payload/globals/Homepage'
 import { Navigation } from './payload/globals/Navigation'
@@ -448,6 +449,9 @@ export default buildConfig({
    * same retained pool and would otherwise stack a new listener on every edit.
    */
   onInit: (payload) => {
+    /* Plan §34.1d, audit R1-18 — see `payload/access/internal-collections.ts`. */
+    restrictInternalCollections(payload)
+
     // `db` above is `postgresAdapter`, so this *is* a PostgresAdapter at runtime.
     // `payload.db` is declared as the database-agnostic interface, which has no `pool`
     // and no overlap with the concrete type, so TypeScript requires the assertion to go through

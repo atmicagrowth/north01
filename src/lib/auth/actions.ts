@@ -26,6 +26,7 @@ import { checkPassword } from '@/lib/password-policy'
 import type { AuthFormState } from './form-state'
 import { ForgotPasswordSchema, LoginSchema, RegisterSchema, ResetPasswordSchema } from './schemas'
 import { safeReturnPath } from './session'
+import { resetIssuedRecently } from './reset-cooldown'
 
 /**
  * **Every authentication mutation in the storefront.** Plan §7.1e's list — registration, login,
@@ -554,10 +555,21 @@ export async function logout(): Promise<void> {
  * rather than Payload's default, which would discard the token. The flow itself is real: a real
  * single-use token, a real one-hour expiry, a real reset page.
  */
+/** The one answer to a reset request, whatever happened — it must reveal nothing about the address. */
+const RESET_REQUESTED =
+  'If an account exists for that address, a link to choose a new password is on its way. It can be used once and expires in an hour.'
+
 export async function forgotPassword(
   previous: AuthFormState,
   formData: FormData,
 ): Promise<AuthFormState> {
+  /* Plan §34 / audit R1-15: the fifth public form, guarded like the other four. */
+  const refused = await publicFormRefusal(formData)
+
+  if (refused) {
+    return failure(previous, formData, refused)
+  }
+
   const parsed = parse(ForgotPasswordSchema, formData)
 
   if (!parsed.ok) {
@@ -565,6 +577,25 @@ export async function forgotPassword(
   }
 
   const payload = await getPayloadClient()
+
+  /*
+   * **One link per address per cooldown** (`lib/auth/reset-cooldown.ts`). A request inside it is
+   * answered with exactly the sentence below and sends nothing — the response must not reveal
+   * whether an account exists, and it must not reveal that a link was just sent either.
+   */
+  const recent = await payload.find({
+    collection: 'customers',
+    depth: 0,
+    limit: 1,
+    overrideAccess: true,
+    select: { resetPasswordExpiration: true },
+    showHiddenFields: true,
+    where: { email: { equals: parsed.data.email.trim().toLowerCase() } },
+  })
+
+  if (resetIssuedRecently(recent.docs[0]?.resetPasswordExpiration, Date.now())) {
+    return success(previous, RESET_REQUESTED)
+  }
 
   try {
     await payload.forgotPassword({
@@ -582,10 +613,7 @@ export async function forgotPassword(
     return failure(previous, formData, UNEXPECTED_FAILURE)
   }
 
-  return success(
-    previous,
-    'If an account exists for that address, a link to choose a new password is on its way. It can be used once and expires in an hour.',
-  )
+  return success(previous, RESET_REQUESTED)
 }
 
 /* -------------------------------------------------------------------------------------------------

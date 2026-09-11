@@ -14,7 +14,7 @@ what only the project owner can do.
 | Install command | `pnpm install --frozen-lockfile` (Vercel's default for a pnpm lockfile) | platform default |
 | Node.js | **22.x** | `package.json` `engines` — matches `.nvmrc`, CI and `STACK_VERSIONS.md`. Until Phase 32 the range was open (`>=20.9.0`) and Vercel ran 24.x, a major no gate had exercised |
 | Function region | **`cle1`** (Ohio), once the production Neon endpoint is confirmed to be `us-east-2` | Project Settings → Functions — **owner**, §9 |
-| Scheduled jobs | the email drain, daily | `vercel.json` `crons` — §7 |
+| Scheduled jobs | the email drain and the expired-cart sweep, daily | `vercel.json` `crons` — §7 |
 | Production branch | `main` — every push to `main` is a production deployment | Git integration |
 
 ## 2. Environments
@@ -108,6 +108,13 @@ Queued emails are delivered on the next webhook, by staff from the admin, and �
 anything else, including when no secret is set. Daily is the one schedule every Vercel plan accepts —
 a more frequent expression fails the deployment on Hobby. On Pro, tighten it (`*/15 * * * *`).
 
+**The cart sweep** (Phase 34, audit R1-27) is the second cron: `GET /api/carts/sweep` daily at 03:30
+UTC deletes up to 200 `active` bags past their `expiresAt`, and their lines — `converted` bags are
+order history and are never touched. Same secret, same 401. Two daily crons is the Hobby plan's limit;
+a third scheduled job would need Pro or to share one of these routes.
+
+Both routes share `lib/security/cron-auth.ts`, so they cannot disagree about what counts as Vercel.
+
 Owner: set `CRON_SECRET` in Production (§9). Crons run on production deployments only.
 
 ## 8. CI and the smoke test
@@ -135,7 +142,7 @@ canonical and sitemap host (§9, `SITE_URL`) and search (§6).
 | Set Production `SITE_URL` to `https://north01apparel.vercel.app` (or the custom domain, Phase 33) | It is the team alias `north01apparel-mi-ca-growth.vercel.app`, so every canonical, the sitemap, reset links and Stripe return URLs name a host customers do not use. The smoke test warns about it |
 | Populate Preview (§3) | No preview can build (R3-03), so no change is rehearsed before production |
 | Build the production search index (§6) | Search and three filters are unavailable in production |
-| Set `CRON_SECRET` in Production (§7) | The daily drain refuses the cron without it |
+| Set `CRON_SECRET` in Production (§7) | The daily drain and the cart sweep refuse the cron without it |
 | Confirm the production Neon region; if `us-east-2`, set the Function region to `cle1` | Functions run in `iad1`, so every query crosses regions (R3-08) |
 | Project Settings → Git → enable **queued** production builds (no concurrent builds) | Two concurrent builds would migrate at once (R3-12) |
 | Add the CI repository secrets (§8) | CI has never built the application (R3-05) |

@@ -2,12 +2,12 @@ import type { CollectionConfig, Where } from 'payload'
 
 import {
   activeCustomer,
-  isActiveCustomer,
   isAdmin,
   isStaff,
   isStaffField,
   nobodyField,
   staffUser,
+  VERIFIED_PUBLIC_WRITE,
 } from '../access'
 import { validateRequiredUpload } from '../fields/required'
 import { enforceCustomerOwnership } from '../hooks/enforceCustomerOwnership'
@@ -124,7 +124,13 @@ export const Reviews: CollectionConfig = {
 
       return { or: [approved, { customer: { equals: customer.id } }] }
     },
-    create: isActiveCustomer,
+    /*
+     * Plan §34 — the review form checks Turnstile, and `POST /api/reviews` did not: a customer's
+     * cookie was enough to post around it. The Server Action sets the verified flag, which the REST
+     * API cannot (see `verifiedPublicWrite`), so every path to a new review has been through the guard.
+     */
+    create: ({ req }) =>
+      activeCustomer(req.user) !== null && req.context?.[VERIFIED_PUBLIC_WRITE] === true,
     update: isStaff,
     delete: isAdmin,
   },
@@ -143,6 +149,21 @@ export const Reviews: CollectionConfig = {
       relationTo: 'customers',
       required: true,
       index: true,
+      /*
+       * Plan §34 — an approved review is public, and so was the id of the account behind it:
+       * `GET /api/reviews?where[customer][equals]=…` listed everything one person had written. The
+       * published name is `displayName`; the account is for staff and the author.
+       */
+      access: {
+        read: ({ doc, req: { user } }) => {
+          if (staffUser(user)) return true
+
+          const customer = activeCustomer(user)
+          const owner = typeof doc?.customer === 'object' ? doc?.customer?.id : doc?.customer
+
+          return customer !== null && owner === customer.id
+        },
+      },
       admin: {
         description:
           'Required — it is what makes the one-review-per-product rule enforceable and the verified badge possible.',

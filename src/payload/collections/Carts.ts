@@ -2,7 +2,7 @@ import { randomBytes } from 'crypto'
 
 import type { CollectionConfig } from 'payload'
 
-import { isAdmin, isStaff, ownedByCustomer } from '../access'
+import { isAdmin, isAdminField, isStaff, ownedByCustomer } from '../access'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
 
@@ -87,6 +87,8 @@ export const Carts: CollectionConfig = {
         readOnly: true,
         description: 'The guest cart identifier. Issued by the server, never by the browser.',
       },
+      /* Plan §34.1d: it is a bearer credential for a stranger's bag. Admins only; the shop reads it server-side. */
+      access: { read: isAdminField },
       hooks: {
         beforeValidate: [({ value }) => value ?? randomBytes(32).toString('base64url')],
       },
