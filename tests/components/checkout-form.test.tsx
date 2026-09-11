@@ -554,11 +554,22 @@ describe('DiscountForm — the server refuses, and the field says why', () => {
     await user.type(screen.getByLabelText('Discount code'), 'WELCOME10')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
-    expect(await screen.findByRole('button', { name: 'Checking…' })).toBeInTheDocument()
+    /*
+     * Busy, and the SAME button. Phase 30 dropped the "Checking…" label swap: the longer word widened
+     * the button and narrowed the field the customer had just typed in, then shrank it again on the
+     * answer. The name stays "Apply" — `Button` keeps its label in the tree while the spinner shows —
+     * and the busy state is carried by `aria-busy` and `disabled`, which is what a screen reader and
+     * a second click both read.
+     */
+    const button = screen.getByRole('button', { name: 'Apply' })
+
+    await waitFor(() => expect(button).toHaveAttribute('aria-busy', 'true'))
+    expect(button).toBeDisabled()
 
     settle({ ...promotionIdle })
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument())
+    await waitFor(() => expect(button).not.toHaveAttribute('aria-busy'))
+    expect(button).toBeEnabled()
   })
 })
 

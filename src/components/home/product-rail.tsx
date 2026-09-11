@@ -105,7 +105,7 @@ export function ProductRail({ section }: { section: SectionOf<'productRail'> }) 
             measured it. The `-my-1 py-1` gives the focus ring vertical room: without it
             `overflow-x-auto` clipped the ring to two disconnected vertical bars.
           */
-          className="-my-1 snap-x overflow-x-auto py-1 focus-visible:outline-offset-4"
+          className="-my-1.5 snap-x scroll-px-[clamp(1.25rem,4vw,4rem)] overflow-x-auto py-1.5 focus-visible:outline-offset-4"
         >
           <ul className="flex gap-m px-[clamp(1.25rem,4vw,4rem)] lg:gap-l">{tiles}</ul>
         </div>

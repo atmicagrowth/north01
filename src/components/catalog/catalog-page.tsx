@@ -140,7 +140,8 @@ export async function CatalogPage({
               `scroll-padding-top: 4.5rem` for the same header — the two are the same measurement,
               and this adds a spacing step so the rail does not sit flush against the bar.
             */}
-            <div className="sticky top-[5.5rem] max-h-[calc(100vh-8rem)] overflow-y-auto pr-2">
+            {/* `-ml-1 pl-1 pb-1`: the scroller clipped the left of every checkbox ring. */}
+            <div className="sticky top-[5.5rem] -ml-1 max-h-[calc(100vh-8rem)] overflow-y-auto pb-1 pl-1 pr-2">
               <h2 className="sr-only">Filters</h2>
               <FilterPanel routeCategory={routeCategory} vocabulary={vocabulary} />
             </div>

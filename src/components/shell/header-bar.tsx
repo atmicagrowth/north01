@@ -109,13 +109,19 @@ export function HeaderBar({
           <DesktopNav items={items} className="ml-l hidden lg:block" />
 
           <div className="ml-auto flex items-center gap-1">
-            <SearchTrigger />
+            {/*
+              44px on a touch screen, like the bag beside it — except below 360px. At 320-345px a
+              44px Search, a 44px bag and the centred wordmark do not fit: Search slides under the
+              wordmark and a tap on its edge goes home. Measured by sweep 2; 36px still passes
+              WCAG 2.5.8 with room to spare there.
+            */}
+            <SearchTrigger className="min-[360px]:pointer-coarse:size-11" />
 
             <IconButton
               label={utilityNav.wishlist.label}
               size="sm"
               asChild
-              className="hidden lg:inline-flex"
+              className="hidden pointer-coarse:size-11 lg:inline-flex"
             >
               <Link href={utilityNav.wishlist.href} variant="unstyled">
                 <Heart aria-hidden />
@@ -126,14 +132,20 @@ export function HeaderBar({
               label={utilityNav.account.label}
               size="sm"
               asChild
-              className="hidden lg:inline-flex"
+              className="hidden pointer-coarse:size-11 lg:inline-flex"
             >
               <Link href={utilityNav.account.href} variant="unstyled">
                 <User aria-hidden />
               </Link>
             </IconButton>
 
-            <CartTrigger count={cartCount} />
+            {/*
+              `max-lg:-mr-2` mirrors the menu button's `-ml-2`. Sweep 1 made this 44px on phones,
+              which pushed Search 8px left — under the absolutely centred wordmark at 320-329px, where a
+              tap on Search's left edge went to the home link. The offset puts it back, and gives the
+              bag the same 12px inset from the edge the menu has.
+            */}
+            <CartTrigger className="max-lg:-mr-2" count={cartCount} />
           </div>
         </div>
       </header>

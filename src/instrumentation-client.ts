@@ -1,5 +1,4 @@
 import { publicAppEnv } from '@/lib/env.public'
-import { sentryOptions } from '@/lib/observability/sentry-options'
 
 /**
  * **Plan §25.1d, in the browser** — *"unexpected client exceptions"*.
@@ -21,9 +20,12 @@ import { sentryOptions } from '@/lib/observability/sentry-options'
  * rule `analytics.tsx` already states for every other third party, *"not configured means not
  * loaded"*.
  *
- * The test is the literal `process.env.NEXT_PUBLIC_SENTRY_DSN`, which Next substitutes at build time.
- * With no DSN the branch is `if (undefined)`, and the only reference to `@sentry/nextjs` in the
- * browser graph is inside a branch that cannot run — so its chunk is never requested.
+ * The test is `process.env.NEXT_PUBLIC_SENTRY_DSN`. Next inlines a `NEXT_PUBLIC_` variable only when it
+ * is SET at build time; an unset one stays a runtime read of the browser's empty `process.env` shim,
+ * which answers `undefined`. So this is not dead-code elimination — sweep 2 read the built chunk and
+ * the branch is there — but it never runs, and the SDK and its options are async chunks that are
+ * therefore never requested. Both load inside it: sweep 2 also found the options module, and the
+ * redaction code behind it, still statically imported and so still on every route.
  *
  * **What a configured deployment gives up, stated rather than hidden:** the SDK now arrives as an
  * async chunk requested immediately, rather than parsed synchronously before hydration, so an
@@ -40,23 +42,25 @@ let captureTransition: Sentry['captureRouterTransitionStart'] | undefined
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
 
 if (dsn) {
-  void import('@sentry/nextjs').then((sdk) => {
-    sdk.init(
-      sentryOptions({
-        dsn,
-        /*
-         * `publicAppEnv()`, **not** `NODE_ENV`. Every built deployment has `NODE_ENV === 'production'`,
-         * so a preview's browser errors were landing in the production Sentry environment beside real
-         * ones — while the same deployment's *server* errors, which read `VERCEL_ENV`, landed in
-         * `preview`. One deployment, split across two environments, with the halves that mattered in
-         * the wrong one.
-         */
-        environment: publicAppEnv(),
-      }),
-    )
+  void Promise.all([import('@sentry/nextjs'), import('@/lib/observability/sentry-options')]).then(
+    ([sdk, { sentryOptions }]) => {
+      sdk.init(
+        sentryOptions({
+          dsn,
+          /*
+           * `publicAppEnv()`, **not** `NODE_ENV`. Every built deployment has `NODE_ENV === 'production'`,
+           * so a preview's browser errors were landing in the production Sentry environment beside real
+           * ones — while the same deployment's *server* errors, which read `VERCEL_ENV`, landed in
+           * `preview`. One deployment, split across two environments, with the halves that mattered in
+           * the wrong one.
+           */
+          environment: publicAppEnv(),
+        }),
+      )
 
-    captureTransition = sdk.captureRouterTransitionStart
-  })
+      captureTransition = sdk.captureRouterTransitionStart
+    },
+  )
 }
 
 export function onRouterTransitionStart(

@@ -36,9 +36,10 @@ export default function GlobalError({
      * route in case it is needed — so every visitor downloaded it whether or not anything failed,
      * and whether or not a DSN was configured. See `instrumentation-client.ts` for the measurement.
      *
-     * With no DSN at build time this is `if (!undefined) return` and the import is unreachable. With
-     * one, the dynamic import resolves to the same module instance `instrumentation-client.ts`
-     * initialised, so the capture goes to the configured client.
+     * With no DSN the check reads `undefined` at runtime (an unset `NEXT_PUBLIC_` variable is not
+     * inlined) and the async chunk is never requested. With one, the dynamic import resolves to the
+     * same module instance `instrumentation-client.ts` initialised, so the capture goes to the
+     * configured client.
      */
     if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return
 

@@ -150,7 +150,7 @@ export function ProductDetails({
     <Accordion className="border-t border-border" data-slot="product-details" type="multiple">
       {sections.map((section) => (
         <AccordionItem key={section.id} value={section.id}>
-          <AccordionTrigger>{section.label}</AccordionTrigger>
+          <AccordionTrigger headingLevel={2}>{section.label}</AccordionTrigger>
           <AccordionContent>{section.body}</AccordionContent>
         </AccordionItem>
       ))}

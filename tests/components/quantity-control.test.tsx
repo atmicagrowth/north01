@@ -48,8 +48,21 @@ const { addToBagAction, trackEvent } = vi.hoisted(() => ({
 
 vi.mock('@/lib/cart/actions', () => ({ addToBagAction }))
 vi.mock('@/lib/analytics/track', () => ({ trackEvent }))
+/*
+ * `AddToBag` opens the cart drawer on a successful add (structure §13, Phase 30), so it lives inside
+ * `ShellOverlayProvider` — which reads the pathname to close overlays on navigation.
+ */
+vi.mock('next/navigation', () => ({ usePathname: () => '/product/rolled-neck-sweater' }))
 
 const { AddToBag } = await import('@/components/cart/add-to-bag')
+const { ShellOverlayProvider, useShellOverlay } = await import('@/components/shell/overlay-context')
+
+/** Reports whether the bag is open, so a test can see the drawer being asked for without the drawer. */
+function CartOpenProbe() {
+  const { isOpen } = useShellOverlay()
+
+  return <output data-testid="cart-open">{isOpen('cart') ? 'open' : 'closed'}</output>
+}
 
 type AddToBagProps = ComponentProps<typeof AddToBag>
 
@@ -68,12 +81,17 @@ const BASE: AddToBagProps = {
 
 function renderControl(overrides: Partial<AddToBagProps> = {}) {
   const props = { ...BASE, ...overrides }
-  const view = render(<AddToBag {...props} />)
+  const tree = (extra: Partial<AddToBagProps> = {}) => (
+    <ShellOverlayProvider>
+      <AddToBag {...props} {...extra} />
+      <CartOpenProbe />
+    </ShellOverlayProvider>
+  )
+  const view = render(tree())
 
   return {
     ...view,
-    rerenderWith: (next: Partial<AddToBagProps>) =>
-      view.rerender(<AddToBag {...props} {...next} />),
+    rerenderWith: (next: Partial<AddToBagProps>) => view.rerender(tree(next)),
   }
 }
 
@@ -437,6 +455,31 @@ describe('AddToBag — the quantity control (§27.1b)', () => {
        * told what the server clamped to, so reporting anything but the request would be a guess.
        */
       expect(payload.items[0].quantity).toBe(3)
+    })
+  })
+
+  describe('structure §13 — "Add to Bag → Cart drawer"', () => {
+    it('opens the bag when the server said yes, so the customer sees what they just added', async () => {
+      const user = userEvent.setup()
+      renderControl()
+
+      expect(screen.getByTestId('cart-open')).toHaveTextContent('closed')
+
+      await user.click(addButton())
+
+      await waitFor(() => expect(screen.getByTestId('cart-open')).toHaveTextContent('open'))
+    })
+
+    it('leaves the bag closed when the server refused, because an open bag would show an add that never happened', async () => {
+      const user = userEvent.setup()
+      addToBagAction.mockResolvedValue({ notice: 'That size just sold out.', ok: false })
+
+      renderControl()
+
+      await user.click(addButton())
+      await screen.findByText('That size just sold out.')
+
+      expect(screen.getByTestId('cart-open')).toHaveTextContent('closed')
     })
   })
 })

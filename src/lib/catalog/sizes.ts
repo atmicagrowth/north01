@@ -1,4 +1,4 @@
-import { TWO_UP_IN_CONTAINER } from '@/lib/media/grid'
+import { THREE_UP_IN_CONTAINER, TWO_UP_IN_CONTAINER } from '@/lib/media/grid'
 
 /**
  * **Every `sizes` string the catalogue uses, in one place.**
@@ -70,6 +70,13 @@ export const CATALOG_IMAGE_SIZES = {
    * before the padding `clamp` does (`lib/media/grid.ts`).
    */
   productCardGridFull: `(min-width: 1600px) 310px, (min-width: 1440px) calc(342px - 2vw), (min-width: 1280px) calc(23vw - 18px), (min-width: 1024px) calc(30.667vw - 16px), ${TWO_UP_IN_CONTAINER}`,
+  /**
+   * **`/account/wishlist`** — `grid-cols-2 gap-m sm:grid-cols-3` inside the NARROW container (1024px
+   * border-box). It used `productCardGrid`, the shop's rail-adjusted string: 1.75x over-fetch at 768,
+   * 0.72x under-fetch at 1024 and 1280. Matches the measured 219.5 / 298 / 291 / 287 / 283 at 768,
+   * 1024, 1280, 1440 and 1920 to within half a pixel.
+   */
+  accountGrid: `(min-width: 1600px) 283px, (min-width: 1024px) calc(325px - 2.667vw), (min-width: 640px) ${THREE_UP_IN_CONTAINER}, ${TWO_UP_IN_CONTAINER}`,
   /**
    * The category header image on `/shop/<category>`: full container width, no sidebar beside it.
    * Identical to the homepage's contained figure, because that is what it is.

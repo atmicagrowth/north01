@@ -2,6 +2,7 @@
 
 import { Minus, Plus, X } from 'lucide-react'
 import { useActionState } from 'react'
+import { useFormStatus } from 'react-dom'
 
 import { useActionResult } from '@/components/analytics/use-action-result'
 import { trackEvent } from '@/lib/analytics/track'
@@ -78,7 +79,18 @@ export function CartLineRow({
   const linkable = line.productSlug !== '' && line.availability?.productPublished === true
 
   return (
-    <li className="flex gap-m py-m" data-slot="cart-line" data-variant={line.variantId}>
+    /*
+     * `has-[[data-pending]]:hidden`: a row being removed leaves when the customer asks, not seconds
+     * later when the server answers. Sweep 2 measured the late collapse as unexpected layout shift —
+     * 0.106 on /cart and 0.089 in the drawer at 375, 0.209 for the last line — because the answer
+     * arrived outside the 500ms input window. The server stays authoritative: if it refuses, the
+     * pending state ends and the row comes back with its notice.
+     */
+    <li
+      className="flex gap-m py-m has-[[data-pending]]:hidden"
+      data-slot="cart-line"
+      data-variant={line.variantId}
+    >
       <div className={cn('shrink-0', compact ? 'w-20' : 'w-24')}>
         <MediaImage
           alt=""
@@ -166,10 +178,11 @@ function Stepper({
       <form action={action}>
         <input name="lineId" type="hidden" value={line.id} />
         <input name="quantity" type="hidden" value={shown - 1} />
+        <PendingRemoval removes={shown === 1} />
 
         <IconButton
           label={shown === 1 ? `Remove ${line.productName}` : `One fewer ${line.productName}`}
-          className="max-lg:size-11"
+          className="pointer-coarse:size-11"
           size="sm"
           type="submit"
           variant="ghost"
@@ -199,7 +212,7 @@ function Stepper({
            */
           disabled={atCeiling}
           label={`One more ${line.productName}`}
-          className="max-lg:size-11"
+          className="pointer-coarse:size-11"
           size="sm"
           type="submit"
           variant="ghost"
@@ -255,9 +268,10 @@ function RemoveButton({ currency, line }: { currency: string; line: CartLineView
   return (
     <form action={action}>
       <input name="lineId" type="hidden" value={line.id} />
+      <PendingRemoval removes />
 
       <IconButton
-        className="max-lg:size-11"
+        className="pointer-coarse:size-11"
         label={`Remove ${line.productName}`}
         size="sm"
         type="submit"
@@ -267,4 +281,15 @@ function RemoveButton({ currency, line }: { currency: string; line: CartLineView
       </IconButton>
     </form>
   )
+}
+
+/**
+ * Marks its form as pending a removal. `useFormStatus` reports only the enclosing form, so the
+ * marker is rendered inside each form that can remove a line — the Remove button, and the stepper's
+ * minus when it is at one — and the row hides itself with `has-[[data-pending]]`.
+ */
+function PendingRemoval({ removes }: { removes: boolean }) {
+  const { pending } = useFormStatus()
+
+  return pending && removes ? <span data-pending hidden /> : null
 }

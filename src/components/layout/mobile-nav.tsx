@@ -93,7 +93,7 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
                     </AccordionTrigger>
 
                     <AccordionContent className="pb-m">
-                      <ul className="flex flex-col gap-s pl-3">
+                      <ul className="flex flex-col gap-s pl-3 pt-1">
                         <li>
                           <DrawerClose asChild>
                             <Link href={item.href} variant="quiet" className="text-body-sm">

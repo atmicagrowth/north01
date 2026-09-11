@@ -191,7 +191,7 @@ export function CartTrigger({ className, count }: { className?: string; count: n
        * every page of the site. Found by measuring the bag page at seven widths; invisible in a
        * screenshot, because two pixels of white look like nothing at all.
        */
-      className={cn('relative max-lg:size-11', className)}
+      className={cn('relative pointer-coarse:size-11', className)}
       {...overlayTriggerProps('cart', isOpen('cart'))}
       onClick={(event) => {
         registerTrigger(event.currentTarget)

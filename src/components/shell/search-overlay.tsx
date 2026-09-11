@@ -56,6 +56,17 @@ export function SearchOverlay() {
         title="Search"
         onCloseAutoFocus={handleCloseAutoFocus}
         /*
+         * **Focus the field, not Close.** Radix focuses the first tabbable element, and DialogContent
+         * renders its Close before its children — so a customer who opened search and started typing
+         * typed into nothing. Sweep 2 measured it at 320, 375 and 1440. The id is fixed in
+         * `search-panel.tsx`, which is what keeps this component's signature unchanged for its
+         * second mount in `global-not-found.tsx`.
+         */
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          document.getElementById('site-search')?.focus()
+        }}
+        /*
          * Top-anchored rather than centred. A search surface belongs under the control that opened
          * it — the customer's eye is already at the top of the page — and a centred box would put
          * the panel where the page content was. `max-w-measure` keeps it to a reading width.

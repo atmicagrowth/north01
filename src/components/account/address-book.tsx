@@ -48,7 +48,8 @@ export function AddAddressForm() {
             </span>
             <input
               autoComplete={field.autoComplete}
-              className="border border-border-control bg-surface px-3 py-2 font-sans text-body-sm text-foreground"
+              /* 44px and 16px, as every other field in the shop: iOS zooms the page on anything smaller. */
+              className="h-11 border border-border-control bg-surface px-3 font-sans text-body text-foreground"
               name={field.name}
               required={field.required}
               type="text"
@@ -81,7 +82,7 @@ export function RemoveAddressButton({ addressId }: { addressId: number }) {
     <form action={action}>
       <input name="addressId" type="hidden" value={addressId} />
       <button
-        className="font-sans text-micro uppercase text-foreground-muted underline underline-offset-4 hover:text-foreground disabled:opacity-50"
+        className="inline-flex min-h-11 items-center font-sans text-micro uppercase text-foreground-muted underline underline-offset-4 hover:text-foreground disabled:opacity-50"
         disabled={pending}
         type="submit"
       >

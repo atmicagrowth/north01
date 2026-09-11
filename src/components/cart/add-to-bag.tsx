@@ -1,11 +1,12 @@
 'use client'
 
-import { useActionState, useId, useState } from 'react'
+import { useActionState, useId, useRef, useState } from 'react'
 
 import { useActionResult } from '@/components/analytics/use-action-result'
 import { trackEvent } from '@/lib/analytics/track'
 import type { AnalyticsItem } from '@/lib/analytics/events'
 
+import { useShellOverlay } from '@/components/shell/overlay-context'
 import { Button } from '@/components/ui/button'
 import { CART_ACTION_IDLE } from '@/lib/cart/action-state'
 import { addToBagAction } from '@/lib/cart/actions'
@@ -69,6 +70,8 @@ export function AddToBag({
   const [state, action, pending] = useActionState(addToBagAction, CART_ACTION_IDLE)
   const [requested, setRequested] = useState(1)
   const quantityId = useId()
+  const { registerTrigger, setOpen } = useShellOverlay()
+  const submit = useRef<HTMLButtonElement>(null)
 
   const ceiling = Math.max(1, Math.min(maxQuantity || 1, QUANTITY_HARD_CAP))
 
@@ -104,6 +107,16 @@ export function AddToBag({
       items: [{ ...item, quantity }],
       valueMinor: typeof item.priceMinor === 'number' ? item.priceMinor * quantity : null,
     })
+
+    /*
+     * Structure document §13: *"Add to Bag → Cart drawer."* The drawer opens on the server's yes —
+     * never on the click, which could still be refused — so what it shows is the bag with the line
+     * in it. Until sweep 2 nothing opened: the only feedback was a number on the header badge, about
+     * four seconds later on a slow connection. Registering the submit button as the trigger means
+     * closing the drawer returns focus to it, the contract the header's bag button already has.
+     */
+    registerTrigger(submit.current)
+    setOpen('cart', true)
   })
 
   const blocked = variantId === null || maxQuantity <= 0
@@ -152,7 +165,7 @@ export function AddToBag({
           )}
         </div>
 
-        <Button className="flex-1" disabled={blocked} size="lg" type="submit">
+        <Button className="flex-1" disabled={blocked} ref={submit} size="lg" type="submit">
           {pending ? 'Adding…' : 'Add to bag'}
         </Button>
       </div>
@@ -164,7 +177,8 @@ export function AddToBag({
       <p
         aria-live="polite"
         className={cn(
-          'min-h-[1.25rem] font-sans text-body-sm',
+          /* One full line (22px), so the notice appearing or clearing moves nothing below it. */
+          'min-h-[1.375rem] font-sans text-body-sm',
           state.ok ? 'text-foreground-muted' : 'text-error',
         )}
       >

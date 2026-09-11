@@ -134,7 +134,12 @@ export function ProductGallery({
         */}
         {shown.map((frame, index) => (
           <button
-            className="relative w-full shrink-0 snap-start lg:cursor-zoom-in"
+            /*
+             * The ring is drawn INSIDE the frame below `lg`: the frame fills the snap scroller
+             * exactly, and the scroller clipped the outer ring on all four sides, so a keyboard user
+             * tabbing through the photographs on a phone saw no focus at all.
+             */
+            className="relative w-full shrink-0 snap-start max-lg:focus-visible:outline-offset-[-4px] lg:cursor-zoom-in"
             /*
              * **Keyed by position, not by media id.** Choosing a size prepends the variant's own
              * photograph (`product-page.tsx`), and it arrives with the server render about a second
@@ -169,7 +174,8 @@ export function ProductGallery({
       {shown.length > 1 ? (
         <div
           aria-label="Choose a photograph"
-          className="flex gap-2 overflow-x-auto"
+          /* `-m-1 p-1`: room for the focus ring inside the row that scrolls, as `product-rail` does. */
+          className="-m-1 flex gap-2 overflow-x-auto p-1"
           onKeyDown={(event) => {
             if (!isRovingKey(event.key)) {
               return
@@ -248,7 +254,12 @@ export function ProductGallery({
 
       <Dialog open={zoomed !== null} onOpenChange={(open) => setZoomed(open ? zoomed : null)}>
         <DialogContent
-          className="max-w-none bg-canvas p-0"
+          /*
+           * `p-s`, not `p-0`: the dialog's Close is pulled out by `-mr-2 -mt-2`, which assumes padding
+           * to pull into. With none, the auto-focused Close was cut 12px on two sides — its ring
+           * entirely, and some of the button.
+           */
+          className="max-w-none bg-canvas p-s"
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             frameButtons.current[openedFrom.current]?.focus()

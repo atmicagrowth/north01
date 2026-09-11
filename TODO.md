@@ -1,14 +1,16 @@
 # TODO — things only the project owner can do
 
-## 1. ~~Send a development Neon connection string~~ — DONE
+## 1. ~~Send a development Neon connection string~~ — DONE, and redone
 
-**Resolved 2026-09-09.** The `development` branch exists on endpoint `ep-green-boat-axabhusu`,
-`.env` points at it, and `DATABASE_PUSH_TARGET` names the same database — so decision **D-10** is
-satisfied and every harness is free to run. Its migration chain matches production's twelve, batch
-for batch.
+**Moved 2026-09-10.** The original `development` branch, `ep-green-boat-axabhusu`, stopped accepting
+its password after production moved to a new Neon account, and its data could not be read. `.env` now
+points at **`ep-wandering-surf-ax7ia116`** on the new account, and `DATABASE_PUSH_TARGET` names the
+same database, so decision **D-10** is satisfied. It was rebuilt to the Phase 29 demo state with the
+project's own scripts (`seed`, `generate:media`, `import:media`, `reindex`) — see Notes §1.35.8.
 
-Production remains `ep-delicate-waterfall-axjoiwvz` and is what Vercel's `DATABASE_URL` holds.
-Nothing local points at it any more.
+**Production's endpoint needs confirming.** This file said production was `ep-delicate-waterfall-axjoiwvz`;
+if production now lives on the new account, update this line with its endpoint so nothing local is ever
+pointed at it by mistake.
 
 ### What is still owed against it
 
@@ -27,9 +29,10 @@ deliberately deferred so the phase work could continue. In rough order of value:
 
 ### Rotate the role anyway
 
-`neondb_owner`'s password has now appeared in a chat transcript **three times** and should be treated
-as exposed. Neon → **Roles** → `neondb_owner` → **Reset password**, then update `.env` and Vercel's
-`DATABASE_URL`. The branch above shares that role, so one reset covers both.
+`neondb_owner`'s password has now appeared in a chat transcript **four times** — most recently with
+the new development branch on 2026-09-10 — and should be treated as exposed. Neon → **Roles** →
+`neondb_owner` → **Reset password** on the new account, then update `.env` and Vercel's
+`DATABASE_URL`. Put the new value in those two places only, never in a chat.
 
 ---
 

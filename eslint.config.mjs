@@ -111,7 +111,8 @@ const config = [
     //
     // `instrumentation-client.ts` and `global-error.tsx` are in every route's client graph by
     // construction. A static `@sentry/nextjs` import in either put ~58 KB gzip of SDK on every page
-    // with no DSN configured. They load it with `import()` behind the build-time DSN check instead.
+    // with no DSN configured. They load it with `import()` behind the DSN check instead — and the
+    // Sentry options module with it, which pulls the redaction code in.
     //
     // `@typescript-eslint/no-restricted-imports` rather than the core rule, because it can allow
     // `import type` — which is erased and costs nothing — and because configuring the core rule here
@@ -135,6 +136,12 @@ const config = [
             },
           ],
           patterns: [
+            {
+              group: ['**/observability/sentry-options'],
+              allowTypeImports: true,
+              message:
+                'Import the Sentry options inside the DSN-guarded import() with the SDK; statically they ship to every visitor.',
+            },
             {
               group: ['**/env.schema', './env.schema'],
               allowTypeImports: true,

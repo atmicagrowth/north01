@@ -438,7 +438,13 @@ export function SearchPanel() {
             aria-controls={listId}
             aria-expanded={options.length > 0}
             autoComplete="off"
-            className="min-w-0 flex-1 bg-transparent font-sans text-body text-foreground outline-none placeholder:text-foreground-muted"
+            /*
+             * `h-11`: the field was 26px tall, the one tap target on a phone that re-focuses search.
+             * `scheme-dark`: Chromium's clear control drew in saturated blue, the only colour in the
+             * overlay. It stays — Escape closes the dialog rather than clearing the field, so on a
+             * phone it is the only way to clear — but it draws in the scheme the field is set in.
+             */
+            className="h-11 min-w-0 flex-1 bg-transparent font-sans text-body text-foreground scheme-dark outline-none placeholder:text-foreground-muted"
             id="site-search"
             name="q"
             onChange={(event) => {

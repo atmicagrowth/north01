@@ -142,7 +142,11 @@ export function DrawerContent({
 
         {/* Only the body scrolls, so the header and any footer stay put — plan §9.1c
             asks for scroll containment in the mobile drawer specifically. */}
-        <div data-slot="drawer-body" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {/* `scroll-py-2`: Tab scrolls a control 8px inside the edge, so its ring is not cut. */}
+        <div
+          data-slot="drawer-body"
+          className="min-h-0 flex-1 scroll-py-2 overflow-y-auto overscroll-contain"
+        >
           {children}
         </div>
 

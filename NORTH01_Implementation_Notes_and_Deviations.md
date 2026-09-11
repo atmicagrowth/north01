@@ -8074,6 +8074,420 @@ them.
   a shop that looks finished.
 - **`campaigns.collection` and `campaigns.products`**, still read by nothing (Phase 28).
 
+## 1.35 Phase 30 — performance and responsive polish
+
+Plan §30.1a–§30.1d. **No dependency and no migration.** The phase began by asking a real browser for
+every href in the navigation, and the first thing it measured was not a layout problem at all.
+
+### 1.35.1 Four navigation links had answered 404 on every page since Phase 23
+
+`documentHref` in `lib/navigation/routes.ts` is the one map every link in the application goes
+through, and it emits `/edit/<slug>`. Phase 23 built the detail route as `/edits/[slug]`. The mega
+menu, the footer, search suggestions and — from Phase 24 — the sitemap all pointed at a spelling no
+route answered to. **The route was renamed to match the map**, not the map to match the route,
+because the map is what the rest of the code already agrees with.
+
+`/collections` and `/edit` had no index at all: Phase 23 built the detail pages and recorded both as
+owed, and Phase 28's audit repeated it. One reader (`getCollectionIndex` / `getEditIndex`) and one
+component (`EditorialIndex`) serve both, because the two differ in their detail pages and not in what
+an index shows. `/lookbook` and `/journal` keep their own cards — a season, a category and an excerpt
+are different cards, not one card with a prop.
+
+`/about` exists nowhere and no phase claims it. It was removed from the primary navigation, the
+fallback navigation and the seed, and the homepage's brand block now sends readers to the journal.
+**DEV-07 is amended from six primary items to five** — see §1.35.4.
+
+Every page of a local production build also requested `/_vercel/speed-insights/script.js` and got a
+404: `appEnv` is `production` for any `NODE_ENV=production` build, including `pnpm start` on a laptop,
+and the beacon exists only on Vercel. The component now requires the platform (`VERCEL`), not merely
+the build mode — which is what its own docblock already said.
+
+### 1.35.2 The product page spent two seconds before its first byte
+
+TTFB was **2.1s** against a round-trip floor of about **80ms** to the development branch. Home and
+`/shop` answered in 0.09s; the product page was the slowest page in the shop by a factor of twenty,
+and none of it was images — every image on the page had arrived by 190ms. Three causes, each
+measured on its own:
+
+| Cause | Measured |
+|---|---|
+| The product read at **depth 2**, with a comment naming `variants[].image` as the second hop. The variants are never read through the product — `readVariants` queries them. The second hop bought the `variants` **join**, ten rows deep with every image, and the `collections` join, all discarded. | 770ms → **380ms** at depth 1 with joins off |
+| Recommendations and variants were two `await`s **inside an object literal**, which JavaScript evaluates in order. Neither depends on the other. | one full query removed from the critical path |
+| **No storefront read anywhere passed `joins`**, so every product read — every card on every grid — populated both join fields for nothing. | recommendations 450 → 300ms |
+
+Nested products needed a different lever. `joins: false` on the outer query **does not reach a product
+populated through a relationship** — measured: a collection at depth 2 still fetched nine products
+with ten variants each. `PRODUCT_CARD_POPULATE` in `lib/catalog/resolve.ts` is the six fields a card
+and a tile read, passed as `populate.products` on the four editorial depth-2 reads. Its docblock says
+what to do when a card starts reading a seventh: a field missing from the select arrives `undefined`,
+which a card treats as *unknown*, so the failure mode is a card that quietly says less.
+
+The edit page resolved its product groups **one query at a time, in series**, under a comment
+reasoning that groups are few. True — and on a database a round trip away, also the whole cost. One
+query for the union now; each group takes its own products back out in its own order.
+
+| Route | Before | After |
+|---|---|---|
+| `/product/field-jacket` | 2.09s | **1.07s** |
+| `/collections/current-season` | 1.72s | **1.23s** |
+| `/edit/cold` | 1.45s | **1.07s** |
+
+**Every change was checked by rendering eleven routes before and after and diffing the DOM** (scripts
+and hashed asset paths stripped). All eleven are byte-identical. What changed is how long they take.
+
+**That proof was narrower than it sounds.** Eleven identical routes did not include a lookbook with a
+hotspot, and the populate select dropped every one of them — sweep 1 found it (§1.35.6), and the harness
+that now guards it was proven by putting the bug back.
+
+### 1.35.3 The product page scrolled sideways on every phone, from two one-pixel spans
+
+`scrollWidth` 448 in a 320px viewport; 531 at 375, 613 at 430, 1099 at 768. The offenders were two
+`sr-only` spans inside the gallery's buttons. `sr-only` is `position: absolute`; with no positioned
+ancestor its containing block is the **initial** one, and an absolutely positioned box is **not
+clipped by an `overflow` ancestor that is not its containing block**. So both spans escaped their
+scrollers and widened the document. `relative` on the buttons makes each its own containing block,
+back inside a scroller that clips. Nothing moves.
+
+### 1.35.4 Image sizing, touch targets and layout shift — measured at §30.1a's eight widths
+
+- **The editorial index grids over-fetched 3.2×.** All four used `figureContained`, which promises the
+  whole container, for a card a third of it. `EDITORIAL_GRID_TWO_UP` and `EDITORIAL_GRID_THREE_UP` in
+  `lib/media/grid.ts` are derived from the container's three regimes and checked against the rendered
+  card at nine viewports; every tier is exact. The 1440–1600 tier exists because `max-w-page` caps the
+  container before the padding `clamp` reaches its ceiling — a band where the container **shrinks as
+  the viewport grows**.
+- **Touch targets: 134 elements under 24px tall at 375px, and every one passes** WCAG 2.2 AA 2.5.8 by
+  its spacing exception — nearest neighbour 38px or more, measured centre to centre. Reported rather
+  than "fixed", because enlarging inline text links would have been a visual change with no
+  accessibility gain.
+- **CLS 0** on home, shop, product, collections and journal at 375 and 1440.
+- The first audit's forty "image has no `sizes`" findings were the audit's fault: inside `<picture>`
+  the `<img>` is the no-`srcset` fallback and the sources carry `sizes`. The harness now reads the
+  matched source.
+
+### 1.35.5 The fallback header had its own 404, and verify:shell could not have seen it
+
+The fallback's NEW went to `/new`. The live navigation has always sent it to `/shop?sort=newest`; this
+copy invented a route. Invisible, because the fallback renders only when the CMS read has failed.
+
+`verify:shell` asserted the fallback had **six** links — and failed the moment ABOUT came out, which is
+how it was found. The count was never the question. It now builds the set of pages from `src/app` on
+every run and resolves **every fallback, utility and live navigation href** against it — 25 live hrefs
+today — with a negative control first, so a matcher that answered *yes* to everything cannot pass.
+
+**DEV-07, amended:** five primary items — NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK. ABOUT returns
+when there is a page behind it, and the assertion is written so that bringing it back has to come
+through the harness and say so.
+
+### 1.35.6 Sweep 1 — twenty-seven findings, twenty-six confirmed, and the worst one was mine
+
+Five read-only finders — mobile UX, performance, layout shift, the surfaces the first audit had not
+visited, and a correctness review of this phase's own diff — each followed by an adversarial verifier
+that re-measured every finding and tried to refute it. One was refuted (a data gap, not a defect). Ten
+of the twenty-six came back with a **corrected** fix, and three of those corrections mattered.
+
+**The highest-severity finding was a regression this phase introduced.** `PRODUCT_CARD_POPULATE`
+shipped without `status` and `publishedAt`. `resolveProductTile` asks `isPublicDocument` before it
+will link a product, and that asks `status === 'published'` — so every hotspot in every lookbook, and
+every tile in a `productGroup` or `shopTheLook` block, resolved to *unpublished* and was dropped.
+`/lookbook/in-black` rendered **0 of its 6** hotspots. The before-and-after DOM diff meant to prove the
+read-layer change safe did not catch it: the card path never checks `status`, and the one lookbook the
+diff rendered had no hotspots to lose. A proof is only as good as its fixtures.
+
+Both fields are back, and `publishedAt` is not optional — `isPublicDocument` skips its scheduled-drop
+gate when the key is *absent*, so selecting `status` alone would have let a product scheduled for next
+week link from a lookbook today. `verify:editorial` now resolves every published lookbook twice through
+the same resolver — once from a full read, once through `getLookbook` — and requires them to agree.
+**Proven by reintroducing the bug:** the check failed with `in-black: 0 of 6`, and passes with
+`6 hotspot(s) across 2 lookbook(s)` restored.
+
+**Performance — about a third of every page's JavaScript was two things doing nothing:**
+
+| Route | First-load JS, gzip, before | After |
+|---|---|---|
+| `/` | 369,897 B | **256,951 B** |
+| `/shop` | 366,679 B | **253,746 B** |
+| `/product/field-jacket` | 372,784 B | **255,302 B** |
+| `/cart`, `/journal` | 352,470 B | **240,604 B** |
+
+- **All of Zod, 65 KB gzip, on every route**, to re-validate ten optional `NEXT_PUBLIC_*` strings in the
+  browser. `env.public.ts` imported it, and `env.public.ts` is reached by client components —
+  `MediaImage` alone by four. The schema now lives in `env.schema.ts`, imported only by `env.core.ts`,
+  which `instrumentation.ts` evaluates on every server start — and `ServerEnvSchema` *extends* the public
+  schema, so an invalid public variable still fails the deployment at boot. `env.public.ts` takes the
+  `PublicEnv` type with `import type`, which is erased. **Not** `server-only` on the new module, because
+  `env.core.ts` must stay loadable by the Payload CLI; a `typeof window` backstop instead, the one
+  `env.core.ts` already carries.
+- **The Sentry browser SDK, ~58 KB gzip, on every route with no DSN configured.** The DSN check decided
+  whether `init` ran, not whether the SDK was downloaded — against the rule `analytics.tsx` states for
+  every other third party, *"not configured means not loaded"*. The verifier found the second door the
+  finder missed: `global-error.tsx` imported it statically too, and Next ships that boundary with every
+  route. Both now `import()` it behind the literal `process.env.NEXT_PUBLIC_SENTRY_DSN`, which Next
+  substitutes at build. **The trade-off, for a deployment that does set a DSN:** the SDK arrives as an
+  async chunk rather than before hydration, so an exception in the first few milliseconds is not
+  captured. `global-error.tsx` and `onRequestError` still cover a root layout that throws and a server
+  render that fails. Restoring the eager import is one line, for a deployment that has somewhere to send
+  what it catches.
+- Confirmed absent from every first-load chunk of `/`, `/shop` and the product page: no `ZodArray`, no
+  `__SENTRY__`. **ESLint now forbids both** in the three files that sit in every client graph
+  (`@typescript-eslint/no-restricted-imports`, which allows `import type`, and which does not replace
+  the `env.core` ban the way reconfiguring the core rule for those files would have).
+- The size guide's rich-text notes are rendered on the server and passed in as children, so the Lexical
+  converters leave the product page's client bundle.
+- The product video's `poster` was the untransformed Cloudinary original — a 696 KB PNG where the
+  `f_auto` derivative is 21 KB. Latent (no seeded product has a video), and now built through the same
+  URL builder as every other image.
+
+**Layout shift the unthrottled pass could not see:**
+
+- **Choosing a size moved the whole gallery — 0.36 CLS in one entry at 1440**, above the 0.25 "poor"
+  line, on the most important interaction on the page. A size tap prepends the variant's photograph,
+  which arrives with the server render about a second later, outside the 500ms input window. The frames
+  were keyed by media id, so React inserted a new leading frame. Keyed by position, the leading 4:5 box
+  is the same node and only its image changes. **Measured after: 0.0000 at 1440 and at 375**, with the
+  variant photograph still in front.
+- **The compact-on-scroll header moved the page on every return to the top**, and made scroll anchoring
+  snap any 1–16px scroll back to 0. The finder proposed a `fixed` header; the verifier refuted that — it
+  would cover the announcement bar above it, which scrolls away by design. Now the bar's margin grows by
+  exactly what its height loses, on the same token and curve, so its footprint is 72px at every frame.
+  **Measured after: zero layout-shift entries at 375 and 1440, and `scrollTo(2)` stays at 2.**
+- Turnstile's container reserved no height, so the 73px widget pushed the submit button down after
+  hydration (0.022 at 375 on `/login`, reproduced with Cloudflare's test key). It reserves the box now,
+  and only when a site key means a widget will render.
+
+**Mobile:**
+
+- **The filter drawer closed after every tick** and dropped focus to `<body>` — the opposite of what
+  `filter-drawer.tsx` promises. It was rendered inside `<Suspense key={canonicalHref}>`, and every filter
+  write changes that key. The verifier found the sort select lost focus the same way; both controls now
+  sit above the boundary. **Measured after: two ticks, drawer still open, focus on the checkbox; Escape
+  returns focus to Filter.** The sort select no longer truncates its label at 320 ("Featurec") — the row
+  wraps, and the select is 230px.
+- **`/cart` scrolled sideways at 320** — an implicit single grid track sized to its items' min-content.
+  `grid-cols-1` is `minmax(0, 1fr)`. Measured after: 320 of 320.
+- **The cart drawer's pinned footer was 332px**, leaving one line visible at 320×568 and **none** in
+  landscape, with Checkout below the fold. The summary now scrolls with the lines and only the two
+  actions are pinned: at 568×320 the lines get 84px and Checkout ends at 240.
+- **Swiping the gallery never moved the thumbnail selection.** It does now.
+- **Checkout, quantity and discount inputs were 14px**, so iOS Safari zoomed the page on focus. 16px,
+  matching `ui/input.tsx` — and not `lg:text-body-sm`, because an iPad at 1024 is `lg`.
+- Commerce icon controls — steppers, remove, the bag opener, every drawer's close — were 36px on a
+  phone. 44px below `lg`.
+- Journal, Edit and Collection heroes were the desktop 16:9 frame on a phone (375×211). They take the
+  upright `heroMobile` crop every other full-bleed hero already had: 375×469.
+
+**Image sizing, three more tables:** product grids with no filter rail (collections, edits, journal, the
+search landing) were **under**-fetched using the rail's sizes; Recently Viewed declared a two-up width
+for a three-up tile; the lookbook gallery claimed the full container for a half-width tile. Each has its
+own measured string now.
+
+**Also fixed:** the `/collections` and `/edit` indexes fetched 17.7× the bytes they rendered — a
+`select` of the four fields a card shows — and no longer turn a failed read into *"No collections are
+published yet"*, a false statement about the catalogue made on the one occasion the page cannot know it.
+`verify:shell`'s route matcher no longer treats a `_private` folder as transparent.
+
+**And the part-2 commit would have failed CI.** `pnpm format:check` is a CI step but not one of the three
+local gates `AGENTS.md` names, and `fallback.ts` was committed unformatted. Formatted — and every file
+this sweep touched went through Prettier before the gate.
+
+**One more, found by the gate rather than the sweep: the CLI could add to the search index and never
+remove from it.** `verify:catalog` failed six checks — the index returned three products Postgres did
+not have, `Verify Parka 537664`, `725785` and `822707`, one orphan per run of `verify:search` since
+Phase 29. Phase 29 made `server-only` resolvable under the Payload CLI and guarded the product hook
+against CLI index writes as a result; the sibling `syncTaxonomyRename` hook was missed. So renaming a
+fixture category indexed its product from the CLI, and the cleanup's delete went through the guarded
+hook and did nothing. `reindexWhere` now refuses CLI writes too, so the two can never disagree; the
+three orphans were deleted from the **development** index (`north01_products_local`, asserted by name
+before the delete); and `verify:search` now checks, after its cleanup, that none of its fixtures is
+left in the index. Both harnesses pass: 210/210 and 148/148.
+
+**Not done, and why:**
+
+- **A sticky add-to-bag bar on the mobile product page.** No document specifies one — *"sticky"* appears
+  in the structure and features documents only about the header, and §30.1d lists *"sticky purchase
+  controls"* as something to test. Measured: the button sits 0.51 viewport-heights down at 375×812 and
+  1.12 at 320×568. A second purchase control is a product decision, not polish.
+- **`/lookbook/aw26` renders no photography.** Its chapters were seeded by `seed.ts` with no hero images,
+  so its three stored hotspots cannot render. Refuted as a Phase 30 defect — the page handles the data
+  correctly — and owed as a seed change: give the chapters images, or drop their hotspots as
+  `scripts/seed/editorial.ts` already does for a chapter with no hero.
+- **Phase 31's:** the degraded search page still offers Filter and Sort controls that can change
+  nothing; and the catalogue's Suspense fallback does not match the real geometry (it reserves no
+  pagination and renders 24 skeletons for a four-result search) — measured at zero CLS, so a
+  loading-state fidelity item rather than a shift.
+
+### 1.35.7 Sweep 2 — the shop-the-look markers had never opened
+
+Five read-only finders again — a correctness review of sweep 1's own changes, the account pages and
+overlays no audit had signed in to see, layout shift during interactions under throttling, touch
+tablets, and keyboard focus — each followed by an adversarial verifier. The run was interrupted twice:
+once by a usage limit, and once because the development database stopped accepting its password
+(§1.35.8). The verifiers still running when the database went down were stopped rather than left to
+report failures that were the outage's, not the code's.
+
+**The highest-severity finding dates from Phase 22.** Every shop-the-look hotspot — on the homepage and
+in every lookbook — did nothing when tapped, clicked or activated by keyboard. `Popover.Trigger asChild`
+merges handlers child-first, and Radix composes its own toggle to run only
+`if (!event.defaultPrevented)`. The marker's `onClick={(event) => event.preventDefault()}`, there to stop
+the anchor navigating, therefore also stopped the popover: `aria-expanded` stayed `false`, no preview
+was ever requested, and `shop_the_look_opened` never fired. Phase 22's notes record its browser pass as
+never run; sweep 1 of this phase restored the markers' *rendering* and never activated one. The Root is
+controlled now and the marker's handler toggles it; Radix's own toggle still skips, so there is exactly
+one. DEV-72's anchor and its no-JavaScript fallback are unchanged.
+
+**Add to bag opened nothing.** Structure document §13 draws *"Add to Bag → Cart drawer"*; the only
+feedback was the header badge, about four seconds after the tap on a throttled connection. Both add
+surfaces — the product page and a hotspot's single-variant add — now open the drawer on the server's
+*yes*, never on the click, and register their own button as the trigger so closing the drawer returns
+focus to it. Two component tests assert the bag opens on success and stays closed on a refusal.
+
+**Layout shift during interactions**, which sweep 1's load-time pass could not see:
+
+- **Removing a bag line collapsed the row seconds later** — 0.106 CLS on `/cart` and 0.089 in the
+  drawer at 375, 0.209 for the last line — because the server's answer arrived outside the 500ms input
+  window. A removal now hides its row while the form is pending (`useFormStatus`, marked inside each
+  form that can remove, and `has-[[data-pending]]:hidden` on the row). If the server refuses, pending
+  ends and the row returns with its notice; the server stays authoritative.
+- **Choosing a size emptied the availability hint** when the server answered, moving Add to bag up
+  22px. The region keeps one line.
+- **The discount Apply button swapped its label for "Checking…"**, which is wider, narrowing the field
+  just typed in and widening it again on the answer. It uses `Button`'s `loading` state, which keeps the
+  label and its width; the component test now asserts `aria-busy` and `disabled` on the same button.
+
+**Mistakes in sweep 1, found by the review of sweep 1:**
+
+- Making the bag button 44px on phones pushed Search under the absolutely centred wordmark at 320–329px,
+  so a tap on Search's left edge went home. The bag takes the menu button's mirrored `-mr-2` offset.
+- The lazy Sentry change left `sentry-options` — and the redaction module behind it — statically
+  imported, so it was still on every route. And the comment claiming Next substitutes an unset
+  `NEXT_PUBLIC_` variable at build was wrong: an unset one is a runtime read of the empty `process.env`
+  shim. The branch is not eliminated; it simply never runs, which is what keeps its chunks unrequested.
+  Both modules load inside it now, the comments say what actually happens, and ESLint forbids a static
+  import of the options module too.
+- Touch-sized controls were keyed to **width** (`max-lg:`), so an iPad in landscape — at or above `lg`,
+  with a coarse pointer — got 36px steppers beside a 44px drawer close. They use `pointer-coarse:` now.
+  Search takes it only from 360px, because at 320–345px a 44px Search, a 44px bag and the wordmark do
+  not fit.
+
+**Account pages and overlays:**
+
+- The address book's ten fields were 40px and 14px — the iOS-zoom class sweep 1 fixed in checkout and
+  missed here — and Remove was 13px tall.
+- On a phone the account nav loaded scrolled to its start, so on Addresses or Settings the current tab,
+  the only "you are here" cue, was off-screen. The row now scrolls itself (never the window) to the
+  current tab, and the tabs are 44px.
+- Opening search focused Close, not the field, so a customer's first keystrokes went nowhere. The field
+  is focused on open and is 44px tall; Chromium's clear control draws in the field's dark scheme instead
+  of saturated blue, and stays — Escape closes the dialog rather than clearing the field.
+- The wishlist grid borrowed the shop rail's sizes: 1.75x over-fetch at 768, 0.72x under-fetch at 1024.
+  It has its own measured string.
+
+**Keyboard focus rings the scrollers were clipping** — the product gallery's frames (no visible ring at
+all below `lg`), its thumbnails, the zoom viewer's auto-focused Close, the homepage product rails, the
+desktop filter rail and the drawers' scroll edges — each given room or an inset ring. And the product
+details accordion's headings are `h2`, which axe-core's `heading-order` asked for on every product page.
+These are the fixes whose adversarial verification the database outage interrupted; they were measured
+by the finder, and re-measured below after the rebuild.
+
+**Refuted:** the mobile menu's 18px sub-links. They sit 34–38px apart, pass WCAG 2.5.8 by spacing, and
+follow the same pattern as the footer, which §1.35.4 already measured and accepted.
+
+**Owed, as decisions for the owner rather than defects:**
+
+- **At 768×1024 portrait the product page is the phone layout scaled up** — the photograph fills the
+  first screen, and name, price and Add to bag are below it. Two-column from `md`, or a capped frame, are
+  both reasonable; neither is specified.
+- **Arrow keys on the desktop gallery thumbnails scroll the page to a frame** and push the focused
+  thumbnail off-screen. Fixing it means either hiding the thumbnails at `lg`, where the stacked column
+  already shows every photograph, or moving to manual activation as the variant selector does.
+- **The in-black lookbook's "Wool" chapter is a 252px photograph shown ~1,086px wide** — the upscale
+  TODO.md §5 says to avoid. It wants a larger export or a generated stand-in.
+- `/checkout`'s payment-unavailable state offers a 17px text link as its only action — Phase 31's, with
+  the other error states; `checkout/cancelled` already uses a button.
+
+### 1.35.8 The development database moved, and was rebuilt rather than copied
+
+Mid-sweep, the development branch `ep-green-boat-axabhusu` began rejecting its password — on its direct
+and pooled hosts, with the same password that authenticates elsewhere — after production was moved to a
+new Neon account. Its data could not be read, so it could not be copied.
+
+Development now points at `ep-wandering-surf-ax7ia116` on the new account (`DATABASE_URL` on the direct
+host, and `DATABASE_PUSH_TARGET` naming the same host, which is what D-10 checks). It arrived holding
+the first ten products and all twelve committed migrations — schema current, content from before Phase
+29. It was brought to the Phase 29 state by running the project's own scripts, which is the point of
+their being idempotent:
+
+| Step | Result |
+|---|---|
+| `pnpm seed` | 28 products, 213 variants, 12 categories, 4 collections, 5 edits, 6 articles, 2 lookbooks, 14 FAQs, 5 customers, 6 orders, 11 reviews — the old branch's counts |
+| `pnpm generate:media` | 66 stand-in assets for what had none; nothing deleted |
+| `pnpm import:media` | 17 photographs, 22 placements |
+| `pnpm reindex` | 28 products into `north01_products_local` |
+
+Cloudinary is shared with production, so both media scripts ran incrementally — never `--clean`, which
+deletes the objects production also renders. The rebuilt branch then passed every harness (below).
+
+### 1.35.9 What was verified, and how
+
+Every sweep-2 fix was re-measured in a browser after the rebuild, against the rebuilt development
+branch — not taken from the finder's word:
+
+| Fix | Measured after |
+|---|---|
+| Shop-the-look marker opens | lookbook at 1024 touch, 1440 mouse and 1440 keyboard; homepage at 1440 and 375 touch — `aria-expanded` true, the preview dialog shows name, price and sizes, the URL does not change, Escape closes |
+| Add to bag opens the bag | drawer titled *Bag* with the new line; closing returns focus to *Add to bag* |
+| Removing a line | 2 lines → 1, **CLS 0.0000** (was 0.106) |
+| Discount Apply while pending | 95px → 95px, CLS 0.0000 |
+| Choosing a size | CLS 0.0000 at 1440 and 375 |
+| Search on open | focus in `#site-search`; "shirt" typed straight after opening lands in it; field 44px |
+| Header at 320 touch | Search 36px, and a tap on its left edge hits Search, not the wordmark; no overflow |
+| Touch sizing | 44px Search and bag at 375 and 1024 touch; 36px with a mouse at 1440; bag steppers 44px at 1024 touch |
+| Gallery frame focus | ring drawn inset (`outline-offset: -4px`) and visible |
+| Zoom viewer | the auto-focused Close sits 5px inside the dialog on both clipped sides |
+| Product details | accordion headings are `h2` |
+| Account, signed in as a seeded customer | Addresses and Settings tabs visible at 320 and 375; tabs 44px; address fields 44px at 16px |
+| First-load JavaScript | `/` 256,295 B gzip; no Zod, no Sentry, no redaction module in any first-load chunk |
+
+Not re-measured after the rebuild, and said so: the focus rings on the thumbnail row, the product
+rails, the desktop filter rail and the drawer scroll edges. They were measured by sweep 2's finder and
+their verifier was one of those the database outage interrupted.
+
+| Gate | State |
+|---|---|
+| `pnpm typecheck`, `pnpm lint --max-warnings 0`, `pnpm format:check` | pass |
+| `pnpm build` | pass, against the rebuilt branch |
+| `pnpm test:run` | **815** (two new: the bag opens on a successful add and stays shut on a refusal) |
+| Twenty-two `verify:*` harnesses | **1,829 checks, all passing**, on the rebuilt branch |
+| `pnpm scan:secrets` | clean |
+| Eight-width audit, 13 routes | no overflow, no over- or under-fetch, no console errors; only the 134 sub-24px inline links §1.35.4 accepted |
+
+### 1.35.10 What is now owed
+
+**Decisions for the owner** — each measured, none a defect against a written requirement:
+
+- A sticky add-to-bag bar on the phone product page (§1.35.6): unspecified.
+- The portrait-tablet product page, where the photograph is the whole first screen (§1.35.7).
+- Arrow keys on the desktop gallery thumbnails scrolling the page away from them (§1.35.7).
+- The 252px photograph shown ~1,086px wide in the in-black lookbook (§1.35.7), and `/lookbook/aw26`,
+  whose chapters have no images at all (§1.35.6).
+- **Production's database endpoint** — TODO.md §1 still names the old account's. And `neondb_owner`'s
+  password, which has now appeared in a chat transcript four times.
+
+**Phase 31's**, recorded rather than built: the degraded search page's Filter and Sort; the catalogue
+fallback's geometry; the checkout-unavailable state's text-link action; and the error surface the
+`/collections` and `/edit` indexes now reach instead of claiming nothing is published.
+
+**Not run in this phase:** WebKit (so the 16px-input fix is verified by computed style, not on iOS
+Safari); a throttled interaction pass over the account pages; and the **57 Playwright end-to-end
+tests**, still owed since Phase 27.
+
+**Carried from earlier phases:** `/help/contact` (G-08), `/legal/privacy` and `/legal/terms` (G-19),
+and `campaigns.collection` / `campaigns.products`, still read by nothing.
+
+**Production still serves Phase 29.** Nothing in this phase is live until it is pushed and deployed —
+including the performance work, and the Sentry, analytics and Turnstile keys added to Vercel on
+2026-09-10, which reach a build only when one is made.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -8200,6 +8614,13 @@ ABOUT. No `NEW`.
 **Why:** three written documents specify the six-item set, and the written visual guide beats the image.
 
 *Resolves C-08. Affects Phase 9.*
+
+**Amended in Phase 30 — five items: NEW · SHOP · COLLECTIONS · EDIT · LOOKBOOK.** ABOUT was withdrawn
+because `/about` is a route no phase builds, so it was a 404 in the primary navigation on every page.
+NEW stays, for the reason above — three written documents specify it. The count now matches the
+reference image; the set still does not, and that is still deliberate. See §1.35.1 and §1.35.5:
+`verify:shell` resolves every navigation href against the route tree, so ABOUT comes back only with a
+page behind it.
 
 ---
 
@@ -9974,4 +10395,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 27 — testing strategy | 2026-09-09 | Notes **§1.32**. **Eight dependencies at exact pins**, no migration. **813 Vitest tests across 18 files, all green; 57 Playwright tests across 5 files, none ever executed.** Two Vitest projects rather than one — `unit` in Node, `components` in jsdom — so a module claiming to be pure **fails** if it reaches for `window` instead of passing by accident, which is the one place that boundary was otherwise invisible. `server-only` is aliased to an empty module for the same reason the Payload CLI cannot resolve it. **The tests found five defects, and that is the phase's actual output**: `invalidSelection` never fired for the case feature matrix §7 names by title (`?color=Cream&size=M` where Black/M exists — the live region explaining it said nothing); a merged cart line of quantity zero was reported **sold out while fully in stock**, because `clampQuantity` returns `clampedBy: null` for a request of none and the merge defaulted it; `combined` counted occurrences rather than bags, contradicting its own field doc; `canFulfillmentTransition` **threw a TypeError** on a status read from the database that the table does not contain; and the search panel could **take the whole overlay down** — `CSS.escape('')` is `''`, so the selector became `'#'`, which `querySelector` throws on, reachable by arrowing to a late option and clearing recent searches in another tab. `FULFILLMENT_COPY.notPaid` also told an operator something untrue about a refunded order. **One reported defect was deliberately not fixed** and the reasoning put in the source: `cartTotals` counting unpriced units is unreachable (`cart.ts` filters first) and the behaviour is a written §14.1e decision — making an unreachable path disagree with a documented decision is not a fix. **The quantity control's own tests were wrong instructively**: three failed and **two passed for entirely the wrong reason**, because a controlled `type="number"` snaps back between keystrokes and `clear()` + `type('8')` produces 18. **The E2E suite cannot run** — it creates customers, bags and Stripe sessions, and the only reachable database is production (D-10), which §27.1f's own *"where environment permits"* anticipates. Flow 4 (quick view) is skipped because the feature does not exist (**DEV-74**); flow 7 signs its events offline rather than speaking to Stripe; flow 6 is the retained real test-mode path. All fifteen §27.1d cases are enumerated even where four can only be skipped, because a list with a hole in it is how a case gets forgotten. **The CI pipeline would have skipped its own build**: `if: env.DATABASE_URL != ''` cannot see that step's own `env:` block, so the condition read an empty string and the build never ran — a skipped step reporting success, invisible until somebody reads a log. New gap: five latent `Math.max(1, …)` traps, all currently unreachable, recorded rather than changed. |
 | Phase 28 — admin experience | 2026-09-09 | Notes **§1.33**. **No dependency and no migration** — `migrate:create` reports no schema changes, because everything here is admin metadata, field access, a hook or a validation; the one new field, `promotions.liveNow`, is `virtual`. **Two findings were bugs, not missing config.** `admin.readOnly` on `products.derived` was decorative — Payload's readOnly is a widget attribute and the value stays in the submit body — so the ordinary flow (open product → add sizes in the drawer → save) **wrote back the pre-variant copy of `derived`**, nulled `priceFromMinor` and withdrew the product from the shop on a save the editor thought was a no-op. And every money column on an order was freely editable by staff, in the panel and over REST, on a record with no version history: the closest thing to a fake refund this admin permitted was typing a smaller total. **§28.1d's one missing guardrail** was publishing a product with no active priced variant — the save succeeded, the sidebar said Published, and `publishedProductWhere` then hid it from the shop, search and the sitemap with no message anywhere, because the rule that hid it lives in a query an editor never sees. Now refused on the transition, reading the same column that query reads. Duplicate deliberately slips past it (verified against Payload's source: a duplicate saves immediately, so refusing leaves an error with no form to act on it), and a missing image is deliberately not malformed, because §8.1d answers one with a placeholder. The other four guardrails already existed and were **verified rather than assumed**, including that Postgres refuses negative stock (23514) and duplicate SKUs (23505) past validation entirely. **No `admin.components` were added at all** — the prompt forbids unnecessary dashboard complexity, and everything is description, access, validate, filterOptions or a hook. **Sweep 1: the footer pointed at eight routes and none of them existed** — every Help and legal link, on every page. Three are now real and their content had been in the CMS for phases (`/help/faq` renders a collection that rendered NOWHERE — Phase 23's defect again); the rest are removed rather than faked, and Privacy/Terms are refused on principle because inventing privacy copy is a false statement about personal data on the page a regulator reads first (gap **G-19**). Also: `seoField()`'s `publishedAt` description was true of products and false for the four editorial collections, and a moderator could rewrite a customer's review body and rating — §21.1b defines moderation as three states, not as authoring. **Sweep 2** verified the Duplicate escape against Payload's own source rather than a report, and found the hole in the **harness**: it proved the payment axis could not be typed and never touched the amounts Phase 28 had just locked. New harness `pnpm verify:admin` — **87/87**. |
 | Phase 29 — content seeding and demo data | 2026-09-10 | Notes **§1.34**. **No dependency and no migration.** Ten products became **twenty-eight** across all ten categories §29.1b names, and **every harness in the project ran and passed for the first time — 1,819 checks across twenty-two**, plus 813 Vitest tests. The seed writes customers, orders and reviews, reversing an argument it had made since Phase 6 (*"a commerce demo whose order list is fiction is worse than one whose order list is empty"*) — because four features cannot be demonstrated empty, and the docblock now makes that argument rather than contradicting it. Kept honest by `@example.test` addresses that cannot receive mail (Phase 19's queue would try), a `verifiedPurchase` badge set only where a paid order really exists, varied ratings including a pending and a rejected, and passwords in a git-ignored file. **`generate:media` duplicated all 78 assets on a second run** — and the obvious repair, `--clean`, would have taken **production's images down**, because development and production address the same Cloudinary objects; every field was repointed at the ORIGINAL instead and only the new copies deleted. Every loop is incremental now. **Sweep 1 ran twenty-two harnesses and four were wrong**: `verify:lookbook` and `verify:editorial` could not start at all (the third instance of the `server-only`-under-the-CLI trap, fixed with a tsconfig path whose safety was **verified** by making the build refuse a real leak); `verify:account` failed nine checks against correct behaviour, its Phase 20 fixture having never run; `verify:shell` asserted a footer row Phase 28 deliberately emptied. And **`verify:catalog` found a real defect twenty-seven phases could not**: Postgres broke a price tie on `slug` and the Algolia replicas broke it on nothing, which passed for ten products with ten distinct prices and failed the moment twenty-eight produced four ties — both engines now end on `asc(sortOrder)`, a total order on both sides. The harness itself was also wrong, filtering its fixtures out of one engine's page after fetching rather than in the query. **Sweep 2: eighteen of twenty-eight products belonged to no collection**, so they were reachable only from the shop grid — absent from `/collections/*`, the homepage feature and the collection filter facet. Idempotency is asserted by running both scripts twice and comparing counts, not by reading the upserts and believing them. |
+| Phase 30 — performance and responsive polish | 2026-09-11 | Notes **§1.35**. **No dependency and no migration.** The phase opened by asking a browser for every navigation href and found four 404s: Phase 23 had built `/edits/[slug]` while every link in the shop said `/edit/`, and `/collections` and `/edit` had no index at all. **The product page spent 2.1s before its first byte**, none of it images: a depth-2 read populating a discarded variants join, two independent reads awaited in series, and no storefront read anywhere turning off joins — 2.09s → 1.07s, with collection and edit pages close behind. **First-load JavaScript fell about a third** (home 369,897 → 256,295 B gzip): all of Zod shipped to every route to re-check ten public strings the server had validated at boot, and the Sentry SDK shipped with no DSN configured; ESLint now forbids both in the files every client graph contains. **Sweep 1's worst finding was the phase's own regression** — a populate-select without `status` dropped every lookbook hotspot, missed by a DOM diff whose fixtures had no hotspot to lose; `verify:editorial` now resolves every lookbook two ways and was proven by putting the bug back. Sweep 1 also fixed a 0.36-CLS gallery shift on choosing a size, a mobile filter drawer that closed after every tick (it lived inside a keyed Suspense boundary), a cart page that scrolled sideways at 320, a cart drawer that showed no lines in landscape, 14px inputs that made iOS zoom, and a CLI path that orphaned a search-index record on every `verify:search` run. **Sweep 2 found that no shop-the-look hotspot had ever opened** — since Phase 22, a `preventDefault` meant to stop the anchor also stopped Radix's toggle — and that Add to bag opened nothing, though structure §13 draws the drawer. Mid-sweep the development database stopped accepting its password after production moved to a new Neon account; it was rebuilt on `ep-wandering-surf-ax7ia116` with the project's own idempotent scripts, and every harness passed on it: **1,829 checks**, plus 815 Vitest tests. **DEV-07 amended** from six primary items to five: ABOUT had no page behind it. |
 > **Append this table, and the sections above it, at the end of every phase.**

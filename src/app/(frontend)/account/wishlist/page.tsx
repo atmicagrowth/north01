@@ -63,7 +63,7 @@ export default async function AccountWishlistPage() {
               <ProductCard
                 card={card}
                 savedForCustomer
-                sizes={CATALOG_IMAGE_SIZES.productCardGrid}
+                sizes={CATALOG_IMAGE_SIZES.accountGrid}
                 signedIn
               />
             </li>

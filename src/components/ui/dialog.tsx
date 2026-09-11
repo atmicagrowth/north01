@@ -109,7 +109,7 @@ export function DialogContent({
           </div>
           {hideCloseButton ? null : (
             <DialogPrimitive.Close asChild>
-              <IconButton label="Close" size="sm" className="-mr-2 -mt-2">
+              <IconButton label="Close" size="sm" className="-mr-2 -mt-2 pointer-coarse:size-11">
                 <X aria-hidden />
               </IconButton>
             </DialogPrimitive.Close>

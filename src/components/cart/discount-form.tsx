@@ -112,8 +112,13 @@ export function DiscountForm({ discount }: { discount: null | ResolvedPromotion 
           type="text"
         />
 
-        <Button type="submit" variant="secondary">
-          {pending ? 'Checking…' : 'Apply'}
+        {/*
+          `loading`, not a label swap: "Checking…" is wider than "Apply", so the button grew and
+          narrowed the field the customer had just typed in, then shrank again on the answer. The
+          same pattern the newsletter form uses.
+        */}
+        <Button loading={pending} type="submit" variant="secondary">
+          Apply
         </Button>
       </div>
 

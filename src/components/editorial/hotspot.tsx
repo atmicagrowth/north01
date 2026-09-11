@@ -1,11 +1,12 @@
 'use client'
 
 import { Popover } from 'radix-ui'
-import { useActionState, useState, useTransition } from 'react'
+import { useActionState, useRef, useState, useTransition } from 'react'
 
 import type { LookProduct } from '@/lib/lookbook/rules'
 
 import { useActionResult } from '@/components/analytics/use-action-result'
+import { useShellOverlay } from '@/components/shell/overlay-context'
 import { Button } from '@/components/ui/button'
 import { trackEvent } from '@/lib/analytics/track'
 import { Link } from '@/components/ui/link'
@@ -78,9 +79,12 @@ export function Hotspot({
 }) {
   const [preview, setPreview] = useState<LookProduct | null | 'gone'>(null)
   const [loading, startLoading] = useTransition()
+  const [open, setOpen] = useState(false)
 
-  const onOpenChange = (open: boolean) => {
-    if (!open) {
+  const onOpenChange = (next: boolean) => {
+    setOpen(next)
+
+    if (!next) {
       return
     }
 
@@ -107,7 +111,7 @@ export function Hotspot({
   }
 
   return (
-    <Popover.Root onOpenChange={onOpenChange}>
+    <Popover.Root onOpenChange={onOpenChange} open={open}>
       <Popover.Trigger asChild>
         <Link
           className={cn(
@@ -123,8 +127,19 @@ export function Hotspot({
           /*
            * The whole of the progressive enhancement. With JS this opens the preview; without it,
            * this handler never runs and the anchor does what an anchor does.
+           *
+           * **It opens the preview itself, and that is the fix for a marker that did nothing from
+           * Phase 22 to Phase 30.** `Popover.Trigger asChild` merges handlers child-first, and Radix
+           * composes its own toggle to run only `if (!event.defaultPrevented)`. So the
+           * `preventDefault()` that stops the navigation also stopped the popover — every tap,
+           * click and Enter on every hotspot was swallowed. The Root is controlled now and this
+           * handler toggles it; Radix's toggle still skips, so there is exactly one. Outside-tap and
+           * Escape still arrive through `onOpenChange`. Found by sweep 2 on a touch tablet.
            */
-          onClick={(event) => event.preventDefault()}
+          onClick={(event) => {
+            event.preventDefault()
+            onOpenChange(!open)
+          }}
           style={
             {
               '--x': `${hotspot.x}%`,
@@ -263,6 +278,8 @@ function AddOneVariant({
   variantId: number
 }) {
   const [state, action, pending] = useActionState(addToBagAction, CART_ACTION_IDLE)
+  const { registerTrigger, setOpen } = useShellOverlay()
+  const submit = useRef<HTMLButtonElement>(null)
 
   /*
    * §25.1a distinguishes `shop_the_look_add_item` from `add_to_cart`, so **both** are sent: the
@@ -279,6 +296,16 @@ function AddOneVariant({
 
     trackEvent('shop_the_look_add_item', { items, lookId: String(product.id) })
     trackEvent('add_to_cart', { currency: DEFAULT_CURRENCY, items, valueMinor: null })
+
+    /*
+     * The same as the product page. Structure document §13: *"Add to Bag → Cart drawer."* The drawer opens on the server's yes —
+     * never on the click, which could still be refused — so what it shows is the bag with the line
+     * in it. Until sweep 2 nothing opened: the only feedback was a number on the header badge, about
+     * four seconds later on a slow connection. Registering the submit button as the trigger means
+     * closing the drawer returns focus to it, the contract the header's bag button already has.
+     */
+    registerTrigger(submit.current)
+    setOpen('cart', true)
   })
 
   return (
@@ -286,7 +313,14 @@ function AddOneVariant({
       <input name="variantId" type="hidden" value={variantId} />
       <input name="quantity" type="hidden" value={1} />
 
-      <Button className="w-full" disabled={pending} size="sm" type="submit" variant="primary">
+      <Button
+        className="w-full"
+        disabled={pending}
+        ref={submit}
+        size="sm"
+        type="submit"
+        variant="primary"
+      >
         Add {label}
       </Button>
 

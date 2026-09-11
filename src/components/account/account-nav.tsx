@@ -1,6 +1,7 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
+import { useEffect, useRef } from 'react'
 
 import { Link } from '@/components/ui/link'
 import { cn } from '@/lib/cn'
@@ -20,10 +21,28 @@ import { ACCOUNT_ROUTES, isCurrentAccountRoute } from '@/lib/account/navigation'
  */
 export function AccountNav() {
   const pathname = usePathname()
+  const list = useRef<HTMLUListElement>(null)
+
+  /*
+   * **The tab you are on is in view.** On a phone this row is ~500px of tabs in a 280px box, and it
+   * always loaded at `scrollLeft` 0 — so on Addresses or Settings at 320px the only "you are here"
+   * cue, the underline, was off-screen and nothing said the row scrolls. The row is moved, never the
+   * window: `scrollIntoView` would also scroll the page vertically to reach it.
+   */
+  useEffect(() => {
+    const row = list.current
+    const current = row?.querySelector<HTMLElement>('[aria-current="page"]')
+
+    if (!row || !current) return
+
+    const offset = current.getBoundingClientRect().left - row.getBoundingClientRect().left
+
+    if (offset < 0 || offset + current.offsetWidth > row.clientWidth) row.scrollLeft += offset
+  }, [pathname])
 
   return (
     <nav aria-label="Account" className="border-b border-border">
-      <ul className="-mb-px flex gap-l overflow-x-auto">
+      <ul className="-mb-px flex gap-l overflow-x-auto" ref={list}>
         {ACCOUNT_ROUTES.map((route) => {
           const current = isCurrentAccountRoute(route.href, pathname)
 
@@ -32,7 +51,8 @@ export function AccountNav() {
               <Link
                 aria-current={current ? 'page' : undefined}
                 className={cn(
-                  'block whitespace-nowrap border-b-2 pb-3 font-sans text-meta uppercase transition-colors',
+                  /* `min-h-11 items-end`: a 44px tab with the label still sitting on its underline. */
+                  'flex min-h-11 items-end whitespace-nowrap border-b-2 pb-3 font-sans text-meta uppercase transition-colors',
                   current
                     ? 'border-foreground text-foreground'
                     : 'border-transparent text-foreground-muted hover:text-foreground',

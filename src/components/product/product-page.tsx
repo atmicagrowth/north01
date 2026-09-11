@@ -177,7 +177,12 @@ export function ProductPage({
                 One live region for everything the selection changes, so a screen-reader user hears
                 the consequence of picking a size rather than having to go looking for it.
               */}
-              <div aria-live="polite" className="flex flex-col gap-1">
+              {/*
+                `min-h` holds one line. Choosing a size emptied this region when the server
+                answered, about a second after the tap, and Add to bag moved up 22px as unexpected
+                layout shift (sweep 2). The line stays; only its words change.
+              */}
+              <div aria-live="polite" className="flex min-h-[1.375rem] flex-col gap-1">
                 {matrix.invalidSelection ? (
                   <p className="font-sans text-body-sm text-foreground-muted">
                     That combination is not available — showing what we do have.
