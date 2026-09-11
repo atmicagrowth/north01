@@ -368,9 +368,11 @@ export function priceRangeForColor(
  * `resolveVariant` applies: a compare-at counts only when it is strictly greater than that variant's
  * own price, on minor units.
  *
- * It is shown only when every such saving in the colour quotes the **same** former price. Two
- * different ones would need a range of former prices, which is a claim nobody reads correctly, so
- * the label waits for a size instead.
+ * It is shown only when **every** offered size of the colour carries a saving, and all quote the
+ * **same** former price. A former price is a pricing claim: if one size were reduced and the rest
+ * were not — sweep 1 of Phase 35 found the first version allowed exactly that, even when the reduced
+ * size was sold out — the page would quote a saving no buyable size has. Anything short of uniform
+ * waits for a size instead.
  */
 export function compareAtForColor(
   variants: SelectableVariant[],
@@ -378,19 +380,19 @@ export function compareAtForColor(
   currency: CurrencyCode,
   locale: string,
 ): null | string {
-  const former = new Set(
-    variants
-      .filter(
-        (variant) =>
-          isOffered(variant) &&
-          (color === null || text(variant.color) === color) &&
-          isMinor(variant.compareAtPriceMinor) &&
-          variant.compareAtPriceMinor > (variant.priceMinor as number),
-      )
-      .map((variant) => variant.compareAtPriceMinor as number),
+  const offered = variants.filter(
+    (variant) => isOffered(variant) && (color === null || text(variant.color) === color),
   )
 
-  if (former.size !== 1) {
+  const everyReduced = offered.every(
+    (variant) =>
+      isMinor(variant.compareAtPriceMinor) &&
+      variant.compareAtPriceMinor > (variant.priceMinor as number),
+  )
+
+  const former = new Set(offered.map((variant) => variant.compareAtPriceMinor as number))
+
+  if (offered.length === 0 || !everyReduced || former.size !== 1) {
     return null
   }
 

@@ -9131,6 +9131,24 @@ by push and committed for everywhere else.
   owner's photography item (TODO.md §5) is the fix; trimming borders in the import would re-upload
   over the images production also uses (Cloudinary is shared).
 
+### 1.40.6 Sweep 1
+
+An independent review of the phase commit, reading every changed area against the code around it.
+
+- **The pre-size "was" price could quote a saving no buyable size had.** `compareAtForColor` counted
+  only the reduced sizes: one reduced size — even a sold-out one — was enough to show "was $100" and a
+  Sale badge above sizes that were full price. A former price is a pricing claim, so it is now shown
+  only when **every** offered size of the colour is reduced to the same former price; otherwise the
+  page waits for a size, as before Phase 35.
+- **"Choose a size." flashed on one-size products** while a colour change round-tripped, because the
+  optimistic state cleared the size the server was about to re-select. A one-size product is never
+  asked.
+
+Checked and clean: the route guard keeps query, hash, trailing-slash and encoded-slug links; every
+navigation consumer already tolerates a dropped link; the gallery cap sits on the wrapper, so the swipe
+index still matches the thumbnails; `shippingEstimate` is written on the only path that writes the
+method label; the import keeps chapter ids; no test still asserts changed copy.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

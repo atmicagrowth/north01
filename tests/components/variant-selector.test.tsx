@@ -396,6 +396,13 @@ describe('VariantSelector', () => {
     expect(screen.queryByText('Choose a size.')).not.toBeInTheDocument()
   })
 
+  it('never asks for a size on a one-size product — the server selects it', () => {
+    /* Phase 35 sweep 1: the prompt flashed while a colour change round-tripped. */
+    renderSelector({ sizes: [{ ...SIZES[0]!, available: true }] })
+
+    expect(screen.queryByText('Choose a size.')).not.toBeInTheDocument()
+  })
+
   it('shows the chosen size as selected at once, before the server has answered', async () => {
     /* A commit that never settles is a server that has not answered yet. */
     commit.mockReturnValueOnce(new Promise(() => {}))

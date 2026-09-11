@@ -80,9 +80,14 @@ export function VariantSelector({
   /*
    * The one prompt on the page for a size, and only when choosing one would do something — a colour
    * with nothing in stock has nothing to choose, and `product-page.tsx` says "Sold out" instead.
-   * The line is always rendered so the row below does not move when the prompt clears.
+   * The line is always rendered so the row below does not move when the prompt clears. A one-size
+   * product is never asked: the server selects its only size, and asking would flash while a colour
+   * change round-trips (Phase 35 sweep 1).
    */
-  const prompt = shownSize === null && sizes.some((size) => size.available) ? 'Choose a size.' : ''
+  const prompt =
+    shownSize === null && sizes.length > 1 && sizes.some((size) => size.available)
+      ? 'Choose a size.'
+      : ''
 
   return (
     <div className="flex flex-col gap-l" data-slot="variant-selector">

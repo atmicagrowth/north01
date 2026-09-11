@@ -625,10 +625,20 @@ describe('compareAtForColor', () => {
     expect(compareAtForColor(variants, 'Black', USD, LOCALE)).toBe('$120.00')
   })
 
-  it('ignores sizes with no saving, so one discounted size is enough to show it', () => {
+  it('returns null when only some sizes are reduced — a saving no other size has is not claimed', () => {
     const variants = [sale({ id: 102, size: 'S' }), row({ id: 103, size: 'M' })]
 
-    expect(compareAtForColor(variants, 'Black', USD, LOCALE)).toBe('$120.00')
+    expect(compareAtForColor(variants, 'Black', USD, LOCALE)).toBeNull()
+  })
+
+  it('returns null when the only reduced size is sold out (Phase 35 sweep 1)', () => {
+    const variants = [
+      sale({ id: 112, inventoryQuantity: 0, size: 'S' }),
+      row({ id: 113, size: 'M' }),
+      row({ id: 114, size: 'L' }),
+    ]
+
+    expect(compareAtForColor(variants, 'Black', USD, LOCALE)).toBeNull()
   })
 
   it('applies resolveVariant’s rule: an equal or lower compare-at is not a saving', () => {
