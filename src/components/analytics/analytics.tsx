@@ -2,7 +2,7 @@
 
 import Script from 'next/script'
 import { usePathname } from 'next/navigation'
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 
 import { publicEnv } from '@/lib/env.public'
 import { registerPostHog } from '@/lib/analytics/track'
@@ -23,13 +23,82 @@ import { registerPostHog } from '@/lib/analytics/track'
  * That is what makes a local checkout run at full speed with no accounts configured, and it is the
  * shape §25.1b asks for from the other direction: a missing analytics vendor is a non-event.
  *
- * ### PostHog is imported dynamically, and that is not a micro-optimisation
+ * ### No URL leaves this file unredacted — and one route is never reported at all
  *
- * `posthog-js` is roughly 60 KB gzipped. A static import would put it in the first-load bundle of
- * **every** page, including the homepage, whose entire performance argument is that it ships almost
- * no client JavaScript. `import()` inside the effect means it is fetched after hydration, off the
- * critical path, and only where it is configured.
+ * **Found live, the day the keys were first built.** The password-reset email links to
+ * `/reset-password?token=…`, and the token is a one-hour credential. `gtag('config')` sent
+ * `page_location = window.location.href` on every landing, and PostHog's pageview carries
+ * `$current_url` — so every reset link a customer opened handed its token to two third parties. The
+ * redaction Phase 25 built (`lib/observability/redact.ts`) was applied to Sentry and to nothing else.
+ *
+ * Now, for both vendors:
+ *
+ * - `/reset-password` is **not reported at all** — neither SDK loads when a session starts there,
+ *   and no page view is sent for it when a session arrives there later.
+ * - Every other URL passes through `redactUrl` first: `token`, `code`, `session`, `session_id`,
+ *   `email` and the rest of `SENSITIVE_PARAM` become `[redacted]`, and the value patterns (emails,
+ *   card-length digit runs, keys) are scrubbed from what is left.
+ *
+ * `redact.ts` is imported **dynamically**, with the SDKs, so a storefront with no analytics keys
+ * ships none of it — the first-load budget Phase 30 measured stays where it is.
+ *
+ * ### One source of GA4 page views
+ *
+ * This read `gtag('config', id)`, which sends a page view, and then sent its own on every client
+ * navigation — while GA4's default *enhanced measurement* also sends one on every history change.
+ * Every navigation after the first was counted twice. Now `config` runs with `send_page_view: false`
+ * and every page view, the landing included, is sent here with a redacted location. **Enhanced
+ * measurement's "page changes based on browser history events" must be switched off** in the GA4
+ * data stream (TODO.md §6) — code cannot turn it off. Until it is, `gtag('set', { page_location })`
+ * at least means the duplicate carries the redacted URL rather than the raw one.
+ *
+ * ### Both load when the page is idle
+ *
+ * Analytics is not on the critical path, so neither is its loading: GA's library is
+ * `lazyOnload`, and PostHog (roughly 60 KB gzipped) is imported after the `load` event, once the
+ * browser is idle. Events sent before either is ready are queued — `dataLayer` for GA, and a
+ * dropped `trackEvent` for PostHog, which is the documented cost of never blocking a render on it.
  */
+
+/** Routes whose URL carries a credential. Neither vendor is told about them. */
+const PRIVATE_PATHS = ['/reset-password'] as const
+
+function isPrivatePath(pathname: string): boolean {
+  return PRIVATE_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+}
+
+/** PostHog properties that hold a URL. `$set_once` carries the person's first-seen copies. */
+const URL_PROPERTIES = ['$current_url', '$referrer', '$initial_current_url', '$initial_referrer']
+
+/** Runs `task` once the page has loaded and the browser is idle. Returns a cancel function. */
+function whenIdle(task: () => void): () => void {
+  let idle: number | undefined
+  let timer: number | undefined
+
+  const schedule = () => {
+    if (typeof window.requestIdleCallback === 'function') {
+      idle = window.requestIdleCallback(task, { timeout: 4000 })
+    } else {
+      timer = window.setTimeout(task, 1500)
+    }
+  }
+
+  if (document.readyState === 'complete') {
+    schedule()
+  } else {
+    window.addEventListener('load', schedule, { once: true })
+  }
+
+  return () => {
+    window.removeEventListener('load', schedule)
+    if (idle !== undefined) window.cancelIdleCallback(idle)
+    if (timer !== undefined) window.clearTimeout(timer)
+  }
+}
+
+/** Whether `gtag('config')` has run in this document. It must run exactly once. */
+let gaConfigured = false
+
 export function Analytics() {
   const pathname = usePathname()
 
@@ -37,109 +106,143 @@ export function Analytics() {
   const posthogKey = publicEnv.NEXT_PUBLIC_POSTHOG_KEY
   const posthogHost = publicEnv.NEXT_PUBLIC_POSTHOG_HOST
 
-  /*
-   * The first `page_view` is sent by the `gtag('config', …)` call in the inline script below, so
-   * this must not send it a second time. A duplicated landing pageview inflates sessions and entry
-   * pages, which is the one GA4 number an operator is most likely to trust without checking.
-   */
-  const seenFirstPath = useRef(false)
-
   useEffect(() => {
-    if (!posthogKey || !posthogHost) {
+    /*
+     * A session that starts on a private route never loads PostHog. Deliberately read once, at
+     * mount: the SDK is initialised once per document, and `before_send` below drops anything a
+     * later private route would have sent.
+     */
+    if (!posthogKey || !posthogHost || isPrivatePath(window.location.pathname)) {
       return
     }
 
     let cancelled = false
 
-    void import('posthog-js').then(({ default: posthog }) => {
-      if (cancelled) {
-        return
-      }
+    const cancelIdle = whenIdle(() => {
+      void Promise.all([import('posthog-js'), import('@/lib/observability/redact')]).then(
+        ([{ default: posthog }, { redactUrl }]) => {
+          if (cancelled) {
+            return
+          }
 
-      posthog.init(posthogKey, {
-        api_host: posthogHost,
-        /*
-         * PostHog watches `history` itself, which is what an App Router navigation actually is. Its
-         * own listener is more accurate than one written here, because it fires after the URL has
-         * settled rather than after React has re-rendered.
-         */
-        capture_pageview: 'history_change',
+          const scrub = (properties: Record<string, unknown> | undefined) => {
+            if (!properties) return
 
-        /*
-         * **Autocapture off, and this is a §25.1a decision as much as a §25.1d one.**
-         *
-         * PostHog's autocapture records every click and input interaction on the page, along with
-         * element text. Two problems, and the first is the plan's:
-         *
-         * - §25.1a asks for *"a single internal naming convention"*. Autocapture invents its own,
-         *   from the DOM, and fills the project with `$autocapture` events nobody named — beside
-         *   seventeen that somebody did. The taxonomy stops being the answer to "what do we measure".
-         * - §25.1d says avoid *"raw personal data where not necessary"*. This shop has a checkout, an
-         *   address book and an account settings form; capturing element text across them is
-         *   precisely that.
-         *
-         * Session recording is disabled for the same reason, and explicitly rather than by default:
-         * a project-level toggle in someone's PostHog dashboard should not be able to start
-         * recording this storefront's forms.
-         *
-         * (The first version of this file set `mask_all_text: false` under a comment claiming §25.1d
-         * was being honoured. It is a session-recording option, it was set to the value that
-         * *disables* masking, and the file it pointed at does not exist. Deleted rather than
-         * corrected — the settings below are what the comment was claiming.)
-         */
-        autocapture: false,
-        disable_session_recording: true,
-        person_profiles: 'identified_only',
-      })
+            for (const key of URL_PROPERTIES) {
+              const value = properties[key]
 
-      registerPostHog((event, properties) => posthog.capture(event, properties))
+              if (typeof value === 'string') properties[key] = redactUrl(value)
+            }
+          }
+
+          posthog.init(posthogKey, {
+            api_host: posthogHost,
+            /*
+             * PostHog watches `history` itself, which is what an App Router navigation actually is.
+             * Its own listener is more accurate than one written here, because it fires after the
+             * URL has settled rather than after React has re-rendered.
+             */
+            capture_pageview: 'history_change',
+
+            /*
+             * **Autocapture off, and this is a §25.1a decision as much as a §25.1d one.**
+             *
+             * PostHog's autocapture records every click and input interaction on the page, along
+             * with element text. §25.1a asks for *"a single internal naming convention"*, which
+             * autocapture replaces with one invented from the DOM; §25.1d says avoid *"raw personal
+             * data where not necessary"*, and this shop has a checkout, an address book and an
+             * account settings form. Session recording is disabled explicitly for the same reason:
+             * a dashboard toggle should not be able to start recording this storefront's forms.
+             */
+            autocapture: false,
+            disable_session_recording: true,
+            person_profiles: 'identified_only',
+
+            before_send: (event) => {
+              if (!event) return event
+
+              const properties = event.properties as Record<string, unknown>
+
+              if (typeof properties.$pathname === 'string' && isPrivatePath(properties.$pathname)) {
+                return null
+              }
+
+              scrub(properties)
+              scrub(properties.$set_once as Record<string, unknown> | undefined)
+              scrub(event.$set_once as Record<string, unknown> | undefined)
+
+              return event
+            },
+          })
+
+          registerPostHog((event, properties) => posthog.capture(event, properties))
+        },
+      )
     })
 
     return () => {
       cancelled = true
+      cancelIdle()
       registerPostHog(null)
     }
   }, [posthogHost, posthogKey])
 
   /*
-   * GA4 has no history listener of its own. `gtag('config')` sends one `page_view` when it runs and
-   * then nothing, so every client navigation in the shop would be invisible — a customer moving from
-   * the homepage to a product to the bag would appear as a single-page session.
-   *
-   * The query string is read from `window.location` rather than from `useSearchParams`, deliberately:
-   * that hook opts a route into client-side rendering unless it sits inside a `<Suspense>`, and this
-   * component is mounted in the root layout, where that would wrap the whole storefront.
+   * Every GA4 page view, the landing included. The query string is read from `window.location`
+   * rather than from `useSearchParams`, deliberately: that hook opts a route into client-side
+   * rendering unless it sits inside a `<Suspense>`, and this component is mounted in the root
+   * layout, where that would wrap the whole storefront.
    */
   useEffect(() => {
-    if (!measurementId) {
+    if (!measurementId || isPrivatePath(pathname)) {
       return
     }
 
-    if (!seenFirstPath.current) {
-      seenFirstPath.current = true
+    let cancelled = false
 
-      return
+    /*
+     * The standard `gtag` stub. It must push the `arguments` object itself — gtag.js ignores an
+     * array — which is the one place this codebase needs `arguments`.
+     */
+    window.dataLayer = window.dataLayer ?? []
+    window.gtag =
+      window.gtag ??
+      function gtag() {
+        // eslint-disable-next-line prefer-rest-params
+        window.dataLayer?.push(arguments)
+      }
+
+    if (!gaConfigured) {
+      gaConfigured = true
+      window.gtag('js', new Date())
+      window.gtag('config', measurementId, { send_page_view: false })
     }
 
-    window.gtag?.('event', 'page_view', {
-      page_location: window.location.href,
-      page_path: `${pathname}${window.location.search}`,
+    void import('@/lib/observability/redact').then(({ redactUrl }) => {
+      if (cancelled) {
+        return
+      }
+
+      const location = redactUrl(window.location.href)
+
+      /* `set`, so anything GA sends on its own from this page carries the redacted URL too. */
+      window.gtag?.('set', { page_location: location })
+      window.gtag?.('event', 'page_view', { page_location: location })
     })
+
+    return () => {
+      cancelled = true
+    }
   }, [measurementId, pathname])
 
-  if (!measurementId) {
+  if (!measurementId || isPrivatePath(pathname)) {
     return null
   }
 
   return (
-    <>
-      <Script
-        src={`https://www.googletagmanager.com/gtag/js?id=${measurementId}`}
-        strategy="afterInteractive"
-      />
-      <Script id="ga4-config" strategy="afterInteractive">
-        {`window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${measurementId}');`}
-      </Script>
-    </>
+    <Script
+      src={`https://www.googletagmanager.com/gtag/js?id=${measurementId}`}
+      strategy="lazyOnload"
+    />
   )
 }

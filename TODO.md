@@ -91,6 +91,12 @@ file to change.
 
 ## 6. Analytics and error reporting — Phase 25 is built and is measuring nothing
 
+**Switch off one GA4 setting.** GA4 → Admin → Data streams → the web stream → Enhanced measurement →
+**Page views → Advanced → uncheck "Page changes based on browser history events"**. The storefront
+sends every page view itself, with sensitive query values redacted (Phase 31 hotfix); with this
+setting on, every client-side navigation is counted twice.
+
+
 Every integration is behind a key check, so with none of these set the SDKs are **never loaded** —
 `posthog-js` is not even fetched. That is the intended local state, not a broken one.
 

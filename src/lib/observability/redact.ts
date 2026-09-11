@@ -141,7 +141,7 @@ const SENSITIVE_VALUE: readonly RegExp[] = [
 
 /** Query parameters that carry a credential in a URL. Reset links, OAuth codes, session handoffs. */
 const SENSITIVE_PARAM =
-  /^(access_token|code|email|key|password|secret|session|sig|signature|token)$/i
+  /^(access_token|code|email|key|password|secret|session|session_id|sig|signature|token)$/i
 
 const MAX_DEPTH = 6
 const MAX_ARRAY = 50

@@ -77,20 +77,27 @@ export default async function CheckoutPage() {
         figure that has not been quoted against an address is a guess, and §25.1a's payloads treat
         unknown as absent rather than as zero.
       */}
-      <TrackOnMount
-        event="begin_checkout"
-        payload={{
-          currency: cart.currency,
-          items: cart.lines.map((line) => ({
-            itemId: String(line.productId),
-            itemName: line.productName,
-            priceMinor: line.unitPriceMinor,
-            quantity: line.effectiveQuantity,
-            variant: variantLabel(line.color, line.size),
-          })),
-          valueMinor: cart.totals.totalMinor,
-        }}
-      />
+      {/*
+        Only where checkout can actually begin. With no Stripe keys this page is the
+        payment-unavailable state, and a `begin_checkout` from it would fill the funnel with
+        sessions that could never have paid.
+      */}
+      {configured ? (
+        <TrackOnMount
+          event="begin_checkout"
+          payload={{
+            currency: cart.currency,
+            items: cart.lines.map((line) => ({
+              itemId: String(line.productId),
+              itemName: line.productName,
+              priceMinor: line.unitPriceMinor,
+              quantity: line.effectiveQuantity,
+              variant: variantLabel(line.color, line.size),
+            })),
+            valueMinor: cart.totals.totalMinor,
+          }}
+        />
+      ) : null}
 
       <Section spacing="tight">
         <PageContainer>
