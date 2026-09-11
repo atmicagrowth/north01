@@ -8900,6 +8900,21 @@ Do not change DNS records blindly; inspect current records first and preserve un
   settings.
 - TODO.md §8 now points at the domain procedure for the day a domain is bought.
 
+### 1.38.5 Sweep 2 — the allowlist still refuses what it should
+
+Widening an allowlist is the change most likely to weaken what it guards, so the sweep checked the
+refusal rather than the acceptance. A real customer session cookie, sent to `/api/customers/me` with
+different `Origin` headers:
+
+| `Origin` | Result |
+|---|---|
+| `http://localhost:3211` — this deployment | the customer |
+| `https://evil.example` — foreign | `user: null` |
+| `http://localhost:9999` — the machine, but not the port it serves | `user: null` |
+| none, from a non-browser client with no `Sec-Fetch-Site` | `user: null` — Payload's fallback, unchanged by this phase; a browser's own navigations send `Sec-Fetch-Site` and render signed in |
+
+CSRF protection is intact: the list grew by the deployment's own hosts and nothing else.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
