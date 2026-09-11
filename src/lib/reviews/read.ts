@@ -132,18 +132,39 @@ export async function hasReviewed(
   customerId: number,
   productId: number,
 ): Promise<boolean> {
-  const { totalDocs } = await payload.find({
+  return (await ownReviewStatus(payload, customerId, productId)) !== null
+}
+
+/** The status of this customer's review of this product, or `null` when they have not written one. */
+async function ownReviewStatus(
+  payload: Payload,
+  customerId: number,
+  productId: number,
+): Promise<null | string> {
+  const { docs } = await payload.find({
     collection: 'reviews',
     depth: 0,
     limit: 1,
     overrideAccess: true,
+    select: { status: true },
     where: {
       and: [{ customer: { equals: customerId } }, { product: { equals: productId } }],
     },
   })
 
-  return totalDocs > 0
+  return docs[0] ? String(docs[0].status ?? 'pending') : null
 }
+
+/**
+ * The eligibility, plus whether the customer's own review is still **waiting for moderation**.
+ *
+ * Phase 35's E2E run (flow 10): a review is `pending` until a person approves it (§21.1b), and the
+ * form says so — but the action revalidates the page, the form is replaced by the "already reviewed"
+ * line, and the pending message went with it. The customer who had just written a review was told
+ * only that they had written one. The product page now shows the pending sentence for as long as the
+ * review is pending.
+ */
+export type ProductReviewEligibility = ReviewEligibility & { ownReviewPending: boolean }
 
 /**
  * Everything the product page needs to decide what to render where the form would go.
@@ -156,29 +177,35 @@ export async function resolveEligibility(
   customer: null | { accountStatus?: null | string; id: number },
   productId: number,
   productAvailable: boolean,
-): Promise<ReviewEligibility> {
+): Promise<ProductReviewEligibility> {
   if (!customer) {
-    return reviewEligibility({
-      hasPaidOrder: false,
-      hasReviewed: false,
-      productAvailable,
-      signedIn: false,
-      suspended: false,
-    })
+    return {
+      ...reviewEligibility({
+        hasPaidOrder: false,
+        hasReviewed: false,
+        productAvailable,
+        signedIn: false,
+        suspended: false,
+      }),
+      ownReviewPending: false,
+    }
   }
 
-  const [reviewed, paid] = await Promise.all([
-    hasReviewed(payload, customer.id, productId),
+  const [status, paid] = await Promise.all([
+    ownReviewStatus(payload, customer.id, productId),
     hasPaidOrderFor(payload, customer.id, productId),
   ])
 
-  return reviewEligibility({
-    hasPaidOrder: paid,
-    hasReviewed: reviewed,
-    productAvailable,
-    signedIn: true,
-    suspended: customer.accountStatus !== undefined && customer.accountStatus !== 'active',
-  })
+  return {
+    ...reviewEligibility({
+      hasPaidOrder: paid,
+      hasReviewed: status !== null,
+      productAvailable,
+      signedIn: true,
+      suspended: customer.accountStatus !== undefined && customer.accountStatus !== 'active',
+    }),
+    ownReviewPending: status === 'pending',
+  }
 }
 
 /**

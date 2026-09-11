@@ -298,7 +298,15 @@ function resolveAppEnv(env: ServerEnv): AppEnv {
    */
   if (env.VERCEL) return 'preview'
 
-  return env.NODE_ENV === 'production' ? 'production' : 'local'
+  /*
+   * **Not on Vercel is local** — audit R1-19, found again by Phase 35's E2E run. This fell back to
+   * `NODE_ENV`, so `pnpm build && pnpm start` on a laptop called itself *production*: it read the
+   * production search index (absent locally, so search showed its outage state), and it would have
+   * accepted live Stripe keys. The project deploys only to Vercel, where `VERCEL_ENV` answers above;
+   * a production-mode build anywhere else is somebody's machine, and `local` is the answer that
+   * withholds privilege.
+   */
+  return 'local'
 }
 
 export const appEnv: AppEnv = resolveAppEnv(serverEnv)

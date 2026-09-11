@@ -68,6 +68,7 @@ import {
   addFirstAvailableVariantToBag,
   BUYABLE_PRODUCT_CARD,
   CART_COPY,
+  closeCartDrawerIfOpen,
   expect,
   NAME,
   openCartDrawer,
@@ -467,6 +468,7 @@ test.describe('§27.1c — the core storefront flows', () => {
        * whose accessible name is `utilityNav.account.label`. Scoped to the header, because the footer
        * is CMS-driven and an editor may put the word "Account" in it.
        */
+      await closeCartDrawerIfOpen(page)
       await slot(page, 'siteHeader').getByRole('link', { name: NAME.accountLink }).click()
 
       /*

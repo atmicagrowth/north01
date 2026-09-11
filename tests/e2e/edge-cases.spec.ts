@@ -574,7 +574,12 @@ test.describe('§27.1d — the fifteen edge cases the plan enumerates', () => {
        * must not be softened into an `or`.
        */
       await expect(slot(page, 'catalogUnavailable')).toHaveCount(0)
-      await expect(slot(page, 'productGrid')).toHaveCount(0)
+
+      /*
+       * No *results* grid. The empty state carries its own "Worth a look" grid of curated products
+       * — that is the way back into the catalogue, not a result — so grids inside it are excluded.
+       */
+      await expect(page.locator(`${SLOT.productGrid}:not(${SLOT.catalogEmpty} *)`)).toHaveCount(0)
 
       /*
        * Structure §12's *"offer category alternatives"* — the way out is a link, not an instruction

@@ -81,7 +81,8 @@ export type { PublicEnv }
  * `development` means *"a local `vercel dev`"* and is reported as `local`. Two functions naming the
  * same three environments differently would be worse than one that is only mostly right.
  *
- * The fallback is `NODE_ENV`, which is what a `pnpm dev` or a self-hosted build has.
+ * Off Vercel the answer is `local`, whatever `NODE_ENV` says — the same rule as `resolveAppEnv`
+ * (audit R1-19): a production-mode build on a laptop is still a laptop.
  */
 export function publicAppEnv(): 'local' | 'preview' | 'production' {
   switch (publicEnv.NEXT_PUBLIC_VERCEL_ENV) {
@@ -92,6 +93,6 @@ export function publicAppEnv(): 'local' | 'preview' | 'production' {
     case 'development':
       return 'local'
     default:
-      return process.env.NODE_ENV === 'production' ? 'production' : 'local'
+      return 'local'
   }
 }

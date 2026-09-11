@@ -9149,6 +9149,45 @@ navigation consumer already tolerates a dropped link; the gallery cap sits on th
 index still matches the thumbnails; `shippingEstimate` is written on the only path that writes the
 method label; the import keeps chapter ids; no test still asserts changed copy.
 
+### 1.40.7 Sweep 2 — the E2E suite's first run
+
+Audit R3-04: the 57 Playwright tests had never run, because until the development database moved to
+its own Neon account the only reachable database was production. Sweep 2 ran them for the first time,
+against a production build (`pnpm build && pnpm start`) of the reseeded development database.
+
+**First run: 38 passed, 5 failed, 14 skipped.** Every failure was investigated before anything was
+changed. One was a shop defect, one a configuration defect, three were the suite's own:
+
+- **The shop: a customer who had just reviewed a product was told only that they had reviewed it**
+  (flow 10). The form shows the pending-moderation sentence, but the action revalidates the page and
+  the form is replaced by *"You have already reviewed this product"*, taking the sentence with it —
+  §21.1b's *"held for moderation"* was never said where the customer could read it. The product page
+  now shows the pending sentence for as long as their review is pending (`ownReviewPending`). The flow
+  could not have run before Phase 34, because the review form could not save at all (§1.39.3).
+- **Configuration: `next start` on a laptop called itself production** (audit R1-19). `resolveAppEnv`
+  fell back to `NODE_ENV`, so the local build read the production search index — absent locally, so
+  search showed its outage state and the "no results" test found the wrong page — and would have
+  accepted live Stripe keys. Off Vercel is now always `local`, server and client alike.
+- **The suite: two flows clicked the header behind an open drawer.** Add to Bag opens the bag drawer
+  (Phase 30), which makes the rest of the page inert — correct modal behaviour the specs predate. The
+  drawer helper now accepts a drawer that is already open, and flow 5 closes it before reaching for
+  the account link.
+- **The suite: the homepage accessibility scan measured invisible text.** Sections below the fold
+  start faded out until the reader reaches them; axe reads the DOM once, so it reported seventeen
+  contrast failures on content at `opacity: 0`. The scan now scrolls the page through with reduced
+  motion first, so it checks what a reader sees.
+
+**Second run: 41 passed, 2 failed, 14 skipped**, and both failures were the specs' expectations of
+the corrected behaviour: flow 10's reload step still expected *"already reviewed"* where the page now
+(rightly) says the review is pending, and the no-results test counted the empty state's own "Worth a
+look" grid as a results grid. Both corrected and re-run green: **43 passed, 0 failed, 14 skipped.**
+The specs' docblocks still say they have never been executed; that is corrected with the testing
+documentation in Phase 36.
+
+The 14 skips are written into the specs themselves — flows that need a server-side mutation mid-test
+or Stripe keys this environment does not have — and are listed with their reasons in Phase 36's
+testing document.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

@@ -46,7 +46,7 @@ export function ProductReviews({
 }: {
   /** Offered as the byline's starting point. Empty for a signed-out visitor, who sees no form. */
   displayName: string
-  eligibility: ReviewEligibility
+  eligibility: ReviewEligibility & { ownReviewPending?: boolean }
   productId: number
   reviews: PublicReview[]
   summary: ReviewSummary
@@ -138,7 +138,10 @@ export function ProductReviews({
               </div>
             ) : (
               <p className="border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
-                {REVIEW_COPY[eligibility.reason]}{' '}
+                {/* Their review is waiting for a person (§21.1b) — say that, not merely that it exists. */}
+                {eligibility.reason === 'alreadyReviewed' && eligibility.ownReviewPending
+                  ? REVIEW_SECTION_COPY.pending
+                  : REVIEW_COPY[eligibility.reason]}{' '}
                 {eligibility.reason === 'notSignedIn' ? (
                   <Link href="/login?next=/account">Sign in</Link>
                 ) : null}

@@ -149,6 +149,20 @@ test.describe('§27.1e — automated accessibility over the six routes the plan 
       await waitForShell(page)
     })
 
+    await test.step('scroll the page through, as a reader does', async () => {
+      /*
+       * Sections below the fold start faded out and open as the reader reaches them (`Reveal`). Axe
+       * reads the DOM once, so scanning straight after load measured the contrast of text nobody
+       * could see yet — seventeen "violations" on content at opacity 0 (Phase 35's first E2E run).
+       * Scrolling to the foot opens every section (the observer's upward root margin), and reduced
+       * motion makes the fade instant, so what is scanned is what a reader sees.
+       */
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+      await expect(page.locator('[data-reveal="closed"]')).toHaveCount(0)
+      await page.evaluate(() => window.scrollTo(0, 0))
+    })
+
     await test.step('scan', async () => {
       await expectNoAxeViolations(page, ROUTE.home)
     })

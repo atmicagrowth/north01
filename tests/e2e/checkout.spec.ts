@@ -701,8 +701,12 @@ test.describe('§27.1c flow 10 — reviews', () => {
        * the courtesy that lets the page say so instead of the customer discovering it by submitting.
        * Asserting the *courtesy* is what proves the two agree — the page could otherwise keep
        * offering a form whose only outcome is a database refusal.
+       *
+       * While their review is still waiting for a person, the refusal is worded as the pending
+       * sentence rather than "already reviewed" (Phase 35 sweep 2) — the reload is the case that used
+       * to lose it. `REVIEW_COPY.alreadyReviewed` is what they see once it has been moderated.
        */
-      await expect(reviews.getByText(REVIEW_COPY.alreadyReviewed)).toBeVisible()
+      await expect(reviews.getByText(REVIEW_SECTION_COPY.pending)).toBeVisible()
 
       await expect(
         reviews.getByRole('button', { name: REVIEW_SECTION_COPY.submitTitle }),

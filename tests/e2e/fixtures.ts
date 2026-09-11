@@ -454,14 +454,34 @@ export async function addFirstAvailableVariantToBag(page: Page): Promise<string>
  */
 export async function openCartDrawer(page: Page): Promise<Locator> {
   return await test.step('open the bag drawer from the header', async () => {
-    await slot(page, 'siteHeader').getByRole('button', { name: NAME.bag }).click()
-
     const drawer = page.getByRole('dialog', { name: NAME.cartDialog })
+
+    /*
+     * Add to Bag opens the drawer itself (Phase 30), and while it is open the rest of the page —
+     * the header included — is inert and hidden from the accessibility tree, which is the modal
+     * doing its job. Already open is the state this helper exists to reach.
+     */
+    if (!(await drawer.isVisible())) {
+      await slot(page, 'siteHeader').getByRole('button', { name: NAME.bag }).click()
+    }
 
     await expect(drawer).toBeVisible()
 
     return drawer
   })
+}
+
+/**
+ * Close the bag drawer if an add opened it, so the page behind it can be used again. Escape is the
+ * dialog's own close, and what a keyboard user would press.
+ */
+export async function closeCartDrawerIfOpen(page: Page): Promise<void> {
+  const drawer = page.getByRole('dialog', { name: NAME.cartDialog })
+
+  if (await drawer.isVisible()) {
+    await page.keyboard.press('Escape')
+    await expect(drawer).toBeHidden()
+  }
 }
 
 /**
