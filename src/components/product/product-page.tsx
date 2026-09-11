@@ -5,19 +5,42 @@ import { AddToBag } from '@/components/cart/add-to-bag'
 import { RecentlyViewed, RecordProductView } from '@/components/recently-viewed/recently-viewed'
 import { WishlistControl } from '@/components/wishlist/wishlist-button'
 import { ProductCard } from '@/components/catalog/product-card'
+import { PageBreadcrumb, type Crumb } from '@/components/layout/page-breadcrumb'
 import { PageContainer } from '@/components/layout/page-container'
 import { Section, SectionHeading } from '@/components/layout/section'
 import { ProductDetails } from '@/components/product/product-details'
 import { ProductGallery } from '@/components/product/product-gallery'
 import { VariantSelector } from '@/components/product/variant-selector'
 import { Badge } from '@/components/ui/badge'
-import { Link } from '@/components/ui/link'
 import { cardsToAnalyticsItems, variantLabel } from '@/lib/analytics/items'
 import { PRODUCT_IMAGE_SIZES } from '@/lib/product/sizes'
 import { clampQuantity } from '@/lib/cart/rules'
-import { inventoryMessage, priceRangeForColor } from '@/lib/product/variants'
+import { compareAtForColor, inventoryMessage, priceRangeForColor } from '@/lib/product/variants'
 import type { ProductView } from '@/lib/product/product'
-import type { Media } from '@/payload-types'
+import type { Category, Media, Product } from '@/payload-types'
+
+/**
+ * **The product's trail: Shop / its first category / the product — Phase 35 (P35-18).**
+ *
+ * Exported because the route emits it as `BreadcrumbList` structured data, and one list for both is
+ * what keeps the trail a customer sees and the one a search result shows from drifting.
+ *
+ * The category must have arrived **populated and published**. The product read is access-controlled,
+ * so a draft category comes back as a bare id — and a crumb linking to `/shop/<draft>` would be a
+ * link to a 404. Without a usable category the trail is simply Shop / product.
+ */
+export function productBreadcrumb(product: Pick<Product, 'categories' | 'name' | 'slug'>): Crumb[] {
+  const category = (product.categories ?? []).find(
+    (entry): entry is Category =>
+      typeof entry === 'object' && entry !== null && !!entry.slug && entry.status === 'published',
+  )
+
+  return [
+    { name: 'Shop', path: '/shop' },
+    ...(category ? [{ name: category.name, path: `/shop/${category.slug}` }] : []),
+    { name: product.name, path: `/product/${product.slug}` },
+  ]
+}
 
 /**
  * **The product page**, in structure §7's order:
@@ -58,6 +81,17 @@ import type { Media } from '@/payload-types'
  * range **for the selected colour** — not for the product — because a page showing bone's price
  * under a black swatch is quoting a price the customer cannot have. Once a size is chosen the price
  * is that variant's exactly.
+ *
+ * The former price follows the same rule (Phase 35): before a size is chosen it is the colour's
+ * compare-at when every real saving in the colour quotes the same one, and the **Sale** badge is
+ * shown exactly when a former price is — so the badge cannot claim a saving the price line does not
+ * show.
+ *
+ * ### Sold out is said once, where the button is
+ *
+ * When nothing in the selected colour — or in the product — can be bought, Add to bag says
+ * *"Sold out in Bone."* / *"Sold out."* and the size prompt stays quiet. Asking a customer to choose
+ * a size from a row where every size is struck through is an instruction they cannot follow.
  */
 export function ProductPage({
   reviews,
@@ -104,7 +138,17 @@ export function ProductPage({
     matrix.selected?.priceLabel ??
     priceRangeForColor(variants, matrix.selectedColor, settings.currency, settings.locale)
 
+  const compareAt = matrix.selected
+    ? matrix.selected.compareAtLabel
+    : compareAtForColor(variants, matrix.selectedColor, settings.currency, settings.locale)
+
   const stock = inventoryMessage(matrix.selected)
+
+  /* From the server's matrix: a colour is `available` when anything in it has stock. */
+  const allSoldOut = matrix.colors.length > 0 && matrix.colors.every((color) => !color.available)
+  const colorSoldOut =
+    !allSoldOut &&
+    matrix.colors.some((color) => color.value === matrix.selectedColor && !color.available)
 
   /*
    * How many of this exact variant may be added right now. The same function the server applies when
@@ -137,8 +181,15 @@ export function ProductPage({
 
             <div className="flex flex-col gap-l lg:col-span-5">
               <div className="flex flex-col gap-s">
+                <PageBreadcrumb items={productBreadcrumb(product)} />
+
                 <div className="flex flex-wrap items-center gap-s">
-                  {product.isNew ? <Badge variant="accent">New</Badge> : null}
+                  {/* Sale outranks New: a saving is the more useful fact, and one badge is quieter. */}
+                  {compareAt ? (
+                    <Badge variant="accent">Sale</Badge>
+                  ) : product.isNew ? (
+                    <Badge variant="accent">New</Badge>
+                  ) : null}
                   {product.isLimitedEdition ? <Badge variant="accent">Limited</Badge> : null}
                 </div>
 
@@ -158,10 +209,15 @@ export function ProductPage({
                   <span className="text-foreground-muted">Currently unavailable</span>
                 )}
 
-                {matrix.selected?.compareAtLabel ? (
-                  <s className="text-foreground-disabled">
+                {/*
+                  Muted, not disabled. `text-foreground-disabled` is the colour of a control that
+                  cannot be used, and a former price is information the customer should be able to
+                  read — Phase 35 (P35-13).
+                */}
+                {compareAt ? (
+                  <s className="text-foreground-muted">
                     <span className="sr-only">was </span>
-                    {matrix.selected.compareAtLabel}
+                    {compareAt}
                   </s>
                 ) : null}
               </p>
@@ -175,7 +231,9 @@ export function ProductPage({
 
               {/*
                 One live region for everything the selection changes, so a screen-reader user hears
-                the consequence of picking a size rather than having to go looking for it.
+                the consequence of picking a size rather than having to go looking for it. The
+                "choose a size" prompt is not here: since Phase 35 it sits under the size row, once,
+                in `VariantSelector`.
               */}
               {/*
                 `min-h` holds one line. Choosing a size emptied this region when the server
@@ -190,12 +248,6 @@ export function ProductPage({
                 ) : null}
 
                 {stock ? <p className="font-sans text-body-sm text-foreground">{stock}</p> : null}
-
-                {matrix.selectedSize === null && matrix.sizes.length > 0 ? (
-                  <p className="font-sans text-body-sm text-foreground-muted">
-                    Choose a size to see availability.
-                  </p>
-                ) : null}
               </div>
 
               {/*
@@ -223,14 +275,23 @@ export function ProductPage({
                   variant: variantLabel(matrix.selectedColor, matrix.selectedSize),
                 }}
                 currency={settings.currency}
+                /*
+                 * Sold out first: it is true whatever size is chosen. No size chosen is `null` —
+                 * the button is still disabled, because there is no variant id, and the prompt
+                 * under the size row already says what to do; saying it twice was noise.
+                 */
                 disabledReason={
-                  matrix.selectedSize === null
-                    ? 'Choose a size.'
-                    : matrix.selected === null
-                      ? 'That combination is not available.'
-                      : bound.quantity <= 0
-                        ? 'Sold out in this size.'
-                        : null
+                  allSoldOut
+                    ? 'Sold out.'
+                    : colorSoldOut
+                      ? `Sold out in ${matrix.selectedColor}.`
+                      : matrix.selectedSize === null
+                        ? null
+                        : matrix.selected === null
+                          ? 'That combination is not available.'
+                          : bound.quantity <= 0
+                            ? 'Sold out in this size.'
+                            : null
                 }
                 maxQuantity={bound.quantity}
                 variantId={matrix.selected?.id ?? null}
@@ -315,14 +376,6 @@ export function ProductPage({
           </PageContainer>
         </Section>
       ) : null}
-
-      <Section spacing="tight">
-        <PageContainer>
-          <Link href="/shop" variant="meta">
-            Back to the shop
-          </Link>
-        </PageContainer>
-      </Section>
     </>
   )
 }

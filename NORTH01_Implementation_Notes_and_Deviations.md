@@ -9041,6 +9041,96 @@ writes orders with `overrideAccess: false`; the internal-collection access holds
   member's email address to a third party on every admin page load. `admin.avatar: 'default'` — a
   privacy fix the policy found, rather than an origin to allow.
 
+## 1.40 Phase 35 — final product quality pass
+
+Plan §35.1a–§35.1d: *"Do not add features merely to make the site appear more complex… Remove
+redundant UI and simplify any confusing flows."* The input was the 34 `P35-*` findings in
+`docs/PHASE_35_36_AUDIT.md` (an earlier session's audit, untracked). Each was first re-checked against
+current code, because Phases 30–34 had changed things since: **P35-03 was already fixed** (Phase 30
+sweep 2), P35-14 and P35-15 partly. One migration (`order_shipping_estimate`), applied to development
+by push and committed for everywhere else.
+
+### 1.40.1 Navigation — where am I, how do I get back (§35.1b)
+
+- **Links to pages that do not exist are dropped (P35-01).** Production's Navigation global links
+  `/about`, `/contact` and `/help` — three 404s on every page — because the admin checks a URL's shape,
+  never whether a page answers it. `resolveLink` now checks `PAGE_ROUTE_PATTERNS`
+  (`lib/navigation/routes.ts`), a list rather than a filesystem walk because a deployed function has
+  no `src/app`; `tests/unit/navigation-routes.test.ts` walks the tree and fails when the two disagree.
+  The production global still needs its entries removed (TODO.md §11) — until then they are hidden
+  rather than broken.
+- **Visible breadcrumbs (P35-18)**: product (Shop / category / product — the JSON-LD now uses the same
+  list, and it used to skip the category), category (Shop / parent / category) and journal article
+  pages. A crumb links only to a published document. The product page's bottom "Back to the shop"
+  and the category page's "Shop" eyebrow, both now repeats of the trail, are gone.
+- **NEW says what it is (P35-19)** — `/shop?sort=newest` was titled "All"; it is "New arrivals".
+  Not a new filter: the listing is the same catalogue, newest first, and says so.
+- Mobile menu marks the current section (P35-29); the 404 page's footer has the newsletter like
+  every other footer (P35-24); the wishlist has one name — "Wishlist" — where it had three (P35-34).
+- **Shipping and returns are reachable** from the bag, the drawer, checkout and the product page's
+  delivery section, and the three help pages link to each other and back to the shop (P35-32).
+
+### 1.40.2 Commerce clarity — price, variant, availability, Add to Bag (§35.1c)
+
+- **The sale price shows before a size is chosen, and a sale product is badged Sale, not New
+  (P35-12)**; the struck price uses the muted tone, not the disabled one (P35-13). `compareAtForColor`
+  shows a "was" price only when every size of the colour agrees on one.
+- **A sold-out product says "Sold out"** — on the button and visibly on the colour (P35-17). It used
+  to ask for a size.
+- **A tapped size is selected at once** (P35-16, `useOptimistic`); the server still resolves price and
+  stock. One "Choose a size." prompt where there were two.
+- **A one-size product needs no size choice (P35-31).** A deliberate exception to §13.1c's "never
+  pick a size on the customer's behalf": with one size there is nothing to choose, and Features §6 asks
+  for "one unambiguous variant, add directly". A requested size that does not exist still selects
+  nothing.
+- The bag drawer offers "Continue shopping", and "Add the look" opens it like Add to Bag (P35-15).
+- **Collections of four or fewer** no longer show the same cards twice (P35-10).
+- **Size filter order** reads XS, S, M, L, XL, then numeric, then ONE SIZE (P35-11,
+  `lib/catalog/size-order.ts`). Scoping the list to the current category is **deferred**: it needs a
+  per-category cached vocabulary, and a shorter list is not worth a new cache layer this late.
+- On phone and tablet the gallery is capped at about two-thirds of the screen so the name and price
+  are in the first view (P35-30).
+- **The delivery estimate outlives the purchase (P35-20).** Checkout promised "3–5 business days" and
+  the order forgot it. Now snapshotted (`orders.shippingEstimate`, server-written only) and shown on
+  the confirmation page, the order page and the confirmation email.
+
+### 1.40.3 Visual consistency (§35.1a)
+
+- Form fields use the `Input`/`Textarea` primitives — 16px text, 44px tall, one border and radius
+  (P35-14); checkout's section headings are sans, as the type scale says heading-s is (P35-21).
+- Editorial index and journal cards share one 3:2 crop (`editorialCard`) and one title size (P35-22).
+- Off-scale spacing (`py-5`, `pt-6`, `gap-6`) replaced with tokens across account, auth and reviews;
+  the account overview's double hairline removed (P35-23).
+- No scaling on hover and no backdrop blur — the visual guide lists both under "avoid" (P35-25).
+
+### 1.40.4 Editorial quality (§35.1d)
+
+- **No developer copy on the site (P35-07).** Every collection page carried "Photography arrives in
+  Phase 8"; every article was its excerpt followed by "Demo copy." Collections now have no body block
+  (the description is already the lede); the three articles have their own paragraphs, written from
+  what the catalogue already says and making no new brand claims.
+- **No unbacked claims (P35-08, P35-26).** "Carbon-neutral delivery" became "Free delivery over $150",
+  which `freeShippingThresholdMinor` enforces; "milled in Yorkshire" was removed. The overshirt block
+  now links to the overshirt instead of an article about denim.
+- **Hotspots sit on the photograph they point into (P35-02, P35-09).** The seed wrote positions with
+  no image (AW26's chapters, which then showed neither hotspots nor "Add the look") or on whatever
+  media came first (the homepage's Shop the Look, on a fabric swatch). `import:media` now places each
+  image and its hotspots together, positioned by eye on the files; the seed writes none. A chapter
+  refuses hotspots without a hero image. The lookbook page shows its cover, and its title no longer
+  reads "AW26 — AW26" (P35-33).
+- Footer social links removed until real handles exist (P35-27).
+- **House style is US English (P35-28)** — the currency is USD and the locale `en-US`; "Colour" became
+  "Color" in the interface. Seed prose still has British spellings in places; recorded, not swept.
+
+### 1.40.5 Not done here, and why
+
+- **P35-04, P35-01 (data half)** — production's content is the owner's: seed it or author it
+  (TODO.md §11).
+- **P35-05, P35-06** — the supplied photographs are 217–467 px wide (only the panorama is 1983 px),
+  and have white frame borders. No placement or crop fixes a 267-px photograph on a 1440-px slot. The
+  owner's photography item (TODO.md §5) is the fix; trimming borders in the import would re-upload
+  over the images production also uses (Cloudinary is shared).
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**

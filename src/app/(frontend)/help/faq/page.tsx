@@ -6,6 +6,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
+import { HelpNav } from '@/components/help/policy-page'
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Prose } from '@/components/editorial/prose'
@@ -56,6 +57,8 @@ export default async function FaqPage() {
         <PageTitle eyebrow="Help" size="display-l">
           Frequently asked questions
         </PageTitle>
+
+        <HelpNav current="FAQ" />
 
         {groups.length === 0 ? (
           <div className="mt-l flex flex-col items-start gap-s">

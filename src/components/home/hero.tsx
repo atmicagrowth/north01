@@ -93,7 +93,7 @@ export function Hero({ section }: { section: SectionOf<'hero'> }) {
           needing one. A statement set over a photograph needs a scrim or it is illegible over a
           bright sky, and this composition was chosen deliberately with that cost understood.
 
-          It is kept to the minimum that does the job: opaque only at the very edge, gone by 62% of
+          It is kept to the minimum that does the job: opaque only at the very edge, gone by 70% of
           the width, and present only where the type is. Below `md` the statement is not over the
           picture at all, so the scrim is not rendered.
         */}

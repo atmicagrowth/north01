@@ -230,7 +230,7 @@ export const BUYABLE_PRODUCT_CARD =
  *   the start it matches only the header control, and `openCartDrawer` additionally scopes to the
  *   header.
  * - **`colourGroup`** deliberately has no trailing text. `VariantSelector` labels the colour row
- *   "Colour" and, once a colour is chosen, "Colour — Bone", so the substring match is what makes one
+ *   "Color" and, once a colour is chosen, "Color — Bone", so the substring match is what makes one
  *   locator work in both states.
  */
 export const NAME = {
@@ -258,7 +258,7 @@ export const NAME = {
 
   /* Product page — components/product/variant-selector.tsx, components/cart/add-to-bag.tsx */
   addToBag: 'Add to bag',
-  colourGroup: 'Colour',
+  colourGroup: 'Color',
   quantity: 'Qty',
   sizeGroup: 'Size',
 

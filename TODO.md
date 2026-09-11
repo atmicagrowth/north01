@@ -193,3 +193,17 @@ answer for, so no page with made-up wording was built.
 request does to orders; a self-service newsletter unsubscribe before the first marketing email; and
 whether editors, not only admins, should read the subscriber list and the outbox. Each is a small
 change once the answer exists.
+
+## 11. Production content — Phase 35
+
+The storefront hides what is missing rather than showing it broken, but only you can fill it in:
+
+- **Navigation (admin → Navigation):** delete the About and Contact entries and point FAQ at
+  `/help/faq`. Links to pages that do not exist are now dropped automatically, so the header is not
+  broken meanwhile — just shorter.
+- **Phase 29's editorial content never reached production:** the homepage Shop the Look, the journal
+  articles and the second lookbook. Either run the seed against production deliberately (see
+  `docs/DATABASE.md`) or author them in the admin.
+- **Social handles:** the footer shows none until real accounts are added in Navigation → Social.
+- **Photography (§5):** the supplied photographs are 217–467 pixels wide and have white borders, so
+  every full-width image is visibly soft. Larger, borderless exports are the fix.

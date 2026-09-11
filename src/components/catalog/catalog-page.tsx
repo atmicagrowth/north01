@@ -12,6 +12,7 @@ import {
   ProductGrid,
   ProductGridSkeleton,
 } from '@/components/catalog/product-grid'
+import { PageBreadcrumb } from '@/components/layout/page-breadcrumb'
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
@@ -127,9 +128,32 @@ export async function CatalogPage({
     redirect(canonicalHref)
   }
 
+  /*
+   * **Phase 35 (P35-18): a category page says where it sits.** Shop, the parent when there is one,
+   * then the category. Both are read from the vocabulary already loaded above, which lists only
+   * published categories — so every crumb that links is a `/shop/<slug>` that resolves. `/shop` and
+   * `/search` get no trail: one crumb repeats the title.
+   */
+  const current = routeCategory
+    ? vocabulary.categories.find((category) => category.value === routeCategory)
+    : undefined
+  const parent = current?.parent
+    ? vocabulary.categories.find((category) => category.value === current.parent)
+    : undefined
+
+  const crumbs = routeCategory
+    ? [
+        { name: 'Shop', path: '/shop' },
+        ...(parent ? [{ name: parent.label, path: `/shop/${parent.value}` }] : []),
+        { name: title, path: basePath },
+      ]
+    : []
+
   return (
     <Section spacing="tight">
       <PageContainer>
+        <PageBreadcrumb className="mb-s" items={crumbs} />
+
         <PageTitle eyebrow={eyebrow} lede={lede ?? undefined} className="mb-l">
           {title}
         </PageTitle>

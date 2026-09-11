@@ -3,7 +3,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 
 import { JsonLd } from '@/components/seo/json-ld'
-import { ProductPage } from '@/components/product/product-page'
+import { ProductPage, productBreadcrumb } from '@/components/product/product-page'
 import type { Media } from '@/payload-types'
 
 import { getCustomer } from '@/lib/auth/session'
@@ -177,12 +177,8 @@ export default async function ProductDetailPage({
   return (
     <>
       <JsonLd data={structuredData} />
-      <JsonLd
-        data={breadcrumbStructuredData(siteUrl, [
-          { name: 'Shop', path: '/shop' },
-          { name: view.product.name, path: `/product/${slug}` },
-        ])}
-      />
+      {/* The same list the page draws, so the visible trail and the search result's cannot drift. */}
+      <JsonLd data={breadcrumbStructuredData(siteUrl, productBreadcrumb(view.product))} />
 
       <ProductPage
         reviews={

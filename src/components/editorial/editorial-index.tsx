@@ -55,14 +55,14 @@ export function EditorialIndex({
                 <Link className="group block" href={entry.href} variant="unstyled">
                   {entry.heroImage ? (
                     <MediaImage
-                      context="editorial"
+                      context="editorialCard"
                       imageClassName="transition-opacity duration-(--duration-base) ease-editorial group-hover:opacity-85"
                       media={entry.heroImage}
                       sizes={EDITORIAL_GRID_TWO_UP}
                     />
                   ) : null}
 
-                  <p className="mt-s font-display text-heading-m">{entry.title}</p>
+                  <p className="mt-s font-display text-heading-m text-balance">{entry.title}</p>
 
                   {entry.description ? (
                     <p className="mt-1 font-sans text-body-sm text-foreground-muted">

@@ -8,6 +8,7 @@ import type { AnalyticsItem } from '@/lib/analytics/events'
 
 import { useShellOverlay } from '@/components/shell/overlay-context'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { CART_ACTION_IDLE } from '@/lib/cart/action-state'
 import { addToBagAction } from '@/lib/cart/actions'
 import { QUANTITY_HARD_CAP } from '@/lib/cart/rules'
@@ -64,7 +65,7 @@ export function AddToBag({
   item: AnalyticsItem
   /** The live bound: stock, capped by policy. `0` when nothing can be added. */
   maxQuantity: number
-  /** `null` until a size is chosen — §13.1c never picks one on the customer's behalf. */
+  /** `null` until a size is chosen. §13.1c never picks one on the customer's behalf, except the only size of a one-size product (`buildVariantMatrix`, Phase 35). */
   variantId: null | number
 }) {
   const [state, action, pending] = useActionState(addToBagAction, CART_ACTION_IDLE)
@@ -134,15 +135,9 @@ export function AddToBag({
             Qty
           </label>
 
-          <input
+          <Input
             aria-describedby={blocked ? undefined : `${quantityId}-max`}
-            className={cn(
-              'h-11 w-16 rounded-sm border border-border-control bg-transparent px-2',
-              /* 16px, not 14: iOS Safari zooms the whole page on focus of any smaller input. */
-              'text-center font-sans text-body text-foreground',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-strong',
-              'disabled:text-foreground-disabled',
-            )}
+            className="w-16 px-2 text-center"
             disabled={blocked}
             id={quantityId}
             max={ceiling}

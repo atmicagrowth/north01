@@ -91,8 +91,9 @@ export function SortControl({ value }: { value: CatalogSort }) {
           void setFilters({ page: null, sort: event.target.value as CatalogSort })
         }}
         className={cn(
-          'h-10 w-full min-w-0 rounded-sm border border-border-control bg-transparent px-3 sm:w-auto sm:min-w-[11rem]',
-          'font-sans text-body-sm text-foreground',
+          /* 44px and 16px, as every field in the shop: iOS zooms the page on anything smaller. */
+          'h-11 w-full min-w-0 rounded-sm border border-border-control bg-surface px-4 sm:w-auto sm:min-w-[11rem]',
+          'font-sans text-body text-foreground',
           'transition-colors duration-(--duration-fast)',
           'hover:border-border-strong',
           'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
@@ -307,7 +308,7 @@ export function FilterPanel({
       : [{ key: 'category' as const, label: 'Category', options: vocabulary.categories }]),
     { key: 'collection', label: 'Collection', options: vocabulary.collections },
     { key: 'size', label: 'Size', options: vocabulary.sizes },
-    { key: 'color', label: 'Colour', options: vocabulary.colors },
+    { key: 'color', label: 'Color', options: vocabulary.colors },
   ]
 
   return (

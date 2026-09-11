@@ -546,6 +546,17 @@ export const Orders: CollectionConfig = {
               ],
             },
             {
+              /* Phase 35 (P35-20): what checkout promised, shown again after payment. */
+              name: 'shippingEstimate',
+              type: 'text',
+              access: { update: nobodyField },
+              admin: {
+                readOnly: true,
+                description:
+                  'The estimate shown at checkout — "3–5 business days". A snapshot, like the label.',
+              },
+            },
+            {
               name: 'shippingAddress',
               type: 'group',
               label: 'Shipping address (snapshot)',

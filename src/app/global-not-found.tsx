@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 
 import { SiteFooter } from '@/components/layout/site-footer'
 import { SiteHeader } from '@/components/layout/site-header'
+import { NewsletterSignup } from '@/components/newsletter/newsletter-signup'
 import { CartDrawer } from '@/components/shell/cart-drawer'
 import { ShellOverlayProvider } from '@/components/shell/overlay-context'
 import { SearchOverlay } from '@/components/shell/search-overlay'
@@ -89,7 +90,7 @@ export default async function GlobalNotFound() {
             </PageContainer>
           </main>
 
-          <SiteFooter />
+          <SiteFooter newsletter={<NewsletterSignup />} />
 
           <SearchOverlay />
           <CartDrawer cart={cart} items={navigation.primary} />

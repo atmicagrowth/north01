@@ -129,7 +129,7 @@ function renderSelector(
   return user
 }
 
-const colourRow = () => screen.getByRole('radiogroup', { name: /^Colour/ })
+const colourRow = () => screen.getByRole('radiogroup', { name: /^Color/ })
 const sizeRow = () => screen.getByRole('radiogroup', { name: 'Size' })
 
 /*
@@ -182,7 +182,7 @@ describe('VariantSelector', () => {
     renderSelector({ selectedColor: 'Cream' })
 
     /* The group label is the only place the colourway is spelled out; the chip itself is decorative. */
-    expect(screen.getByRole('radiogroup', { name: named('Colour', 'Cream') })).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup', { name: named('Color', 'Cream') })).toBeInTheDocument()
   })
 
   it('names each swatch by its colour alone, with the colour chip hidden from assistive technology', () => {
@@ -260,7 +260,10 @@ describe('VariantSelector', () => {
   it('lets a colour with nothing in stock be selected, because a colour is a way of looking at the product', async () => {
     const user = renderSelector()
 
-    const cream = within(colourRow()).getByRole('radio', { name: named('Cream', 'sold out') })
+    /* Phase 35: the suffix is visible now, not `sr-only`, so sighted customers see it too. */
+    const cream = within(colourRow()).getByRole('radio', { name: /^Cream\s*·\s*Sold out$/ })
+
+    expect(within(cream).getByText('· Sold out', { exact: false })).toBeVisible()
 
     /* Sold out everywhere is still browsable — plan §11.1b treats sold out as a state, not a removal. */
     expect(cream).toHaveAttribute('aria-disabled', 'false')
@@ -367,8 +370,46 @@ describe('VariantSelector', () => {
   it('renders no colour row when the product has no colours, rather than an empty labelled group', () => {
     renderSelector({ colors: [] })
 
-    expect(screen.queryByRole('radiogroup', { name: /^Colour/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: /^Color/ })).not.toBeInTheDocument()
     expect(sizeRow()).toBeInTheDocument()
+  })
+
+  it('asks for a size once, under the size row, while none is chosen', () => {
+    renderSelector()
+
+    expect(screen.getAllByText('Choose a size.')).toHaveLength(1)
+  })
+
+  it('stops asking once a size is chosen', () => {
+    renderSelector({ selectedSize: 'M' })
+
+    expect(screen.queryByText('Choose a size.')).not.toBeInTheDocument()
+  })
+
+  it('does not ask for a size when no size in this colour can be bought', () => {
+    /* Every size struck through: the prompt would be an instruction the customer cannot follow. */
+    renderSelector({
+      selectedColor: 'Cream',
+      sizes: SIZES.map((size) => ({ ...size, available: false })),
+    })
+
+    expect(screen.queryByText('Choose a size.')).not.toBeInTheDocument()
+  })
+
+  it('shows the chosen size as selected at once, before the server has answered', async () => {
+    /* A commit that never settles is a server that has not answered yet. */
+    commit.mockReturnValueOnce(new Promise(() => {}))
+
+    const user = renderSelector()
+
+    await user.click(within(sizeRow()).getByRole('radio', { name: 'S' }))
+
+    expect(within(sizeRow()).getByRole('radio', { name: 'S' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    expect(screen.queryByText('Choose a size.')).not.toBeInTheDocument()
+    expect(commit).toHaveBeenCalledWith({ size: 'S' })
   })
 
   it('renders nothing at all when there is no choice to make', () => {
@@ -452,7 +493,7 @@ describe('VariantSelector, fed by buildVariantMatrix from the URL', () => {
       />,
     )
 
-    expect(screen.getByRole('radiogroup', { name: named('Colour', 'Black') })).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup', { name: named('Color', 'Black') })).toBeInTheDocument()
     expect(within(sizeRow()).getAllByRole('radio', { checked: true })[0]).toHaveAccessibleName('M')
   })
 

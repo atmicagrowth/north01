@@ -97,7 +97,33 @@ export function CartDrawer({
                     View bag
                   </Link>
                 </Button>
+
+                {/*
+                  Phase 35 (P35-15). Closing the drawer IS continuing to shop — the customer is
+                  still on the page they were browsing — so this is a plain close, not a link
+                  somewhere else. Before it, the only visible way out was the small ×.
+                */}
+                <Button onClick={close} type="button" variant="ghost">
+                  Continue shopping
+                </Button>
               </div>
+
+              {/*
+                Phase 35 (P35-32). The two questions a bag raises before checkout, one tap away. Each
+                closes the drawer, for the same reason every other link in it does.
+              */}
+              <ul className="flex flex-wrap justify-center gap-x-m gap-y-1 font-sans text-body-sm">
+                <li>
+                  <Link href="/help/shipping" onClick={close} variant="meta">
+                    Shipping
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/help/returns" onClick={close} variant="meta">
+                    Returns
+                  </Link>
+                </li>
+              </ul>
             </div>
           ) : null
         }

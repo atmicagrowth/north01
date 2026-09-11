@@ -39,14 +39,14 @@ export default async function AccountSettingsPage() {
       </PageTitle>
 
       <dl className="grid gap-px border-t border-border text-body-sm sm:grid-cols-2">
-        <div className="flex flex-col gap-1 border-b border-border py-5">
+        <div className="flex flex-col gap-1 border-b border-border py-m">
           <dt className="font-sans text-micro uppercase text-foreground-muted">Name</dt>
           <dd>
             {customer.firstName} {customer.lastName}
           </dd>
         </div>
 
-        <div className="flex flex-col gap-1 border-b border-border py-5">
+        <div className="flex flex-col gap-1 border-b border-border py-m">
           <dt className="font-sans text-micro uppercase text-foreground-muted">Email</dt>
           <dd className="break-words">{customer.email}</dd>
         </div>
@@ -63,7 +63,7 @@ export default async function AccountSettingsPage() {
         </Link>
       </div>
 
-      <div className="border-t border-border pt-6">
+      <div className="border-t border-border pt-m">
         <SignOutButton />
       </div>
     </div>

@@ -46,7 +46,7 @@ export default async function ResetPasswordPage({
         </FormNotice>
       )}
 
-      <p className="border-t border-border pt-6 font-sans text-body-sm text-foreground-muted">
+      <p className="border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
         <Link href="/login">Back to sign in</Link>
       </p>
     </div>

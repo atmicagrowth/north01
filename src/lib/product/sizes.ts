@@ -40,9 +40,14 @@ export const PRODUCT_IMAGE_SIZES = {
    * `PageContainer`, so it is `92vw` from 500px up and `100vw` minus two `1.25rem` gutters below —
    * an over-request of 8% on a tablet and **14% at 320px**. That is Phase 10's audit finding
    * repeating itself in the one tier nobody re-derived, on the largest image the site ships.
+   *
+   * **Phase 35:** below `lg` the gallery is capped at `52svh` wide (`product-gallery.tsx`), so both
+   * lower tiers take the smaller of the container and that cap. The string says `52vh`: `svh` is
+   * never larger than `vh`, so the request can only err towards a rendition slightly too big — the
+   * direction that costs bytes, not sharpness.
    */
   gallery:
-    '(min-width: 1440px) 756px, (min-width: 1024px) 52vw, (min-width: 500px) 92vw, calc(100vw - 2.5rem)',
+    '(min-width: 1440px) 756px, (min-width: 1024px) 52vw, (min-width: 500px) min(92vw, 52vh), min(calc(100vw - 2.5rem), 52vh)',
   /**
    * The full-screen viewer.
    *

@@ -650,7 +650,7 @@ test.describe('§27.1c — the core storefront flows', () => {
 
       await page.waitForURL(new RegExp(`${ROUTE.wishlist}$`))
 
-      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Saved')
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Wishlist')
     })
 
     await test.step('the saved product is on it', async () => {

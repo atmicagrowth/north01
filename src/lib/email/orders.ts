@@ -91,6 +91,7 @@ export async function queueOrderConfirmation(
     shipping: money(order.shippingMinor, currency, locale),
     shippingMethodLabel:
       typeof order.shippingMethodLabel === 'string' ? order.shippingMethodLabel : null,
+    shippingEstimate: typeof order.shippingEstimate === 'string' ? order.shippingEstimate : null,
     subtotal: money(order.subtotalMinor, currency, locale),
     tax: order.taxMinor ? money(order.taxMinor, currency, locale) : null,
     total: money(order.totalMinor, currency, locale) ?? '',

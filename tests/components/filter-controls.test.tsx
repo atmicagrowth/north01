@@ -223,7 +223,7 @@ describe('FilterPanel structure', () => {
 
     expect(screen.queryByRole('group', { name: 'Category' })).not.toBeInTheDocument()
     /* The other groups are untouched — only the redundant one goes. */
-    expect(screen.getByRole('group', { name: 'Colour' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Color' })).toBeInTheDocument()
   })
 })
 

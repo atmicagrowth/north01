@@ -25,7 +25,46 @@ import { Link } from '@/components/ui/link'
  * read. Rendering a title over nothing would tell a customer the page is broken; saying the policy
  * is not published yet, and offering somewhere to go instead, is the honest answer and the one
  * §0.1.17 asks for.
+ *
+ * ### The help pages link to each other
+ *
+ * `HelpNav` sits under the title here and on `/help/faq`, so a customer reading the returns window
+ * reaches the shipping one without going back to the footer. The current page is marked by matching
+ * `title` against the nav's labels — the two routes pass exactly `"Shipping"` and `"Returns"`, and
+ * a title that matches neither simply marks nothing.
  */
+const HELP_LINKS = [
+  { href: '/help/faq', label: 'FAQ' },
+  { href: '/help/shipping', label: 'Shipping' },
+  { href: '/help/returns', label: 'Returns' },
+] as const
+
+export function HelpNav({ current }: { current?: string }) {
+  return (
+    <nav aria-label="Help" className="mt-m">
+      <ul className="flex flex-wrap gap-x-m gap-y-s">
+        {HELP_LINKS.map((link) => (
+          <li key={link.href}>
+            <Link
+              aria-current={link.label === current ? 'page' : undefined}
+              className="aria-[current=page]:text-foreground"
+              href={link.href}
+              variant="meta"
+            >
+              {link.label}
+            </Link>
+          </li>
+        ))}
+        <li>
+          <Link href="/shop" variant="meta">
+            Continue shopping
+          </Link>
+        </li>
+      </ul>
+    </nav>
+  )
+}
+
 export function PolicyPage({
   body,
   eyebrow = 'Help',
@@ -42,6 +81,8 @@ export function PolicyPage({
         <PageTitle eyebrow={eyebrow} size="display-l">
           {title}
         </PageTitle>
+
+        <HelpNav current={typeof title === 'string' ? title : undefined} />
 
         {body ? (
           <div className="mt-l">

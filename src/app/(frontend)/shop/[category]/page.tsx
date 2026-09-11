@@ -82,7 +82,6 @@ export default async function ShopCategoryPage({
   return (
     <CatalogPage
       basePath={`/shop/${category.slug}`}
-      eyebrow="Shop"
       lede={category.description}
       params={catalogParams}
       routeCategory={category.slug}

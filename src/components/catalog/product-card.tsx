@@ -143,7 +143,7 @@ export function ProductCard({
             <Badge
               variant={badge.tone}
               className={cn(
-                'absolute left-2 top-2 bg-canvas/85 backdrop-blur-[2px]',
+                'absolute left-2 top-2 bg-canvas/90',
                 /* `muted` loses its rule, so it needs the ground to stay legible over a photograph. */
                 badge.tone === 'muted' && 'border-border',
               )}
@@ -206,7 +206,7 @@ export function ProductCard({
       */}
       {showWishlist ? (
         <WishlistButton
-          className="absolute right-1 top-1 bg-canvas/85 backdrop-blur-[2px]"
+          className="absolute right-1 top-1 bg-canvas/90"
           itemName={card.name}
           productId={card.id}
           savedForCustomer={savedForCustomer}

@@ -145,6 +145,16 @@ export default async function CartPage() {
                   <Link href="/shop" variant="meta">
                     Continue shopping
                   </Link>
+
+                  {/* The two questions a customer asks just before paying, answered one tap away. */}
+                  <div className="flex flex-wrap gap-m">
+                    <Link href="/help/shipping" variant="meta">
+                      Shipping
+                    </Link>
+                    <Link href="/help/returns" variant="meta">
+                      Returns
+                    </Link>
+                  </div>
                 </div>
               </div>
             </div>

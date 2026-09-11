@@ -3,6 +3,7 @@ import type { JournalView } from '@/lib/editorial/read'
 import { ProductGrid } from '@/components/catalog/product-grid'
 import { CATALOG_IMAGE_SIZES } from '@/lib/catalog/sizes'
 import { Prose } from '@/components/editorial/prose'
+import { PageBreadcrumb } from '@/components/layout/page-breadcrumb'
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section, SectionHeading } from '@/components/layout/section'
@@ -51,6 +52,15 @@ export function JournalArticlePage({ article }: { article: JournalView }) {
 
       <Section spacing="tight">
         <PageContainer width="narrow">
+          {/* Phase 35 (P35-18). The way back to the journal, before the article begins. */}
+          <PageBreadcrumb
+            className="mb-s"
+            items={[
+              { name: 'Journal', path: '/journal' },
+              { name: article.title, path: article.href },
+            ]}
+          />
+
           <PageTitle eyebrow={article.category ?? 'Journal'} size="display-l">
             {article.title}
           </PageTitle>

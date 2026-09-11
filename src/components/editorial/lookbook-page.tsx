@@ -41,12 +41,28 @@ export function LookbookPage({ lookbook }: { lookbook: LookbookView }) {
     <>
       <Section spacing="tight">
         <PageContainer>
-          <PageTitle eyebrow={lookbook.season ?? 'Lookbook'} size="display-l">
+          <PageTitle
+            eyebrow={
+              lookbook.season && lookbook.season !== lookbook.title ? lookbook.season : 'Lookbook'
+            }
+            size="display-l"
+          >
             {lookbook.title}
           </PageTitle>
 
           {lookbook.intro ? (
             <Prose className="mt-m max-w-measure" tone="lede" value={lookbook.intro} />
+          ) : null}
+
+          {/* P35-02: the cover was chosen in the admin and shown only on the index card. */}
+          {lookbook.cover ? (
+            <div className="mt-l">
+              <MediaImage
+                context="editorial"
+                media={lookbook.cover}
+                sizes={HOME_IMAGE_SIZES.shopTheLook}
+              />
+            </div>
           ) : null}
         </PageContainer>
       </Section>

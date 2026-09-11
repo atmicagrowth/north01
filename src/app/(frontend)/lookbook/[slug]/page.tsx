@@ -32,7 +32,11 @@ export async function generateMetadata({
     image: lookbook.cover ?? lookbook.chapters[0]?.heroImage ?? null,
     path: `/lookbook/${slug}`,
     seo: lookbook.seo,
-    title: lookbook.season ? `${lookbook.title} — ${lookbook.season}` : lookbook.title,
+    /* P35-33: "AW26 — AW26" when the season is the title. */
+    title:
+      lookbook.season && lookbook.season !== lookbook.title
+        ? `${lookbook.title} — ${lookbook.season}`
+        : lookbook.title,
   })
 }
 

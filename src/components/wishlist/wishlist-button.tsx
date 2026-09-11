@@ -48,7 +48,7 @@ import {
  * ### `aria-pressed`, not a changed label
  *
  * The state lives on the control rather than in its accessible name, so a screen reader announces
- * *"Save for later, pressed"* rather than a name that changes under the cursor. `IconButton` requires
+ * *"Add to wishlist, pressed"* rather than a name that changes under the cursor. `IconButton` requires
  * a `label` precisely because an icon is not a name.
  */
 

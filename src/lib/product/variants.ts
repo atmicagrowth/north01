@@ -189,6 +189,14 @@ export function resolveVariant(
  * selection, and `invalidSelection` says the URL asked for something that is not there.
  *
  * That asymmetry is deliberate. A colour is a way of looking at the product; a size is a commitment.
+ *
+ * ### The one exception: a product made in one size — Phase 35 (P35-31)
+ *
+ * When the product has exactly **one** size, no size was asked for, and that size is made in the
+ * selected colour, it is selected. There is no choice to get wrong: a cap in ONE SIZE asked the
+ * customer to "choose" from a row of one before Add to bag would wake up. An explicitly requested
+ * size that does not exist still resolves to nothing, and a size not made in this colour is still
+ * never selected, so the rule above holds everywhere there is more than one answer.
  */
 export function buildVariantMatrix(
   variants: SelectableVariant[],
@@ -277,7 +285,10 @@ export function buildVariantMatrix(
     (entry) => entry.value.toLowerCase() === requestedSize?.toLowerCase(),
   )
 
-  const selectedSize = matchSize?.value ?? null
+  /* A row of one is not a choice — see the docblock's exception. Never for a requested size. */
+  const onlySize = sizes.length === 1 && !sizes[0]?.missing ? sizes[0].value : null
+
+  const selectedSize = matchSize?.value ?? (requestedSize === null ? onlySize : null)
 
   const selectedVariant =
     selectedColor && selectedSize ? byCombination.get(key(selectedColor, selectedSize)) : undefined
@@ -297,8 +308,8 @@ export function buildVariantMatrix(
      * of why.
      *
      * The third clause states the rule the other two were approximating: they asked for a specific
-     * combination and it does not exist. It cannot fire when no size was requested, because
-     * `selectedSize` is `null` until one is.
+     * combination and it does not exist. It cannot fire when no size was requested — the clause
+     * checks `requestedSize` — so a one-size product's automatic selection never reads as invalid.
      */
     invalidSelection:
       (requestedColor !== null && matchColor === undefined) ||
@@ -347,6 +358,43 @@ export function priceRangeForColor(
   }
 
   return high > low ? `From ${label}` : label
+}
+
+/**
+ * The struck-through former price shown before a size is chosen, or `null` — Phase 35 (P35-12).
+ *
+ * `compareAtLabel` exists only on a *resolved* variant, so until a size was picked a product on sale
+ * looked full price. This answers the same question for the **selected colour**, with the rule
+ * `resolveVariant` applies: a compare-at counts only when it is strictly greater than that variant's
+ * own price, on minor units.
+ *
+ * It is shown only when every such saving in the colour quotes the **same** former price. Two
+ * different ones would need a range of former prices, which is a claim nobody reads correctly, so
+ * the label waits for a size instead.
+ */
+export function compareAtForColor(
+  variants: SelectableVariant[],
+  color: null | string,
+  currency: CurrencyCode,
+  locale: string,
+): null | string {
+  const former = new Set(
+    variants
+      .filter(
+        (variant) =>
+          isOffered(variant) &&
+          (color === null || text(variant.color) === color) &&
+          isMinor(variant.compareAtPriceMinor) &&
+          variant.compareAtPriceMinor > (variant.priceMinor as number),
+      )
+      .map((variant) => variant.compareAtPriceMinor as number),
+  )
+
+  if (former.size !== 1) {
+    return null
+  }
+
+  return formatMinorUnits([...former][0] as number, currency, locale)
 }
 
 /**

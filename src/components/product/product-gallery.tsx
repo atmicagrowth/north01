@@ -91,7 +91,20 @@ export function ProductGallery({
   }
 
   return (
-    <div className="flex flex-col gap-m" data-slot="product-gallery">
+    /*
+     * **Phase 35 (P35-30): below `lg` the gallery is at most 52svh wide, centred.** A full-width 4:5
+     * frame on a phone is 125% of the screen's width tall, so the name, the price and Add to bag
+     * began below the fold. Capping the width caps the height at 65svh.
+     *
+     * The cap is on the whole gallery rather than on each frame. The swipe scroller works out which
+     * photograph is showing by dividing `scrollLeft` by its own width, which is only right while a
+     * frame and the scroller are the same width — a narrower frame would put the next photograph in
+     * view and the thumbnails out of step.
+     */
+    <div
+      className="flex flex-col gap-m max-lg:mx-auto max-lg:w-[min(100%,52svh)]"
+      data-slot="product-gallery"
+    >
       <div
         aria-label={`${alt} — photographs`}
         className={cn(

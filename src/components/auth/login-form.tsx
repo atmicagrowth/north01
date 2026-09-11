@@ -31,7 +31,7 @@ export function LoginForm({ next }: { next?: string }) {
   const [state, action, pending] = useActionState(login, initialAuthFormState)
 
   return (
-    <form action={action} className="flex flex-col gap-6" noValidate>
+    <form action={action} className="flex flex-col gap-m" noValidate>
       {next ? <input type="hidden" name="next" value={next} /> : null}
 
       <FormStatus state={state} />

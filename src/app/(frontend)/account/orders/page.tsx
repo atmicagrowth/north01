@@ -39,7 +39,7 @@ export default async function AccountOrdersPage() {
       </PageTitle>
 
       {orders.length === 0 ? (
-        <div className="flex flex-col items-start gap-s border-t border-border pt-6">
+        <div className="flex flex-col items-start gap-s border-t border-border pt-m">
           <p className="font-sans text-body text-foreground">No orders yet.</p>
           <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
             Anything you buy will appear here, with its status and what you paid.
@@ -53,7 +53,7 @@ export default async function AccountOrdersPage() {
           {orders.map((order) => (
             <li key={order.id}>
               <Link
-                className="flex flex-wrap items-baseline justify-between gap-s border-b border-border py-5"
+                className="flex flex-wrap items-baseline justify-between gap-s border-b border-border py-m"
                 href={`/account/orders/${encodeURIComponent(order.orderNumber)}`}
                 variant="unstyled"
               >

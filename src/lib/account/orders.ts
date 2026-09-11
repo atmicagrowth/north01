@@ -57,6 +57,7 @@ export type AccountOrderDetail = AccountOrderSummary & {
   shipping: null | string
   shippingAddress: null | Record<string, unknown>
   shippingMethodLabel: null | string
+  shippingEstimate: null | string
   statusDetail: string
   subtotal: null | string
   tax: null | string
@@ -157,6 +158,7 @@ export async function readCustomerOrder(
         ? (order.shippingAddress as Record<string, unknown>)
         : null,
     shippingMethodLabel: text(order.shippingMethodLabel),
+    shippingEstimate: text(order.shippingEstimate),
     statusDetail: DISPLAY_STATUS_COPY[summary.status].detail,
     subtotal: formatMinorUnits(order.subtotalMinor, currency as never, locale),
     tax: order.taxMinor ? formatMinorUnits(order.taxMinor, currency as never, locale) : null,

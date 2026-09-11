@@ -71,7 +71,7 @@ export default async function AccountOrderPage({ params }: { params: Promise<{ o
 
       {/* §18.1c stores the carrier and the tracking number; this is where a customer looks for them. */}
       {order.trackingNumber ? (
-        <div className="flex flex-col gap-1 border-t border-border pt-6">
+        <div className="flex flex-col gap-1 border-t border-border pt-m">
           <span className="font-sans text-micro uppercase text-foreground-muted">Tracking</span>
           <span className="font-sans text-body-sm">
             {order.carrier ? `${order.carrier} · ` : ''}
@@ -92,7 +92,7 @@ export default async function AccountOrderPage({ params }: { params: Promise<{ o
         <ul>
           {order.lines.map((line, index) => (
             <li
-              className="flex flex-wrap items-baseline justify-between gap-s border-b border-border py-5"
+              className="flex flex-wrap items-baseline justify-between gap-s border-b border-border py-m"
               key={`${line.sku}-${index}`}
             >
               <span className="flex flex-col gap-1">
@@ -116,6 +116,10 @@ export default async function AccountOrderPage({ params }: { params: Promise<{ o
         <Row label="Subtotal" value={order.subtotal} />
         <Row label="Discount" value={order.discount} />
         <Row label={order.shippingMethodLabel ?? 'Delivery'} value={order.shipping} />
+        {/* P35-20: what checkout promised, still visible after payment. */}
+        {order.shippingEstimate ? (
+          <Row label="Estimated delivery" value={order.shippingEstimate} />
+        ) : null}
         <Row label="Tax" value={order.tax} />
         <Row emphasis label="Total" value={order.total} />
       </dl>

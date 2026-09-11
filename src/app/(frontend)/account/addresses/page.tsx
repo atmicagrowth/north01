@@ -50,7 +50,7 @@ export default async function AccountAddressesPage() {
       </PageTitle>
 
       {docs.length === 0 ? (
-        <p className="max-w-measure border-t border-border pt-6 font-sans text-body-sm text-foreground-muted">
+        <p className="max-w-measure border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
           No saved addresses yet. Anything you save here is offered at checkout; the address on a
           past order stays exactly as it was on the day.
         </p>
@@ -58,7 +58,7 @@ export default async function AccountAddressesPage() {
         <ul className="flex flex-col border-t border-border">
           {docs.map((address) => (
             <li
-              className="flex flex-wrap items-start justify-between gap-s border-b border-border py-5"
+              className="flex flex-wrap items-start justify-between gap-s border-b border-border py-m"
               key={address.id}
             >
               <address className="font-sans text-body-sm not-italic text-foreground">
@@ -86,7 +86,7 @@ export default async function AccountAddressesPage() {
         </ul>
       )}
 
-      <section className="flex flex-col gap-m border-t border-border pt-6">
+      <section className="flex flex-col gap-m border-t border-border pt-m">
         <h2 className="font-sans text-meta uppercase text-foreground-muted">Add an address</h2>
         <AddAddressForm />
       </section>

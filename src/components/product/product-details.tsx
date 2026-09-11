@@ -6,6 +6,7 @@ import {
   AccordionTrigger,
 } from '@/components/ui/accordion'
 import { SizeGuideDialog } from '@/components/product/size-guide-dialog'
+import { Link } from '@/components/ui/link'
 import type { Product, SizeGuide } from '@/payload-types'
 
 /**
@@ -135,6 +136,16 @@ export function ProductDetails({
         <div className="flex flex-col gap-m">
           {hasProse(shippingPolicy) ? <Prose value={shippingPolicy} /> : null}
           {hasProse(returnsPolicy) ? <Prose value={returnsPolicy} /> : null}
+
+          {/* The same fields, on their own pages — for the customer who wants the whole policy. */}
+          <div className="flex flex-wrap gap-m">
+            <Link href="/help/shipping" variant="meta">
+              Shipping
+            </Link>
+            <Link href="/help/returns" variant="meta">
+              Returns
+            </Link>
+          </div>
         </div>
       ) : null,
       id: 'shipping',

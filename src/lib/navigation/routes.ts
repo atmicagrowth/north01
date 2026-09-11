@@ -113,3 +113,65 @@ export function isExternalHref(href: string): boolean {
 export function isInternalHref(href: string): boolean {
   return isSameSitePath(href)
 }
+
+/**
+ * **Every page this application renders**, as path patterns — `*` is one dynamic segment. Phase 35,
+ * audit P35-01.
+ *
+ * Production's Navigation global linked `/about`, `/contact` and `/help` — three 404s in the header
+ * and footer of every page — because a URL typed into the admin is checked for *shape*, never for
+ * whether a page answers it. `verify:shell` catches that for the seed and the fallback; it cannot see
+ * a production database. So `resolveLink` checks here too, and a link to a page that does not exist
+ * is dropped rather than rendered.
+ *
+ * A list rather than a filesystem walk, because a deployed function has no `src/app` to walk.
+ * `tests/unit/navigation-routes.test.ts` walks it in CI and fails when the two disagree — so a new
+ * page that is not added here is a red build, not a silently missing link.
+ */
+export const PAGE_ROUTE_PATTERNS: readonly string[] = [
+  '/',
+  '/account',
+  '/account/addresses',
+  '/account/orders',
+  '/account/orders/*',
+  '/account/settings',
+  '/account/wishlist',
+  '/cart',
+  '/checkout',
+  '/checkout/cancelled',
+  '/checkout/success',
+  '/collections',
+  '/collections/*',
+  '/design-system',
+  '/edit',
+  '/edit/*',
+  '/forgot-password',
+  '/help/faq',
+  '/help/returns',
+  '/help/shipping',
+  '/journal',
+  '/journal/*',
+  '/login',
+  '/lookbook',
+  '/lookbook/*',
+  '/product/*',
+  '/register',
+  '/reset-password',
+  '/search',
+  '/shop',
+  '/shop/*',
+]
+
+/** Whether an internal href lands on a page. The query and fragment are not part of the route. */
+export function isRoutablePath(href: string): boolean {
+  const segments = (href.split(/[?#]/)[0] ?? '').split('/').filter(Boolean)
+
+  return PAGE_ROUTE_PATTERNS.some((pattern) => {
+    const parts = pattern.split('/').filter(Boolean)
+
+    return (
+      parts.length === segments.length &&
+      parts.every((part, index) => part === '*' || part === segments[index])
+    )
+  })
+}

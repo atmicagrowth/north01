@@ -25,7 +25,7 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <form action={action} className="flex flex-col gap-6" noValidate>
+    <form action={action} className="flex flex-col gap-m" noValidate>
       <FormStatus state={state} />
 
       <Field

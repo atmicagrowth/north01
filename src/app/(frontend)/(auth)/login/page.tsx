@@ -60,7 +60,7 @@ export default async function LoginPage({
 
       <LoginForm next={next ?? undefined} />
 
-      <div className="flex flex-col gap-2 border-t border-border pt-6 font-sans text-body-sm text-foreground-muted">
+      <div className="flex flex-col gap-2 border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
         <p>
           <Link href="/forgot-password">Forgotten your password?</Link>
         </p>

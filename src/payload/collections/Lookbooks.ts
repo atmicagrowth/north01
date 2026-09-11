@@ -1,4 +1,4 @@
-import type { CollectionConfig } from 'payload'
+import type { ArrayFieldValidation, CollectionConfig } from 'payload'
 
 import { isAdmin, isStaff, publishedOnly } from '../access'
 import { hotspotFields } from '../fields/hotspot'
@@ -156,6 +156,20 @@ export const Lookbooks: CollectionConfig = {
                       'Shoppable points on the chapter hero image. Positions are percentages, so they survive every crop and breakpoint.',
                   },
                   fields: hotspotFields(),
+                  /*
+                   * P35-02: hotspots are positions on the chapter's hero image, and a chapter with
+                   * hotspots and no image rendered neither them nor "Add the look" — silently. A
+                   * custom `validate` replaces Payload's own, so `maxRows` is enforced here too.
+                   */
+                  validate: ((value, { siblingData }) => {
+                    const rows = Array.isArray(value) ? value.length : 0
+
+                    if (rows > 8) return 'At most eight hotspots.'
+
+                    return rows > 0 && !(siblingData as { heroImage?: unknown }).heroImage
+                      ? 'Add a hero image first — hotspots are positions on it.'
+                      : true
+                  }) satisfies ArrayFieldValidation,
                 },
               ],
             },

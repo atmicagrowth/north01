@@ -330,6 +330,7 @@ async function upsertPendingOrder(
     shippingAddress: address,
     shippingMethodCode: rate.id,
     shippingMethodLabel: rate.name,
+    shippingEstimate: rate.estimate,
     shippingMinor: totals.shippingMinor,
     subtotalMinor: totals.subtotalMinor,
     taxMinor: totals.taxMinor,

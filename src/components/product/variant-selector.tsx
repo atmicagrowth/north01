@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, useRef, type ReactNode } from 'react'
+import { useId, useOptimistic, useRef, useTransition, type ReactNode } from 'react'
 
 import { useUrlState } from '@/components/url-state'
 import { cn } from '@/lib/cn'
@@ -49,6 +49,15 @@ import type { ColorOption, SizeOption } from '@/lib/product/variants'
  * So arrows move focus, and Space or Enter commits — the manual-activation variant ARIA describes
  * for controls whose selection has a real cost. `aria-checked` therefore tracks the **selection**,
  * never the focus, which is what a screen reader needs it to mean.
+ *
+ * ### The chosen size shows at once — Phase 35 (P35-16)
+ *
+ * The round-trip used to be visible: a tapped size stayed unselected for about a second, until the
+ * server answered, and a customer reasonably tapped it again. The size is now held **optimistically**
+ * for the length of the transition that writes it, and the server's answer replaces it when it
+ * lands. That is display only. Which sizes can be chosen is still the server's matrix, the click is
+ * still refused for an unavailable size, and the variant Add to bag submits is still the one the
+ * server resolved — so nothing the browser guessed can be bought.
  */
 export function VariantSelector({
   colors,
@@ -61,17 +70,26 @@ export function VariantSelector({
   selectedSize: null | string
   sizes: SizeOption[]
 }) {
-  const [, commit] = useUrlState(PRODUCT_PARSERS)
+  const [, commit, urlPending] = useUrlState(PRODUCT_PARSERS)
+  const [selecting, startTransition] = useTransition()
+  const [shownSize, setShownSize] = useOptimistic(selectedSize)
 
   const colorLabelId = useId()
   const sizeLabelId = useId()
+
+  /*
+   * The one prompt on the page for a size, and only when choosing one would do something — a colour
+   * with nothing in stock has nothing to choose, and `product-page.tsx` says "Sold out" instead.
+   * The line is always rendered so the row below does not move when the prompt clears.
+   */
+  const prompt = shownSize === null && sizes.some((size) => size.available) ? 'Choose a size.' : ''
 
   return (
     <div className="flex flex-col gap-l" data-slot="variant-selector">
       {colors.length > 0 ? (
         <div>
           <p className="mb-s font-sans text-meta uppercase text-foreground-muted" id={colorLabelId}>
-            Colour
+            Color
             {selectedColor ? <span className="text-foreground"> — {selectedColor}</span> : null}
           </p>
 
@@ -84,7 +102,10 @@ export function VariantSelector({
                * out" message for a combination they never chose. §13.1c's example is exactly this
                * case: Black / M exists, Cream / M does not.
                */
-              void commit({ color: value, size: null })
+              startTransition(async () => {
+                setShownSize(null)
+                await commit({ color: value, size: null })
+              })
             }}
             options={colors.map((color) => ({
               className: cn(
@@ -104,7 +125,13 @@ export function VariantSelector({
                     />
                   ) : null}
                   {color.value}
-                  {color.available ? null : <span className="sr-only"> — sold out</span>}
+                  {/*
+                    Visible since Phase 35 (P35-17). It was `sr-only`, so a sighted customer learned
+                    a colourway was gone only by selecting it and finding every size struck through.
+                  */}
+                  {color.available ? null : (
+                    <span className="text-foreground-muted"> · Sold out</span>
+                  )}
                 </>
               ),
               /* A colour with no stock anywhere is still selectable — it is how you look at it. */
@@ -123,15 +150,19 @@ export function VariantSelector({
           </p>
 
           <RadioRow
+            busy={urlPending || selecting}
             labelledBy={sizeLabelId}
             onSelect={(value) => {
-              void commit({ size: value })
+              startTransition(async () => {
+                setShownSize(value)
+                await commit({ size: value })
+              })
             }}
             options={sizes.map((size) => ({
               className: cn(
                 'h-10 min-w-12 rounded-sm border px-3',
                 'font-sans text-body-sm transition-colors duration-(--duration-fast)',
-                size.value === selectedSize
+                size.value === shownSize
                   ? 'border-border-strong text-foreground'
                   : 'border-border-control text-foreground-muted hover:border-border-strong',
                 !size.available &&
@@ -152,8 +183,12 @@ export function VariantSelector({
               disabled: !size.available,
               value: size.value,
             }))}
-            selected={selectedSize}
+            selected={shownSize}
           />
+
+          <p className="mt-s min-h-[1.375rem] font-sans text-body-sm text-foreground-muted">
+            {prompt}
+          </p>
         </div>
       ) : null}
     </div>
@@ -177,11 +212,14 @@ type RowOption = {
  * to carry.
  */
 function RadioRow({
+  busy = false,
   labelledBy,
   onSelect,
   options,
   selected,
 }: {
+  /** A selection is on its way to the server; the checked option is provisional until it answers. */
+  busy?: boolean
   labelledBy: string
   onSelect: (value: string) => void
   options: RowOption[]
@@ -192,6 +230,7 @@ function RadioRow({
 
   return (
     <div
+      aria-busy={busy || undefined}
       aria-labelledby={labelledBy}
       className="flex flex-wrap gap-s"
       onKeyDown={(event) => {

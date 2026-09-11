@@ -208,7 +208,10 @@ export default async function CheckoutSuccessPage({
             {order.shippingMethodLabel ? (
               <div className="flex items-baseline justify-between">
                 <dt className="text-foreground-muted">Delivery</dt>
-                <dd className="text-foreground">{order.shippingMethodLabel}</dd>
+                <dd className="text-foreground">
+                  {order.shippingMethodLabel}
+                  {order.shippingEstimate ? ` · ${order.shippingEstimate}` : ''}
+                </dd>
               </div>
             ) : null}
           </dl>

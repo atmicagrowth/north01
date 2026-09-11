@@ -33,14 +33,14 @@ export default async function AccountPage() {
       </PageTitle>
 
       <dl className="grid gap-px border-t border-border text-body-sm sm:grid-cols-2">
-        <div className="flex flex-col gap-1 border-b border-border py-5">
+        <div className="flex flex-col gap-1 border-b border-border py-m">
           <dt className="font-sans text-micro uppercase text-foreground-muted">Name</dt>
           <dd>
             {customer.firstName} {customer.lastName}
           </dd>
         </div>
 
-        <div className="flex flex-col gap-1 border-b border-border py-5">
+        <div className="flex flex-col gap-1 border-b border-border py-m">
           <dt className="font-sans text-micro uppercase text-foreground-muted">Email</dt>
           <dd className="break-words">{customer.email}</dd>
         </div>
@@ -49,9 +49,12 @@ export default async function AccountPage() {
       {/*
         Phase 20 built the screens this paragraph used to apologise for, so the paragraph is gone
         rather than reworded. The navigation above is the honest version of what it was trying to say.
+
+        No rule above the button: the last row of the list already draws one, and a second hairline
+        a gap below it read as a double rule.
       */}
 
-      <div className="border-t border-border pt-6">
+      <div>
         <SignOutButton />
       </div>
     </div>

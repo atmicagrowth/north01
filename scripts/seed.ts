@@ -691,18 +691,12 @@ try {
           description: rich(spec.description),
           products: spec.products.map((slug) => productIds.get(slug)).filter(Boolean),
           status: 'published',
-          body: [
-            {
-              blockType: 'editorial',
-              eyebrow: spec.title,
-              heading: spec.description,
-              body: rich(
-                'Photography arrives in Phase 8. Until then this page is composed from type alone, which is a fair test of the hierarchy.',
-              ),
-              width: 'narrow',
-              cta: { kind: 'url', label: 'Shop all', href: '/shop' },
-            },
-          ],
+          /*
+           * Empty, and deliberately — Phase 35 (P35-07). This was a block saying "Photography arrives
+           * in Phase 8", live on every collection page long after Phase 8. The description is already
+           * the page's lede, and a block that repeats it is not content.
+           */
+          body: [],
         },
       }),
     )
@@ -818,8 +812,12 @@ try {
   const campaignMedia = byRole('campaign')
   const editorialMedia = byRole('editorial')
 
-  const pick = (index: number): number | undefined =>
-    editorialMedia[index]?.id ?? mediaDocs[index]?.id
+  /*
+   * Editorial images only — Phase 35 (P35-09). This fell back to *any* media, so on a database with
+   * no photography the homepage's Shop the Look sat on a product fabric swatch. With no editorial
+   * image the block is omitted; `import:media` composes the hotspot blocks on real photographs.
+   */
+  const pick = (index: number): number | undefined => editorialMedia[index]?.id
 
   /** Only compose a media block when there is genuinely something to put in it. */
   const withMedia = <T>(image: number | undefined, block: (id: number) => T): T[] =>
@@ -890,39 +888,16 @@ try {
         {
           title: 'Headland',
           editorialText: rich('Wind, and clothing that does not argue with it.'),
-          hotspots: [
-            {
-              product: productIds.get('field-jacket'),
-              label: 'Field Jacket',
-              xDesktop: 42,
-              yDesktop: 38,
-              xMobile: 50,
-              yMobile: 44,
-              markerTone: 'light' as const,
-            },
-            {
-              product: productIds.get('pleated-trouser'),
-              xDesktop: 46,
-              yDesktop: 72,
-              xMobile: 52,
-              yMobile: 78,
-              markerTone: 'light',
-            },
-          ],
+          /*
+           * P35-02: no hotspots without the picture they point into. `import:media` sets each chapter's
+           * hero photograph and its hotspots together, because a position means nothing on another image.
+           */
+          hotspots: [],
         },
         {
           title: 'Inland',
           editorialText: rich('Layers, subtracted one at a time.'),
-          hotspots: [
-            {
-              product: productIds.get('merino-crew'),
-              xDesktop: 55,
-              yDesktop: 40,
-              xMobile: 50,
-              yMobile: 46,
-              markerTone: 'dark',
-            },
-          ],
+          hotspots: [],
         },
       ],
     },
@@ -936,6 +911,11 @@ try {
       category: 'craft',
       author: 'Editorial',
       excerpt: 'Why a slower loom makes a better edge, and what that costs.',
+      body: [
+        'Selvedge is the edge a shuttle loom leaves when the weft turns back on itself at the end of every pass. It is finished by the weaving rather than by a machine afterwards, which is why it does not fray.',
+        'Shuttle looms are narrow and slow. The same length of cloth takes longer to weave than on a modern loom, and the narrower width means more seams in a pattern. That is where the cost goes.',
+        'What it buys is an edge that shows on a turned-up hem, and a denim that wears in rather than out.',
+      ],
       related: ['selvedge-denim'],
     },
     {
@@ -944,6 +924,11 @@ try {
       category: 'style',
       author: 'Editorial',
       excerpt: 'A wardrobe is not a collection. It is a rotation.',
+      body: [
+        'Most wardrobes are larger than the number of things actually worn. The rest waits for an occasion that rarely comes.',
+        'A rotation is the opposite: a small number of pieces that go with each other, worn often enough that each one earns its place. A tee, an oxford shirt and a merino crew cover more days than a drawer of things bought for one.',
+        'Buying fewer things is not the same as buying cheaper things. It usually means buying each one once.',
+      ],
       related: ['cotton-tee', 'oxford-shirt', 'merino-crew'],
     },
     {
@@ -952,6 +937,11 @@ try {
       category: 'places',
       author: 'Editorial',
       excerpt: 'Three days, one bag, and the argument for packing less than you think.',
+      body: [
+        'Three days is long enough to need a change of clothes and short enough that one bag should hold them.',
+        'The answer is layers rather than outfits: a jacket that handles wind and rain, something warm underneath, and a scarf that takes up almost no room. What you wear on the journey is half the luggage.',
+        'Packing less than you think is rarely a mistake. Coming home with clean clothes still folded usually is.',
+      ],
       related: ['field-jacket', 'cashmere-scarf'],
     },
   ]
@@ -970,10 +960,8 @@ try {
         category: spec.category,
         author: spec.author,
         excerpt: spec.excerpt,
-        body: rich(
-          spec.excerpt,
-          'Demo copy. The Journal exists so editorial has somewhere to go that is not a product page, and so a product page has somewhere to send a reader who is not ready to buy.',
-        ),
+        /* P35-07: each article's own words — this was the excerpt again, then "Demo copy." */
+        body: rich(...spec.body),
         relatedProducts: spec.related.map((slug) => productIds.get(slug)).filter(Boolean),
         status: 'published',
       },
@@ -1264,10 +1252,8 @@ try {
           ],
         },
       ],
-      social: [
-        { platform: 'instagram', url: 'https://instagram.com/north01' },
-        { platform: 'pinterest', url: 'https://pinterest.com/north01' },
-      ],
+      /* P35-27: no handle the owner has confirmed exists — the footer shows none until one is added. */
+      social: [],
     },
     depth: 0,
   })
@@ -1337,12 +1323,13 @@ try {
           eyebrow: 'AW26',
           heading: 'Cloth chosen for weather',
           body: rich(
-            'The overshirt is a twelve-ounce wool, milled in Yorkshire and cut long enough to sit over a crew. It is the piece the rest of the season is built around.',
+            'The overshirt is a twelve-ounce wool, cut long enough to sit over a crew. It is the piece the rest of the season is built around.',
           ),
+          /* P35-26: a block about the overshirt sends a reader to the overshirt, not to an article on denim. */
           cta: {
             kind: 'reference' as const,
-            label: 'Read the journal',
-            reference: { relationTo: 'journal' as const, value: journalIds.get('on-selvedge') },
+            label: 'Shop the overshirt',
+            reference: { relationTo: 'products' as const, value: productIds.get('wool-overshirt') },
           },
         })),
         ...withMedia(pick(1), (image) => ({
@@ -1418,7 +1405,8 @@ try {
           items: [
             { text: 'Made in small runs' },
             { text: 'Thirty-day returns' },
-            { text: 'Carbon-neutral delivery' },
+            /* P35-08: a claim the shop backs — `freeShippingThresholdMinor` — not an unbacked carbon one. */
+            { text: 'Free delivery over $150' },
           ],
         },
       ],

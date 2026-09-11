@@ -11,7 +11,7 @@ import { readWishlist } from '@/lib/wishlist/read'
 import { WISHLIST_EMPTY_COPY } from '@/lib/wishlist/rules'
 import { privateMetadata } from '@/lib/seo/metadata'
 
-export const metadata: Metadata = privateMetadata('Saved items')
+export const metadata: Metadata = privateMetadata('Wishlist')
 
 /**
  * **`/account/wishlist`** — plan §20.1d, and the destination the header's heart has pointed at since
@@ -43,11 +43,11 @@ export default async function AccountWishlistPage() {
   return (
     <div className="flex flex-col gap-l">
       <PageTitle eyebrow="Account" size="display-l">
-        Saved
+        Wishlist
       </PageTitle>
 
       {cards.length === 0 ? (
-        <div className="flex flex-col items-start gap-s border-t border-border pt-6">
+        <div className="flex flex-col items-start gap-s border-t border-border pt-m">
           <p className="font-sans text-body text-foreground">{WISHLIST_EMPTY_COPY.title}</p>
           <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
             {WISHLIST_EMPTY_COPY.body}

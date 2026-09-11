@@ -18,6 +18,7 @@ import {
   searchSuggestionIds,
 } from './algolia'
 import { COLOR_FAMILY_LABELS, COLOR_FAMILY_OPTIONS } from './colors'
+import { compareSizeEntries } from './size-order'
 import {
   CATALOG_PAGE_SIZE,
   CATALOG_SORT_FIELDS,
@@ -202,6 +203,11 @@ async function readSettings(payload: Payload): Promise<CatalogSettings> {
  * has the identical problem, so it takes the identical answer: each distinct size is ranked by the
  * **lowest** `sizeSortOrder` any variant gives it, so one mis-keyed row cannot push XS to the end of
  * the list.
+ *
+ * **Phase 35: that rank is now the tie-breaker, not the order.** Each product numbers its own run,
+ * so across the catalogue the numbers interleave scales (`ONE SIZE / XS / 30 / S …`).
+ * `compareSizeEntries` sorts by scale and position first and falls back to the rank only for sizes
+ * it does not recognise — see `size-order.ts`, which also records why category scoping is deferred.
  */
 function sizeOptions(
   variants: { size?: null | string; sizeSortOrder?: null | number }[],
@@ -222,7 +228,7 @@ function sizeOptions(
   }
 
   return [...ranks.entries()]
-    .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+    .sort(compareSizeEntries)
     .map(([size]) => ({ label: size, value: size }))
 }
 

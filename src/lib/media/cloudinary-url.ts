@@ -117,6 +117,18 @@ export const MEDIA_CONTEXTS = {
     crop: 'limit',
     widths: [640, 768, 1024, 1280, 1920],
   },
+  /**
+   * The cover on an index card — `/journal`, `/collections`, `/edit`. One fixed 3:2 landscape frame,
+   * so a row of cards reads as a row rather than as whatever shape each photographer delivered.
+   *
+   * **Cropped, and safe to be**, because a card carries no hotspots — the reason `editorial` above
+   * must not crop. Any surface that places markers on the image stays on `editorial`.
+   */
+  editorialCard: {
+    aspectRatio: 3 / 2,
+    crop: 'fill',
+    widths: [375, 430, 640, 768, 1024, 1280],
+  },
   /** Square, small, and used wherever an image refers to something rather than being the thing. */
   thumbnail: {
     aspectRatio: 1,

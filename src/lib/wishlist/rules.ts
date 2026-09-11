@@ -192,8 +192,8 @@ export const WISHLIST_COPY = {
       ? '1 saved item moved to your account.'
       : `${count} saved items moved to your account.`,
   removed: 'Removed from your list.',
-  save: 'Save for later',
-  saved: 'Saved',
+  save: 'Add to wishlist',
+  saved: 'In your wishlist',
   /** §20.1a's "move to cart", which cannot pick a size — see WishlistItems on why. */
   sizeNeeded: 'Choose a size to add this to your bag.',
   unavailable: 'This is no longer available.',

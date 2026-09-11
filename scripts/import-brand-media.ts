@@ -272,7 +272,7 @@ const PLACEMENTS: Placement[] = [
   },
   { collection: 'journal', fields: { heroImage: '04_cream_fabric_detail' }, slug: 'on-selvedge' },
 
-  { collection: 'lookbooks', fields: { coverImage: '14_full_body_editorial_male' }, slug: 'aw26' },
+  { collection: 'lookbooks', fields: { coverImage: '00_campaign_hero_panorama' }, slug: 'aw26' },
 ]
 
 const placed: string[] = []
@@ -310,6 +310,108 @@ for (const placement of PLACEMENTS) {
       .join(' ')}`,
   )
 }
+
+/*
+ * **Hotspots, composed on the photograph they point into** — Phase 35, audits P35-02 and P35-09.
+ *
+ * A hotspot is a position on one particular picture. The seed used to write positions with no
+ * picture (the AW26 chapters, which then rendered neither) or on whatever media came first (the
+ * homepage Shop the Look, on a fabric swatch). Here the image and the positions are chosen together,
+ * by eye, against the files in `brand-media/`: `14_` is a full-length figure in a black crew and cream
+ * trousers, `09_` a close portrait in a black shell jacket.
+ */
+const productBySlug = async (slug: string): Promise<number | undefined> =>
+  (
+    await payload.find({
+      collection: 'products',
+      depth: 0,
+      limit: 1,
+      overrideAccess: true,
+      where: { slug: { equals: slug } },
+    })
+  ).docs[0]?.id as number | undefined
+
+const spot = async (
+  slug: string,
+  label: string,
+  x: number,
+  y: number,
+  markerTone: 'dark' | 'light',
+) => {
+  const product = await productBySlug(slug)
+
+  return product === undefined
+    ? []
+    : [{ label, markerTone, product, xDesktop: x, xMobile: x, yDesktop: y, yMobile: y }]
+}
+
+const fullLengthLook = [
+  ...(await spot('merino-crew', 'Merino Crew', 50, 32, 'light')),
+  ...(await spot('pleated-trouser', 'Pleated Trouser', 48, 66, 'dark')),
+]
+
+const { docs: lookbooks } = await payload.find({
+  collection: 'lookbooks',
+  depth: 0,
+  limit: 1,
+  overrideAccess: true,
+  where: { slug: { equals: 'aw26' } },
+})
+
+const aw26 = lookbooks[0]
+
+if (aw26) {
+  const chapterImages: Record<string, { hotspots: unknown[]; image: string }> = {
+    Headland: {
+      hotspots: await spot('field-jacket', 'Field Jacket', 30, 82, 'light'),
+      image: '09_male_black_outerwear',
+    },
+    Inland: { hotspots: fullLengthLook, image: '14_full_body_editorial_male' },
+  }
+
+  await payload.update({
+    collection: 'lookbooks',
+    data: {
+      chapters: (aw26.chapters ?? []).map((chapter) => {
+        const composed = chapterImages[chapter.title]
+
+        return composed
+          ? { ...chapter, heroImage: id(composed.image), hotspots: composed.hotspots }
+          : chapter
+      }),
+    } as never,
+    id: aw26.id,
+    overrideAccess: true,
+  })
+
+  placed.push('lookbooks/aw26  chapters: Headland=09 (1 hotspot), Inland=14 (2 hotspots)')
+}
+
+const homepage = await payload.findGlobal({ depth: 0, overrideAccess: true, slug: 'homepage' })
+const sections = [...((homepage.sections ?? []) as { blockType: string }[])]
+const look = {
+  blockType: 'shopTheLook',
+  heading: 'Shop the look',
+  hotspots: fullLengthLook,
+  image: id('14_full_body_editorial_male'),
+}
+const existingLook = sections.findIndex((section) => section.blockType === 'shopTheLook')
+
+if (existingLook >= 0) {
+  sections[existingLook] = look
+} else {
+  const afterRail = sections.findIndex((section) => section.blockType === 'productRail')
+
+  sections.splice(afterRail >= 0 ? afterRail + 1 : sections.length, 0, look)
+}
+
+await payload.updateGlobal({
+  data: { ...homepage, sections } as never,
+  overrideAccess: true,
+  slug: 'homepage',
+})
+
+placed.push('homepage  shopTheLook=14 (2 hotspots)')
 
 /* The sharing image is the one that has to say the brand's name in a card with no context. */
 const settings = await payload.findGlobal({ slug: 'site-settings', overrideAccess: true })

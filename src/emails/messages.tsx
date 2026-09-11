@@ -56,6 +56,7 @@ export type EmailData = {
     orderNumber: string
     shipping: null | string
     shippingMethodLabel: null | string
+    shippingEstimate?: null | string
     subtotal: null | string
     tax: null | string
     total: string
@@ -165,6 +166,7 @@ function OrderConfirmation({
   lines,
   orderNumber,
   shipping,
+  shippingEstimate,
   shippingMethodLabel,
   subtotal,
   tax,
@@ -226,6 +228,7 @@ function OrderConfirmation({
       {subtotal ? <EmailRow label="Subtotal" value={subtotal} /> : null}
       {discount ? <EmailRow label="Discount" value={discount} /> : null}
       {shipping ? <EmailRow label={shippingMethodLabel ?? 'Delivery'} value={shipping} /> : null}
+      {shippingEstimate ? <EmailRow label="Estimated delivery" value={shippingEstimate} /> : null}
       {tax ? <EmailRow label="Tax" value={tax} /> : null}
       <EmailRow emphasis label="Total" value={total} />
     </EmailShell>

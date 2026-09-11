@@ -29,7 +29,7 @@ export type AccountRoute = {
 export const ACCOUNT_ROUTES: readonly AccountRoute[] = [
   { href: '/account', label: 'Overview' },
   { href: '/account/orders', label: 'Orders' },
-  { href: '/account/wishlist', label: 'Saved' },
+  { href: '/account/wishlist', label: 'Wishlist' },
   { href: '/account/addresses', label: 'Addresses' },
   { href: '/account/settings', label: 'Settings' },
 ]

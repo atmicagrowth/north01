@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 
+import { useShellOverlay } from '@/components/shell/overlay-context'
 import { Button } from '@/components/ui/button'
 import { trackEvent } from '@/lib/analytics/track'
 import { addLookToBagAction } from '@/lib/lookbook/actions'
@@ -28,12 +29,14 @@ import { LOOK_COPY } from '@/lib/lookbook/rules'
  * can act on; *"not available"* is a dead end. `2 items skipped` would be neither, and is exactly the
  * message this avoids.
  *
- * `aria-live="polite"` because the outcome arrives after the press and is the only feedback — the bag
- * itself updates elsewhere on the page.
+ * `aria-live="polite"` because the outcome arrives after the press and says what the bag cannot:
+ * which products were skipped and why. Since Phase 35 the bag drawer also opens when anything was
+ * added, and the notice is still here when it closes.
  */
 export function AddEntireLook({ productIds }: { productIds: number[] }) {
   const [notice, setNotice] = useState<null | string>(null)
   const [pending, start] = useTransition()
+  const { registerTrigger, setOpen } = useShellOverlay()
 
   if (productIds.length === 0) {
     return null
@@ -43,7 +46,9 @@ export function AddEntireLook({ productIds }: { productIds: number[] }) {
     <div className="mt-m flex flex-wrap items-center gap-m">
       <Button
         disabled={pending}
-        onClick={() =>
+        onClick={(event) => {
+          const trigger = event.currentTarget
+
           start(async () => {
             const result = await addLookToBagAction(productIds)
 
@@ -71,8 +76,21 @@ export function AddEntireLook({ productIds }: { productIds: number[] }) {
             }
 
             setNotice(result.notice)
+
+            /*
+             * **Phase 35 (P35-15): the bag opens on the server's yes**, as it does for Add to bag.
+             * Structure §13's *"Add to Bag → Cart drawer"* is not specific to one button, and the
+             * header badge ticking over was the only other sign anything had happened. Nothing
+             * added, nothing opened: a look that was entirely unavailable leaves the notice alone
+             * to explain itself. The pressed button is the trigger, so closing the drawer returns
+             * focus to it — and the notice is still there beside it.
+             */
+            if (result.ok && result.addedProductIds.length > 0) {
+              registerTrigger(trigger)
+              setOpen('cart', true)
+            }
           })
-        }
+        }}
         size="lg"
         type="button"
         variant="secondary"

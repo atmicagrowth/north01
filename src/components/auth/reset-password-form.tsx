@@ -24,7 +24,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
   const [state, action, pending] = useActionState(resetPassword, initialAuthFormState)
 
   return (
-    <form action={action} className="flex flex-col gap-6" noValidate>
+    <form action={action} className="flex flex-col gap-m" noValidate>
       <input type="hidden" name="token" value={token} />
 
       <FormStatus state={state} />

@@ -1700,6 +1700,10 @@ export interface Order {
    */
   shippingMethodLabel?: string | null;
   /**
+   * The estimate shown at checkout — "3–5 business days". A snapshot, like the label.
+   */
+  shippingEstimate?: string | null;
+  /**
    * Frozen at purchase. Empty on a draft order — checkout preflight is what requires it (plan §17.1a, DEV-11).
    */
   shippingAddress?: {
@@ -2872,6 +2876,7 @@ export interface OrdersSelect<T extends boolean = true> {
   discountCode?: T;
   shippingMethodCode?: T;
   shippingMethodLabel?: T;
+  shippingEstimate?: T;
   shippingAddress?:
     | T
     | {

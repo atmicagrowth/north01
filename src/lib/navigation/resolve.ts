@@ -1,4 +1,9 @@
-import { documentHref, isExternalHref, isInternalHref } from '@/lib/navigation/routes'
+import {
+  documentHref,
+  isExternalHref,
+  isInternalHref,
+  isRoutablePath,
+} from '@/lib/navigation/routes'
 import type { Media, Navigation, SiteSetting } from '@/payload-types'
 
 /**
@@ -202,7 +207,8 @@ export function resolveLink(
 
   const href = link.kind === 'reference' ? referenceHref(link.reference) : typedHref(link.href)
 
-  if (!href) {
+  /* Phase 35 (P35-01): an internal link to a page that does not exist is dropped — see `PAGE_ROUTE_PATTERNS`. */
+  if (!href || (!isExternalHref(href) && !isRoutablePath(href))) {
     return null
   }
 

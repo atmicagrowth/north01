@@ -24,12 +24,12 @@ export function RegisterForm({ next }: { next?: string }) {
   const [state, action, pending] = useActionState(register, initialAuthFormState)
 
   return (
-    <form action={action} className="flex flex-col gap-6" noValidate>
+    <form action={action} className="flex flex-col gap-m" noValidate>
       {next ? <input type="hidden" name="next" value={next} /> : null}
 
       <FormStatus state={state} />
 
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid gap-m sm:grid-cols-2">
         <Field
           name="firstName"
           defaultValue={state.values.firstName ?? ''}

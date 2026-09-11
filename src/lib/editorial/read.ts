@@ -165,7 +165,7 @@ export const getCollectionPage = cache(async (slug: string): Promise<CollectionV
      * Resolved from the SAME cards as the grid rather than by a second query, so the two can never
      * disagree about whether something is published.
      */
-    featured: products.slice(0, FEATURED_COUNT),
+    featured: products.length > FEATURED_COUNT ? products.slice(0, FEATURED_COUNT) : [],
     heroMedia: asMedia(collection.heroMedia),
     introMedia: asMedia(collection.introMedia),
     products,

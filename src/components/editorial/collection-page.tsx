@@ -83,9 +83,13 @@ export function CollectionPage({ collection }: { collection: CollectionView }) {
       <EditorialBody sections={collection.body} />
 
       {/*
-        Featured, then everything. The first four of the curated order are shown larger and again in
-        the grid below — that repetition is deliberate: §23.1a asks for both steps, and a customer
-        scrolling past the feature should not have to remember which four they were.
+        Featured, then everything. The first four of the curated order are shown again in the grid
+        below — that repetition is deliberate: §23.1a asks for both steps, and a customer scrolling
+        past the feature should not have to remember which four they were.
+
+        Only when the collection holds MORE than four. At four or fewer, "featured" is the whole
+        collection and the section would be the grid below it printed twice, one after the other, so
+        `read.ts` returns an empty `featured` and this section does not render.
       */}
       {collection.featured.length > 0 ? (
         <Section divider="top" spacing="tight">

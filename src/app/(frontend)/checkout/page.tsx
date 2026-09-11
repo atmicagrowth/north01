@@ -135,7 +135,7 @@ export default async function CheckoutPage() {
                 />
               ) : (
                 <div className="flex flex-col gap-m" data-slot="checkout-unavailable">
-                  <p className="font-display text-heading-s text-foreground">
+                  <p className="font-sans text-heading-s text-foreground">
                     Payment is not connected yet.
                   </p>
 
@@ -155,6 +155,19 @@ export default async function CheckoutPage() {
                   </Button>
                 </div>
               )}
+
+              {/*
+                Beside the form in both states: the delivery and returns terms are what a customer
+                checks last before paying, and leaving checkout to find them costs the bag its place.
+              */}
+              <div className="mt-l flex flex-wrap gap-m">
+                <Link href="/help/shipping" variant="meta">
+                  Shipping
+                </Link>
+                <Link href="/help/returns" variant="meta">
+                  Returns
+                </Link>
+              </div>
             </div>
 
             <div className="lg:col-span-5 lg:pl-l">

@@ -423,7 +423,7 @@ export const SEARCH_COPY: Record<SearchState, { body: string; title: string }> =
     body: 'Try fewer words, or a different spelling. The categories below are a good place to start.',
     title: 'Nothing matched.',
   },
-  idle: { body: 'Search by name, colour, size or category.', title: 'What are you looking for?' },
+  idle: { body: 'Search by name, color, size or category.', title: 'What are you looking for?' },
   loading: { body: 'One moment.', title: 'Looking…' },
   results: { body: '', title: '' },
   stale: {
@@ -453,7 +453,7 @@ export function unavailableCopy(scope: 'filters' | 'search'): { body: string; ti
   return scope === 'search'
     ? SEARCH_COPY.unavailable
     : {
-        body: 'Colour, size and collection filters aren’t available right now. The shop itself is unaffected — browse by category, or clear the filters to see everything.',
+        body: 'Color, size and collection filters aren’t available right now. The shop itself is unaffected — browse by category, or clear the filters to see everything.',
         title: 'Filtering isn’t available right now.',
       }
 }

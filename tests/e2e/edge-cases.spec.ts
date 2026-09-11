@@ -742,7 +742,7 @@ test.describe('§27.1d — the fifteen edge cases the plan enumerates', () => {
     await test.step('open the saved items of an account that has never saved anything', async () => {
       await page.goto(ROUTE.wishlist)
 
-      await expect(page.getByRole('heading', { level: 1, name: 'Saved' })).toBeVisible()
+      await expect(page.getByRole('heading', { level: 1, name: 'Wishlist' })).toBeVisible()
     })
 
     await test.step('the zero state is a sentence and a way out', async () => {

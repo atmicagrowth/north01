@@ -44,7 +44,7 @@ export default async function JournalIndexPage() {
                 <Link className="group block" href={article.href} variant="unstyled">
                   {article.heroImage ? (
                     <MediaImage
-                      context="editorial"
+                      context="editorialCard"
                       imageClassName="transition-opacity duration-(--duration-base) ease-editorial group-hover:opacity-85"
                       media={article.heroImage}
                       sizes={EDITORIAL_GRID_THREE_UP}
@@ -57,7 +57,7 @@ export default async function JournalIndexPage() {
                     </p>
                   ) : null}
 
-                  <p className="mt-1 font-display text-heading-s text-balance">{article.title}</p>
+                  <p className="mt-1 font-display text-heading-m text-balance">{article.title}</p>
 
                   {article.excerpt ? (
                     <p className="mt-1 font-sans text-body-sm text-foreground-muted">

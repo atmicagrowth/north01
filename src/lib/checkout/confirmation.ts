@@ -57,6 +57,7 @@ export type ConfirmationView = {
   orderNumber: string
   paymentStatus: PaymentStatus
   shippingMethodLabel: null | string
+  shippingEstimate: null | string
   totalMinor: number
 }
 
@@ -133,6 +134,7 @@ export async function readOrderForConfirmation(
     orderNumber: order.orderNumber,
     paymentStatus: order.paymentStatus as PaymentStatus,
     shippingMethodLabel: order.shippingMethodLabel ?? null,
+    shippingEstimate: order.shippingEstimate ?? null,
     totalMinor: order.totalMinor,
   }
 }

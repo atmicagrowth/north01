@@ -129,7 +129,7 @@ export function ProductReviews({
               refused — plan §0.1.17.
             */}
             {eligibility.canReview ? (
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-m">
                 <h3 className="mb-m font-sans text-meta uppercase text-foreground-muted">
                   {REVIEW_SECTION_COPY.submitTitle}
                 </h3>
@@ -137,7 +137,7 @@ export function ProductReviews({
                 <ReviewForm defaultDisplayName={displayName} productId={productId} />
               </div>
             ) : (
-              <p className="border-t border-border pt-6 font-sans text-body-sm text-foreground-muted">
+              <p className="border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
                 {REVIEW_COPY[eligibility.reason]}{' '}
                 {eligibility.reason === 'notSignedIn' ? (
                   <Link href="/login?next=/account">Sign in</Link>
@@ -150,7 +150,7 @@ export function ProductReviews({
             {reviews.length > 0 ? (
               <ul className="flex flex-col border-t border-border">
                 {reviews.map((review) => (
-                  <li className="flex flex-col gap-2 border-b border-border py-6" key={review.id}>
+                  <li className="flex flex-col gap-2 border-b border-border py-m" key={review.id}>
                     <div className="flex flex-wrap items-center gap-s">
                       <Rating value={review.rating} />
 

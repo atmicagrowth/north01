@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildVariantMatrix,
+  compareAtForColor,
   inventoryMessage,
   priceRangeForColor,
   resolveVariant,
@@ -400,7 +401,7 @@ describe('buildVariantMatrix, degenerate catalogues', () => {
     expect(empty.invalidSelection).toBe(false)
   })
 
-  it('offers a one-variant product as one swatch and one size, still unchosen', () => {
+  it('selects the only size of a one-size product, because a row of one is not a choice', () => {
     const only = [
       row({
         color: 'Bone',
@@ -415,10 +416,38 @@ describe('buildVariantMatrix, degenerate catalogues', () => {
 
     expect(result.colors).toHaveLength(1)
     expect(result.sizes).toEqual([{ available: true, missing: false, sortOrder: 0, value: 'OS' }])
-    /* One size is still a size: a product with a single size is not pre-added to a bag. */
+    /*
+     * Phase 35 (P35-31). Selected, not added: the customer still presses Add to bag. What changed
+     * is that they are no longer asked to "choose" from a row of one first.
+     */
+    expect(result.selectedSize).toBe('OS')
+    expect(result.selected?.id).toBe(30)
+    expect(result.invalidSelection).toBe(false)
+    expect(matrix({ color: 'Bone', size: 'OS' }, only).selected?.priceMinor).toBe(20000)
+  })
+
+  it('still refuses to substitute the only size for a different size the URL asked for', () => {
+    const only = [row({ color: 'Bone', id: 32, size: 'OS', sizeSortOrder: 0 })]
+    const result = matrix({ color: 'Bone', size: 'XL' }, only)
+
     expect(result.selectedSize).toBeNull()
     expect(result.selected).toBeNull()
-    expect(matrix({ color: 'Bone', size: 'OS' }, only).selected?.priceMinor).toBe(20000)
+    expect(result.invalidSelection).toBe(true)
+  })
+
+  it('selects the only size in every colour, and resolves a sold-out one as sold out', () => {
+    const twoColours = [
+      row({ color: 'Bone', id: 33, size: 'OS', sizeSortOrder: 0 }),
+      row({ color: 'Ink', id: 34, inventoryQuantity: 0, size: 'OS', sizeSortOrder: 0 }),
+    ]
+
+    expect(matrix({ color: 'Bone' }, twoColours).selected?.id).toBe(33)
+    /* Selected so the page can say "sold out", exactly as an explicitly chosen sold-out size does. */
+    expect(matrix({ color: 'Ink' }, twoColours).selected?.availability).toBe('soldOut')
+  })
+
+  it('does not select anything automatically when the product has more than one size', () => {
+    expect(matrix({ color: 'Black' }).selectedSize).toBeNull()
   })
 
   it('shows a single sold-out variant rather than hiding the product’s only row', () => {
@@ -583,6 +612,57 @@ describe('priceRangeForColor', () => {
     expect(priceRangeForColor(CATALOGUE, 'Chartreuse', USD, LOCALE)).toBeNull()
     expect(priceRangeForColor([], null, USD, LOCALE)).toBeNull()
     expect(priceRangeForColor([row({ active: false, id: 83 })], null, USD, LOCALE)).toBeNull()
+  })
+})
+
+describe('compareAtForColor', () => {
+  const sale = (variant: Partial<SelectableVariant> & { id: number }) =>
+    row({ compareAtPriceMinor: 12000, priceMinor: 9500, ...variant })
+
+  it('shows the former price when every real saving in the colour quotes the same one', () => {
+    const variants = [sale({ id: 100, size: 'S' }), sale({ id: 101, size: 'M' })]
+
+    expect(compareAtForColor(variants, 'Black', USD, LOCALE)).toBe('$120.00')
+  })
+
+  it('ignores sizes with no saving, so one discounted size is enough to show it', () => {
+    const variants = [sale({ id: 102, size: 'S' }), row({ id: 103, size: 'M' })]
+
+    expect(compareAtForColor(variants, 'Black', USD, LOCALE)).toBe('$120.00')
+  })
+
+  it('applies resolveVariant’s rule: an equal or lower compare-at is not a saving', () => {
+    expect(
+      compareAtForColor([row({ compareAtPriceMinor: 9500, id: 104 })], 'Black', USD, LOCALE),
+    ).toBeNull()
+    expect(
+      compareAtForColor([row({ compareAtPriceMinor: 8000, id: 105 })], 'Black', USD, LOCALE),
+    ).toBeNull()
+    expect(compareAtForColor([row({ id: 106 })], 'Black', USD, LOCALE)).toBeNull()
+  })
+
+  it('returns null when the colour quotes more than one former price, rather than choosing one', () => {
+    const variants = [
+      sale({ id: 107, size: 'S' }),
+      sale({ compareAtPriceMinor: 14000, id: 108, size: 'M' }),
+    ]
+
+    expect(compareAtForColor(variants, 'Black', USD, LOCALE)).toBeNull()
+  })
+
+  it('reads only the selected colour, and ignores withdrawn rows', () => {
+    const variants = [
+      sale({ color: 'Bone', id: 109 }),
+      sale({ active: false, id: 110 }),
+      row({ id: 111 }),
+    ]
+
+    expect(compareAtForColor(variants, 'Black', USD, LOCALE)).toBeNull()
+    expect(compareAtForColor(variants, 'Bone', USD, LOCALE)).toBe('$120.00')
+  })
+
+  it('returns null rather than throwing when the locale cannot format', () => {
+    expect(compareAtForColor([sale({ id: 112 })], 'Black', USD, 'not a locale')).toBeNull()
   })
 })
 

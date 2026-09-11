@@ -88,7 +88,10 @@ export function MobileNav({ items, className }: { items: ShellNavItem[]; classNa
                   // Position, not href — see the note in `desktop-nav.tsx`. Two items sharing a
                   // URL shared one accordion value, so opening either expanded both.
                   <AccordionItem key={index} value={String(index)}>
-                    <AccordionTrigger aria-current={current ? 'page' : undefined}>
+                    <AccordionTrigger
+                      aria-current={current ? 'page' : undefined}
+                      className={cn(current && 'text-foreground')}
+                    >
                       {item.label}
                     </AccordionTrigger>
 

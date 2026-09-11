@@ -5,6 +5,7 @@ import { useActionState, useId } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
+import { Input } from '@/components/ui/input'
 import type { ResolvedPromotion } from '@/lib/promotions/promotions'
 import { PROMOTION_ACTION_IDLE } from '@/lib/promotions/action-state'
 import { applyCodeAction, removeCodeAction } from '@/lib/promotions/actions'
@@ -95,15 +96,10 @@ export function DiscountForm({ discount }: { discount: null | ResolvedPromotion 
       </label>
 
       <div className="flex gap-s">
-        <input
+        <Input
           autoCapitalize="characters"
           autoComplete="off"
-          className={cn(
-            'h-11 min-w-0 flex-1 rounded-sm border border-border-control bg-transparent px-3',
-            /* 16px, not 14: iOS Safari zooms the whole page on focus of any smaller input. */
-            'font-sans text-body uppercase text-foreground placeholder:text-foreground-disabled',
-            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-strong',
-          )}
+          className="flex-1 uppercase"
           id={fieldId}
           maxLength={32}
           name="code"

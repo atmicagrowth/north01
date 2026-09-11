@@ -32,7 +32,7 @@ import { pageMetadata } from '@/lib/seo/site'
  */
 export async function generateMetadata(): Promise<Metadata> {
   return pageMetadata({
-    description: 'Every published garment, filterable by category, size, colour and price.',
+    description: 'Every published garment, filterable by category, size, color and price.',
     path: '/shop',
     title: 'Shop',
   })
@@ -45,13 +45,23 @@ export default async function ShopPage({
 }) {
   const params = await loadCatalogParams(searchParams)
 
+  /*
+   * Phase 35 (P35-19): the header's NEW is `/shop?sort=newest`, and it landed on a page titled
+   * "All". The listing is the same catalogue; the page now says which way round it is.
+   */
+  const newest = params.sort === 'newest'
+
   return (
     <CatalogPage
       basePath="/shop"
       eyebrow="Shop"
-      lede="Everything in the current range, filterable by size, colour, collection and price."
+      lede={
+        newest
+          ? 'The most recent additions first, across the whole range.'
+          : 'Everything in the current range, filterable by size, color, collection and price.'
+      }
       params={params}
-      title="All"
+      title={newest ? 'New arrivals' : 'All'}
     />
   )
 }

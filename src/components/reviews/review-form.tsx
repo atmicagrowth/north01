@@ -5,6 +5,7 @@ import { useActionState } from 'react'
 import { Field } from '@/components/auth/field'
 import { FormStatus } from '@/components/auth/form-status'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/input'
 import { initialReviewFormState } from '@/lib/reviews/form-state'
 import { submitReviewAction } from '@/lib/reviews/actions'
 import { MAX_RATING, MIN_RATING, REVIEW_SECTION_COPY } from '@/lib/reviews/rules'
@@ -52,7 +53,7 @@ export function ReviewForm({
     return (
       <p
         aria-live="polite"
-        className="max-w-measure border-t border-border pt-6 font-sans text-body-sm text-foreground"
+        className="max-w-measure border-t border-border pt-m font-sans text-body-sm text-foreground"
       >
         {state.message}
       </p>
@@ -114,9 +115,10 @@ export function ReviewForm({
         >
           Your review
         </label>
-        <textarea
+        <Textarea
           aria-describedby={state.fieldErrors.reviewBody ? 'reviewBody-error' : undefined}
-          className="min-h-32 border border-border-control bg-surface px-3 py-2 font-sans text-body-sm text-foreground"
+          aria-invalid={state.fieldErrors.reviewBody ? true : undefined}
+          className="min-h-32"
           defaultValue={state.values.reviewBody ?? ''}
           id="reviewBody"
           name="reviewBody"

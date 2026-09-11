@@ -3,6 +3,7 @@
 import { useActionState, useId } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { CHECKOUT_ACTION_IDLE } from '@/lib/checkout/action-state'
 import { startCheckoutAction } from '@/lib/checkout/actions'
 import type { ShippingRate } from '@/lib/shipping/rules'
@@ -54,27 +55,19 @@ export function CheckoutForm({
   const money = (minor: number) =>
     minor === 0 ? 'Free' : (formatMinorUnits(minor, currency, locale) ?? '—')
 
-  const field = cn(
-    'h-11 w-full rounded-sm border border-border-control bg-transparent px-3',
-    /* 16px, not 14: iOS Safari zooms the whole page on focus of any smaller input. */
-    'font-sans text-body text-foreground placeholder:text-foreground-disabled',
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-strong',
-  )
-
   const label = 'font-sans text-meta uppercase text-foreground-muted'
 
   return (
     <form action={action} className="flex flex-col gap-l" data-slot="checkout-form">
       <section className="flex flex-col gap-s">
-        <h2 className="font-display text-heading-s text-foreground">Contact</h2>
+        <h2 className="font-sans text-heading-s text-foreground">Contact</h2>
 
         <div className="flex flex-col gap-2">
           <label className={label} htmlFor={`${id}-email`}>
             Email
           </label>
-          <input
+          <Input
             autoComplete="email"
-            className={field}
             defaultValue={defaultEmail}
             id={`${id}-email`}
             name="email"
@@ -85,16 +78,15 @@ export function CheckoutForm({
       </section>
 
       <section className="flex flex-col gap-s">
-        <h2 className="font-display text-heading-s text-foreground">Delivery address</h2>
+        <h2 className="font-sans text-heading-s text-foreground">Delivery address</h2>
 
         <div className="grid gap-s sm:grid-cols-2">
           <div className="flex flex-col gap-2">
             <label className={label} htmlFor={`${id}-first`}>
               First name
             </label>
-            <input
+            <Input
               autoComplete="given-name"
-              className={field}
               id={`${id}-first`}
               name="firstName"
               maxLength={ADDRESS_MAX_LENGTH.firstName}
@@ -106,9 +98,8 @@ export function CheckoutForm({
             <label className={label} htmlFor={`${id}-last`}>
               Last name
             </label>
-            <input
+            <Input
               autoComplete="family-name"
-              className={field}
               id={`${id}-last`}
               name="lastName"
               maxLength={ADDRESS_MAX_LENGTH.lastName}
@@ -121,9 +112,8 @@ export function CheckoutForm({
           <label className={label} htmlFor={`${id}-line1`}>
             Address
           </label>
-          <input
+          <Input
             autoComplete="address-line1"
-            className={field}
             id={`${id}-line1`}
             name="line1"
             maxLength={ADDRESS_MAX_LENGTH.line1}
@@ -135,9 +125,8 @@ export function CheckoutForm({
           <label className={label} htmlFor={`${id}-line2`}>
             Apartment, suite, etc. <span className="normal-case">(optional)</span>
           </label>
-          <input
+          <Input
             autoComplete="address-line2"
-            className={field}
             id={`${id}-line2`}
             name="line2"
             maxLength={ADDRESS_MAX_LENGTH.line2}
@@ -149,9 +138,8 @@ export function CheckoutForm({
             <label className={label} htmlFor={`${id}-city`}>
               City
             </label>
-            <input
+            <Input
               autoComplete="address-level2"
-              className={field}
               id={`${id}-city`}
               name="city"
               maxLength={ADDRESS_MAX_LENGTH.city}
@@ -163,9 +151,8 @@ export function CheckoutForm({
             <label className={label} htmlFor={`${id}-region`}>
               State / county
             </label>
-            <input
+            <Input
               autoComplete="address-level1"
-              className={field}
               id={`${id}-region`}
               name="region"
               maxLength={ADDRESS_MAX_LENGTH.region}
@@ -176,9 +163,8 @@ export function CheckoutForm({
             <label className={label} htmlFor={`${id}-postal`}>
               Postcode
             </label>
-            <input
+            <Input
               autoComplete="postal-code"
-              className={field}
               id={`${id}-postal`}
               name="postalCode"
               maxLength={ADDRESS_MAX_LENGTH.postalCode}
@@ -197,9 +183,9 @@ export function CheckoutForm({
               from every spelling of "United Kingdom" to `GB`, and getting it wrong means quoting
               delivery for the wrong place. The placeholder says what is wanted.
             */}
-            <input
+            <Input
               autoComplete="country"
-              className={cn(field, 'uppercase')}
+              className="uppercase"
               id={`${id}-country`}
               maxLength={2}
               name="country"
@@ -212,9 +198,8 @@ export function CheckoutForm({
             <label className={label} htmlFor={`${id}-phone`}>
               Phone <span className="normal-case">(optional)</span>
             </label>
-            <input
+            <Input
               autoComplete="tel"
-              className={field}
               id={`${id}-phone`}
               name="phone"
               maxLength={ADDRESS_MAX_LENGTH.phone}
@@ -225,7 +210,7 @@ export function CheckoutForm({
       </section>
 
       <fieldset className="flex flex-col gap-s">
-        <legend className="mb-s font-display text-heading-s text-foreground">Delivery</legend>
+        <legend className="mb-s font-sans text-heading-s text-foreground">Delivery</legend>
 
         <div className="flex flex-col gap-2">
           {rates.map((rate, index) => (

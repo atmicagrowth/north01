@@ -47,7 +47,7 @@ export default async function RegisterPage({
 
       <RegisterForm next={next ?? undefined} />
 
-      <p className="border-t border-border pt-6 font-sans text-body-sm text-foreground-muted">
+      <p className="border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
         Already have an account?{' '}
         <Link href={next ? `/login?next=${encodeURIComponent(next)}` : '/login'}>Sign in</Link>.
       </p>

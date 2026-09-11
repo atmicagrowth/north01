@@ -5,6 +5,7 @@ import { useActionState } from 'react'
 import type { AddressActionState } from '@/lib/account/addresses'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { addAddressAction, removeAddressAction } from '@/lib/account/addresses'
 import { ADDRESS_MAX_LENGTH } from '@/lib/address-limits'
 
@@ -47,10 +48,8 @@ export function AddAddressForm() {
               {field.label}
               {field.required ? '' : ' (optional)'}
             </span>
-            <input
+            <Input
               autoComplete={field.autoComplete}
-              /* 44px and 16px, as every other field in the shop: iOS zooms the page on anything smaller. */
-              className="h-11 border border-border-control bg-surface px-3 font-sans text-body text-foreground"
               name={field.name}
               maxLength={field.name === 'country' ? undefined : ADDRESS_MAX_LENGTH[field.name]}
               required={field.required}

@@ -30,7 +30,7 @@ export default function ForgotPasswordPage() {
 
       <ForgotPasswordForm />
 
-      <p className="border-t border-border pt-6 font-sans text-body-sm text-foreground-muted">
+      <p className="border-t border-border pt-m font-sans text-body-sm text-foreground-muted">
         Remembered it? <Link href="/login">Sign in</Link>.
       </p>
     </div>

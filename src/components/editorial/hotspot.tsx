@@ -118,10 +118,16 @@ export function Hotspot({
             'absolute grid size-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full',
             'left-[var(--x-mobile)] top-[var(--y-mobile)]',
             'md:left-[var(--x)] md:top-[var(--y)]',
-            'transition-transform duration-(--duration-base) ease-entrance hover:scale-110',
+            /*
+             * Hover firms the ring rather than scaling the marker. The guide's motion rules ask for
+             * "subtle" and rule out "motion that competes with the subject"; a marker that grows
+             * over a photograph does exactly that, and a ring that brightens says "this is live"
+             * without moving anything.
+             */
+            'transition-shadow duration-(--duration-base) ease-entrance',
             hotspot.tone === 'dark'
-              ? 'bg-canvas/80 text-foreground ring-1 ring-foreground/30'
-              : 'bg-foreground/85 text-canvas ring-1 ring-canvas/20',
+              ? 'bg-canvas/80 text-foreground ring-1 ring-foreground/30 hover:ring-foreground/80'
+              : 'bg-foreground/85 text-canvas ring-1 ring-canvas/20 hover:ring-canvas/70',
           )}
           href={hotspot.product.href}
           /*
