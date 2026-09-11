@@ -72,6 +72,19 @@ const created: {
 }[] = []
 
 const cleanup = async () => {
+  /* Refund emails are queued inside the refund's transaction since Phase 36 sweep 1. */
+  const orderIds = created.filter((doc) => doc.collection === 'orders').map((doc) => doc.id)
+
+  if (orderIds.length > 0) {
+    await payload
+      .delete({
+        collection: 'email-messages',
+        overrideAccess: true,
+        where: { order: { in: orderIds } },
+      })
+      .catch(() => undefined)
+  }
+
   for (const doc of [...created].reverse()) {
     await payload
       .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
@@ -691,11 +704,56 @@ try {
       orderId: null,
       paymentIntentId: `pi_orders_absent_${suffix}`,
     })
+      .then((outcome) => outcome.outcome)
+      .catch(() => 'threw')
 
     check(
-      'G: a refund for a payment intent this shop does not hold is acknowledged, not crashed on',
-      unknown.outcome === 'noOrder',
-      unknown.outcome,
+      'G: **sweep 1 a refund for a payment intent no order holds yet is retried, not ignored**',
+      unknown === 'threw',
+      unknown,
+    )
+
+    const noIntent = await applyStripeEvent(payload, {
+      amountRefundedMinor: 100,
+      eventType: 'charge.refunded',
+      orderId: null,
+      paymentIntentId: null,
+    })
+
+    check(
+      'G: …while one with no reference and no intent at all is acknowledged as not ours',
+      noIntent.outcome === 'noOrder',
+      noIntent.outcome,
+    )
+  }
+
+  /* ============================================ G1 — sweep 1, a refund before the payment */
+  {
+    const order = await makeOrder('G1', 'pending_payment')
+    const intent = `pi_orders_g1_${suffix}`
+
+    await payload.update({
+      collection: 'orders',
+      data: { stripePaymentIntentId: intent },
+      id: order.id,
+      overrideAccess: true,
+    })
+
+    const early = await applyStripeEvent(payload, {
+      amountRefundedMinor: 5_000,
+      eventType: 'charge.refunded',
+      orderId: null,
+      paymentIntentId: intent,
+    })
+      .then((outcome) => outcome.outcome)
+      .catch(() => 'threw')
+
+    const after = await orderNow(order.id)
+
+    check(
+      'G1: **a refund that arrives before the payment is applied throws, so Stripe retries it**',
+      early === 'threw' && after.paymentStatus === 'pending_payment' && after.refundedMinor == null,
+      `${early} ${after.paymentStatus} ${after.refundedMinor}`,
     )
   }
 
@@ -750,26 +808,22 @@ try {
       late.outcome,
     )
 
-    const { queueRefundMessage } = await import('../src/lib/email/orders')
-
-    const emails = await Promise.all([
-      queueRefundMessage(payload, order.id, 1_500),
-      queueRefundMessage(payload, order.id, 3_000),
-    ])
-    const again = await queueRefundMessage(payload, order.id, 3_000)
-
-    for (const queued of [...emails, again]) {
-      if (queued.outcome === 'claimed') {
-        await payload
-          .delete({ collection: 'email-messages', id: queued.id, overrideAccess: true })
-          .catch(() => undefined)
-      }
-    }
+    const { totalDocs: refundEmails } = await payload.find({
+      collection: 'email-messages',
+      depth: 0,
+      limit: 0,
+      overrideAccess: true,
+      where: { and: [{ order: { equals: order.id } }, { kind: { equals: 'refund' } }] },
+    })
 
     check(
-      'G2: **one refund email per new cumulative amount**, and not a second for the same one',
-      emails.every((queued) => queued.outcome === 'claimed') && again.outcome === 'duplicate',
-      `${emails.map((queued) => queued.outcome).join(',')} / ${again.outcome}`,
+      'G2: **one refund email per new cumulative amount**, queued with the refund, none for the late one',
+      first.outcome === 'refunded' &&
+        first.emailId !== null &&
+        second.outcome === 'refunded' &&
+        second.emailId !== null &&
+        refundEmails === 2,
+      `${refundEmails} row(s)`,
     )
 
     await payload.update({

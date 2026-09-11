@@ -1684,6 +1684,10 @@ export interface Order {
    */
   totalMinor: number;
   /**
+   * The Stripe Tax calculation ("taxcalc_…") behind the tax amount. Recorded as a Stripe Tax transaction once the order is paid.
+   */
+  taxCalculationId?: string | null;
+  /**
    * The promotion applied — one per order (DEV-08).
    */
   promotion?: (number | null) | Promotion;
@@ -1764,9 +1768,9 @@ export interface Order {
     phone?: string | null;
   };
   /**
-   * Set automatically when an order was paid for but the stock was no longer there. No stock was taken for it. Decide with the customer — refund in Stripe, back-order, or substitute — before picking anything. Filter the list on this to find every one.
+   * Set automatically. "Stock shortfall": paid for, but the stock was no longer there — no stock was taken; decide with the customer (refund in Stripe, back-order, or substitute) before picking anything. "Payment mismatch": Stripe reported a payment that did not match this order (an older checkout, a different amount, or a second payment) — nothing was applied; open the Stripe events for this order and the payment in Stripe, then refund or reconcile. Filter the list on this to find every one.
    */
-  fulfilmentHold?: ('none' | 'stockShortfall') | null;
+  fulfilmentHold?: ('none' | 'stockShortfall' | 'paymentMismatch') | null;
   /**
    * The lines that could not be met at payment: variant id, quantity ordered, and how many were available.
    */
@@ -2888,6 +2892,7 @@ export interface OrdersSelect<T extends boolean = true> {
   shippingMinor?: T;
   taxMinor?: T;
   totalMinor?: T;
+  taxCalculationId?: T;
   promotion?: T;
   discountCode?: T;
   shippingMethodCode?: T;

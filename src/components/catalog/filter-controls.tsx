@@ -156,6 +156,18 @@ function treeOrder(options: CategoryOption[]): (FacetOption & { depth: number })
 
   walk(null, 0)
 
+  /*
+   * A parent cycle (A under B, B under A) has no root, so the walk above never reaches it. Anything
+   * it missed is listed at the top level rather than silently dropped from the filter.
+   */
+  for (const option of options) {
+    if (!seen.has(option.value)) {
+      seen.add(option.value)
+      out.push({ depth: 0, label: option.label, value: option.value })
+      walk(option.value, 1)
+    }
+  }
+
   return out
 }
 

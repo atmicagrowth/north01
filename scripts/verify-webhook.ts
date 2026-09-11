@@ -61,6 +61,19 @@ const created: {
 }[] = []
 
 const cleanup = async () => {
+  /* The confirmations `fulfil.ts` queues inside the payment transaction (Phase 36 sweep 1). */
+  const orderIds = created.filter((doc) => doc.collection === 'orders').map((doc) => doc.id)
+
+  if (orderIds.length > 0) {
+    await payload
+      .delete({
+        collection: 'email-messages',
+        overrideAccess: true,
+        where: { order: { in: orderIds } },
+      })
+      .catch(() => undefined)
+  }
+
   for (const doc of [...created].reverse()) {
     await payload
       .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
@@ -224,6 +237,23 @@ const statusOf = async (orderId: number) => {
   }
 }
 
+/** jsonb does not keep key order, so compare the lines field by field. */
+const sameShortfall = (
+  actual: unknown,
+  expected: { available: number; quantity: number; variantId: number }[],
+) =>
+  Array.isArray(actual) &&
+  actual.length === expected.length &&
+  expected.every((line, index) => {
+    const got = actual[index] as Record<string, unknown>
+
+    return (
+      got.available === line.available &&
+      got.quantity === line.quantity &&
+      got.variantId === line.variantId
+    )
+  })
+
 const timesUsedOf = async (promotionId: number) =>
   (
     await payload.findByID({
@@ -297,6 +327,37 @@ try {
       'A: …fulfilment is left for a human, and no hold is set',
       after.fulfillment === 'unfulfilled' && (after.hold === 'none' || after.hold === null),
       `${after.fulfillment}/${after.hold}`,
+    )
+
+    const { totalDocs: confirmations } = await payload.find({
+      collection: 'email-messages',
+      depth: 0,
+      limit: 0,
+      overrideAccess: true,
+      where: { and: [{ order: { equals: order.id } }, { kind: { equals: 'orderConfirmation' } }] },
+    })
+
+    check(
+      'A: **sweep 1 the confirmation is queued inside the payment transaction** — one row, handed to the route',
+      outcome.outcome === 'finalised' &&
+        outcome.confirmationEmailId !== null &&
+        confirmations === 1,
+      `${outcome.outcome === 'finalised' ? outcome.confirmationEmailId : '-'} / ${confirmations} row(s)`,
+    )
+
+    const replay = await pay(order, `pi_wh_a_${suffix}`)
+    const { totalDocs: afterReplay } = await payload.find({
+      collection: 'email-messages',
+      depth: 0,
+      limit: 0,
+      overrideAccess: true,
+      where: { and: [{ order: { equals: order.id } }, { kind: { equals: 'orderConfirmation' } }] },
+    })
+
+    check(
+      'A: …and a redelivery queues no second one',
+      replay.outcome === 'alreadyFinal' && afterReplay === 1,
+      `${replay.outcome} / ${afterReplay}`,
     )
   }
 
@@ -377,9 +438,13 @@ try {
     check(
       'C: **R3-19 it is held for a human** — fulfilmentHold is stockShortfall, with the detail',
       after.hold === 'stockShortfall' &&
-        Array.isArray(after.shortfall) &&
-        JSON.stringify(after.shortfall).includes(String(variant.id)),
+        sameShortfall(after.shortfall, [{ available: 1, quantity: 2, variantId: variant.id }]),
       `${after.hold} ${JSON.stringify(after.shortfall)}`,
+    )
+
+    check(
+      'C: …and the customer still gets the receipt for what they paid — queued in the transaction',
+      outcome.outcome === 'outOfStock' && outcome.confirmationEmailId !== null,
     )
 
     check(
@@ -476,15 +541,53 @@ try {
     const outcome = await pending
 
     check(
-      'D2: **R1-10 a decrement that fails mid-loop rolls the earlier ones back** — no partial pick',
-      outcome.outcome === 'outOfStock' && (await stockOf(x.variant.id)) === 5,
-      `${outcome.outcome}, X ${await stockOf(x.variant.id)}`,
+      'C: **R1-10 the ROLLBACK TO SAVEPOINT branch ran** — X was decremented, then Y failed mid-loop',
+      outcome.outcome === 'outOfStock' && outcome.rolledBack,
+      outcome.outcome === 'outOfStock' ? `rolledBack=${outcome.rolledBack}` : outcome.outcome,
     )
 
     check(
-      'D2: …the order is paid and held',
+      'C: …and X’s decrement was undone — no partial pick',
+      (await stockOf(x.variant.id)) === 5,
+      `X ${await stockOf(x.variant.id)}`,
+    )
+
+    check(
+      'C: …the shortfall records Y as requested 1, available 0 — and only Y',
+      sameShortfall((await statusOf(order.id)).shortfall, [
+        { available: 0, quantity: 1, variantId: y.variant.id },
+      ]),
+      JSON.stringify((await statusOf(order.id)).shortfall),
+    )
+
+    check(
+      'C: …the order is paid and held',
       (await statusOf(order.id)).payment === 'paid' &&
         (await statusOf(order.id)).hold === 'stockShortfall',
+    )
+  }
+
+  /* ====================================== C3 — sweep 1, a bag gone before the payment lands */
+  {
+    const { product, variant } = await makeStock(5, 'c3')
+    const cart = await makeCart('C3')
+    const order = await makeOrder(
+      [{ productId: product.id, quantity: 1, variantId: variant.id }],
+      'C3',
+      { cart: cart.id },
+    )
+
+    /* The expired-bag sweep, or anything else, removes the cart first. */
+    await payload.delete({ collection: 'carts', id: cart.id, overrideAccess: true, trash: false })
+
+    const outcome = await pay(order, `pi_wh_c3_${suffix}`)
+
+    check(
+      'C: **sweep 1 a deleted bag does not roll the payment back** — paid, stock taken',
+      outcome.outcome === 'finalised' &&
+        (await statusOf(order.id)).payment === 'paid' &&
+        (await stockOf(variant.id)) === 4,
+      `${outcome.outcome} ${(await statusOf(order.id)).payment} stock ${await stockOf(variant.id)}`,
     )
   }
 
@@ -833,6 +936,13 @@ try {
     check(
       'M: …and no payment intent was recorded from any of them',
       (await statusOf(order.id)).paymentIntent === null,
+    )
+
+    check(
+      'M: **sweep 1 the order is flagged paymentMismatch** — visible in Orders, status left alone',
+      (await statusOf(order.id)).hold === 'paymentMismatch' &&
+        (await statusOf(order.id)).payment === 'pending_payment',
+      `${(await statusOf(order.id)).hold} / ${(await statusOf(order.id)).payment}`,
     )
 
     const real = await pay(order, `pi_wh_mm_real_${suffix}`)

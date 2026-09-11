@@ -49,6 +49,21 @@ the development database (`pnpm verify:*`, see `docs/TESTING.md`), the unit suit
 | R1-30 | L | Fixed | Analytics imports and `gtag` calls cannot throw into the page |
 | R1-31 | L | Fixed (Phase 31) | The success page's copy follows the payment status |
 
+## Found by this pass's own review (sweep 1)
+
+An adversarial review of the fixes above — assuming Stripe delivers late, twice and out of order, and
+that a customer double-clicks — found seven more, all fixed (notes §1.41.6):
+
+| Sev. | Issue | Fix | Verification |
+|---|---|---|---|
+| High | Two checkouts on one bag (double click, two tabs) could create two orders, or leave a second payable session — money taken for an unpaid order, or a double charge | Per-cart advisory lock around lookup and write; conditional claims on the order's status, session and last write | `verify:checkout` G2 races two preflights |
+| Medium | A mismatched payment was invisible to staff | `fulfilmentHold = paymentMismatch` on the order; Sentry | `verify:webhook` |
+| Medium | The confirmation email could be lost between acknowledging Stripe and queueing it | Queued inside the payment transaction | `verify:webhook` |
+| Medium | A refund arriving before its payment was lost | Answered 500, so Stripe retries | `verify:orders` |
+| Medium | No Stripe Tax transaction was recorded, so sales were missing from tax reports | Calculation id stored; `createFromCalculation` after payment (reversal on refund not built) | `tests/unit/tax-transaction.test.ts` |
+| Low–Medium | A bag deleted during payment could silently roll the payment back | Raw update inside the same transaction | `verify:webhook` |
+| Low | A zero taxable base called Stripe; shortfall detail inaccurate | Fixed; savepoint branch proven | `verify:webhook` |
+
 ## The audit questions (§36.1a), answered
 
 - **Server-only secrets in client code?** No — `env.server` is import-guarded by ESLint (D-14); `scan:secrets` passes.

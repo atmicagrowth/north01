@@ -236,6 +236,24 @@ export function taxResultFromStripeCalculation(
   }
 }
 
+/**
+ * **Nothing to tax, so nothing to ask** — Phase 36 sweep 1.
+ *
+ * A bag whose goods are fully discounted and whose delivery is free has a taxable base of zero, and
+ * exclusive tax on zero is zero in every jurisdiction — so the answer is `not_required` without a
+ * call. (Stripe would otherwise be sent a line with `amount: 0`.)
+ *
+ * **Not covered: goods at zero with a delivery charge.** Stripe still needs one line item, so it is
+ * sent the zero goods line plus the `shipping_cost`, because delivery itself can be taxable. Should
+ * Stripe refuse a zero-amount line, that request comes back `unavailable` and preflight refuses the
+ * checkout — the safe direction, never a guessed zero. It is untested without keys.
+ */
+export function taxWithoutProvider(request: TaxRequest): null | TaxResult {
+  return taxableBaseMinor(request) === 0
+    ? { amountMinor: 0, providerRef: null, status: 'not_required' }
+    : null
+}
+
 export const TAX_COPY = {
   /** What the bag says while there is no address (Phase 36, R2-13: says what tax depends on). */
   pending: 'Tax is calculated from your delivery address.',

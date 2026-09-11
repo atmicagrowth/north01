@@ -496,12 +496,15 @@ check(
 
 const payload: Payload = await getPayload({ config })
 
-const created: { collection: 'orders' | 'stripe-events'; id: number }[] = []
+const created: {
+  collection: 'carts' | 'orders' | 'product-variants' | 'products' | 'stripe-events'
+  id: number
+}[] = []
 
 const cleanup = async () => {
   for (const doc of [...created].reverse()) {
     await payload
-      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true })
+      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
       .catch(() => undefined)
   }
 }
@@ -650,6 +653,208 @@ try {
     orderA.paymentStatus === 'checkout_started',
     orderA.paymentStatus,
   )
+
+  /* ==============================================================================================
+   * G2 — Phase 36 sweep 1: two checkouts on one bag, at the same instant
+   * =========================================================================================== */
+  {
+    const { claimOrderForSession, upsertPendingOrder } =
+      await import('../src/lib/checkout/pending-order')
+
+    const product = await payload.create({
+      collection: 'products',
+      data: {
+        name: `Checkout race ${suffix}`,
+        slug: `checkout-race-${suffix}`,
+        sortOrder: 9999,
+        status: 'published',
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'products', id: product.id })
+
+    const variant = await payload.create({
+      collection: 'product-variants',
+      data: {
+        active: true,
+        color: 'Bone',
+        colorFamily: 'bone',
+        colorHex: '#e8e4dc',
+        inventoryQuantity: 5,
+        priceMinor: 5_000,
+        product: product.id,
+        size: 'M',
+        sizeSortOrder: 30,
+        sku: `RACE-${suffix}`,
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'product-variants', id: variant.id })
+
+    const cart = await payload.create({
+      collection: 'carts',
+      data: {
+        currency: 'USD',
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        status: 'active',
+        token: `checkout-race-${suffix}`,
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'carts', id: cart.id })
+
+    /* What preflight hands over after its checks: the bag, the contact, the rate and the totals. */
+    const input = {
+      cart: {
+        currency: 'USD',
+        discount: null,
+        id: cart.id,
+        lines: [
+          {
+            color: 'Bone',
+            effectiveQuantity: 1,
+            productId: product.id,
+            productName: 'Checkout race',
+            size: 'M',
+            sku: `RACE-${suffix}`,
+            unitPriceMinor: 5_000,
+            variantId: variant.id,
+          },
+        ],
+      } as never,
+      contact: {
+        email: 'race@example.test',
+        shippingAddress: {
+          city: 'Portland',
+          country: 'US',
+          firstName: 'Race',
+          lastName: 'Fixture',
+          line1: '1 Main St',
+          line2: null,
+          phone: null,
+          postalCode: '97201',
+          region: 'OR',
+        },
+        shippingMethodId: 'standard',
+      },
+      customerId: null,
+      rate: {
+        amountMinor: 0,
+        estimate: '3–5 business days',
+        id: 'standard',
+        name: 'Standard',
+      } as never,
+      taxCalculationId: null,
+      totals: {
+        discountMinor: 0,
+        shippingMinor: 0,
+        subtotalMinor: 5_000,
+        taxMinor: 0,
+        totalMinor: 5_000,
+      },
+    }
+
+    /* The Stripe half, faked: every retirement succeeds, and each one is recorded. */
+    const retired: string[] = []
+    const retire = (_orderId: number, sessionId: string) => {
+      retired.push(sessionId)
+
+      return Promise.resolve(null)
+    }
+
+    const ordersForCart = async () =>
+      (
+        await payload.find({
+          collection: 'orders',
+          depth: 0,
+          limit: 10,
+          overrideAccess: true,
+          where: { cart: { equals: cart.id } },
+        })
+      ).docs
+
+    type Upserted = Awaited<ReturnType<typeof upsertPendingOrder>>
+
+    /* Each attempt "creates a session" and tries to record it, as `session.ts` does. */
+    const claimFor = (attempt: Upserted, sessionId: string) =>
+      attempt.ok
+        ? claimOrderForSession(payload, {
+            orderId: attempt.orderId,
+            preparedAt: attempt.preparedAt,
+            sessionId,
+          })
+        : Promise.resolve(false)
+
+    /* Race 1: no order yet. Both used to miss the lookup and create one each. */
+    const [a, b] = await Promise.all([
+      upsertPendingOrder(payload, input, retire),
+      upsertPendingOrder(payload, input, retire),
+    ])
+
+    const afterFirstRace = await ordersForCart()
+
+    for (const order of afterFirstRace) {
+      created.push({ collection: 'orders', id: order.id })
+    }
+
+    check(
+      'G2: **two first attempts on one bag make ONE order**',
+      a.ok && b.ok && a.orderId === b.orderId && afterFirstRace.length === 1,
+      `${afterFirstRace.length} order(s)`,
+    )
+
+    const claims = await Promise.all([
+      claimFor(a, `cs_race_a_${suffix}`),
+      claimFor(b, `cs_race_b_${suffix}`),
+    ])
+
+    const winner = claims[0] ? `cs_race_a_${suffix}` : `cs_race_b_${suffix}`
+    const afterClaims = (await ordersForCart())[0]
+
+    check(
+      'G2: **…and exactly one of their sessions is recorded** — the loser is expired by session.ts',
+      claims.filter(Boolean).length === 1 &&
+        afterClaims?.stripeCheckoutSessionId === winner &&
+        afterClaims.paymentStatus === 'pending_payment',
+      `${claims.join(',')} → ${afterClaims?.stripeCheckoutSessionId}`,
+    )
+
+    /* Race 2: the order is at pending_payment with a live session, and two attempts arrive. */
+    const [c, d] = await Promise.all([
+      upsertPendingOrder(payload, input, retire),
+      upsertPendingOrder(payload, input, retire),
+    ])
+
+    check(
+      'G2: **two attempts on a pending order retire its live session exactly once**',
+      c.ok &&
+        d.ok &&
+        c.orderId === d.orderId &&
+        retired.length === 1 &&
+        retired[0] === winner &&
+        (await ordersForCart()).length === 1,
+      `retired ${JSON.stringify(retired)}`,
+    )
+
+    const secondClaims = await Promise.all([
+      claimFor(c, `cs_race_c_${suffix}`),
+      claimFor(d, `cs_race_d_${suffix}`),
+    ])
+
+    const finalOrder = (await ordersForCart())[0]
+
+    check(
+      'G2: **…and leave one live session, not two**',
+      secondClaims.filter(Boolean).length === 1 &&
+        [`cs_race_c_${suffix}`, `cs_race_d_${suffix}`].includes(
+          String(finalOrder?.stripeCheckoutSessionId),
+        ),
+      `${secondClaims.join(',')} → ${finalOrder?.stripeCheckoutSessionId}`,
+    )
+  }
 } finally {
   await cleanup()
 }

@@ -240,6 +240,25 @@ describe('FilterPanel structure', () => {
     expect(rows[1]).not.toHaveClass('pl-6')
   })
 
+  it('still lists categories whose parents form a cycle, rather than dropping both (Phase 36 sweep 1)', () => {
+    render(
+      <FilterPanel
+        vocabulary={{
+          ...VOCABULARY,
+          categories: [
+            { label: 'Bags', parent: null, value: 'bags' },
+            { label: 'Coats', parent: 'layers', value: 'coats' },
+            { label: 'Layers', parent: 'coats', value: 'layers' },
+          ],
+        }}
+      />,
+    )
+
+    const rows = within(screen.getByRole('group', { name: 'Category' })).getAllByRole('listitem')
+
+    expect(rows.map((row) => row.textContent).sort()).toEqual(['Bags', 'Coats', 'Layers'])
+  })
+
   it('suppresses the Category group on /shop/<category>, where ticking it can only leave the page', () => {
     render(<FilterPanel routeCategory="clothing" vocabulary={VOCABULARY} />)
 

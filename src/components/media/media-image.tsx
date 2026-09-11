@@ -329,6 +329,8 @@ export function MediaImage({
 
     return (
       <MediaFrame
+        /* Keyed by the image: a gallery reuses one frame across colours, and a failure must not outlive its image. */
+        key={record.url}
         className={cn('relative w-full overflow-hidden bg-surface', frameClass, className)}
         style={frame}
       >
@@ -425,6 +427,8 @@ export function MediaImage({
 
   return (
     <MediaFrame
+      /* Keyed by the image, for the same reason as above. */
+      key={desktopFallback}
       className={cn('relative w-full overflow-hidden bg-surface', frameClass, blurClass, className)}
       style={blur}
     >

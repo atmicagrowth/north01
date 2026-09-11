@@ -1,6 +1,9 @@
 import { sql } from '@payloadcms/db-postgres'
-import type { Payload } from 'payload'
+import type { Payload, PayloadRequest } from 'payload'
 
+import { queueOrderConfirmation, queueRefundMessage } from '@/lib/email/orders'
+import { dedupeKeyFor } from '@/lib/email/rules'
+import type { EnqueueOutcome } from '@/lib/email/send'
 import { reportFailure } from '@/lib/observability/report'
 
 import {
@@ -38,8 +41,9 @@ import {
  * > Webhook verified → Order marked paid → Inventory adjusted → Confirmation email
  *
  * Inventory is adjusted **inside the same transaction** that marks the order paid, not after it. The
- * email is genuinely afterwards, and genuinely outside the transaction — a mail provider being slow
- * or down must not roll back a payment that has already happened.
+ * email is split in two (Phase 36 sweep 1): its **row** is queued inside the transaction, so it
+ * commits with the payment or not at all, and its **send** happens after the response — a mail
+ * provider being slow or down must not roll back, or delay, a payment that has already happened.
  *
  * ### The barriers
  *
@@ -72,14 +76,34 @@ export type SessionFacts = {
 
 export type ShortLine = { available: number; quantity: number; variantId: number }
 
+/*
+ * `confirmationEmailId` / `emailId`: the email-messages row queued **inside** the same transaction
+ * as the state change (Phase 36 sweep 1), so a crash after the commit cannot lose it — the route
+ * only delivers it. `null` when nothing new was queued.
+ *
+ * `rolledBack`: the shortfall was found by a decrement failing mid-loop, and the savepoint undid the
+ * decrements before it (as opposed to the plan refusing up front). Reported for the harness.
+ */
 export type FulfilOutcome =
-  | { orderId: number; outcome: 'finalised' }
-  /** `status` is the order's status as the event found it, so the route can re-queue a lost email. */
+  | { confirmationEmailId: null | number; orderId: number; outcome: 'finalised' }
+  /** `status` is the order's status as the event found it. */
   | { orderId: number; outcome: 'alreadyFinal'; status: null | PaymentStatus }
   | { orderId: number; outcome: 'awaitingPayment' }
   | { orderId: number; outcome: 'transitioned'; status: PaymentStatus }
-  | { amountRefundedMinor: number; full: boolean; orderId: number; outcome: 'refunded' }
-  | { orderId: number; outcome: 'outOfStock'; short: ShortLine[] }
+  | {
+      amountRefundedMinor: number
+      emailId: null | number
+      full: boolean
+      orderId: number
+      outcome: 'refunded'
+    }
+  | {
+      confirmationEmailId: null | number
+      orderId: number
+      outcome: 'outOfStock'
+      rolledBack: boolean
+      short: ShortLine[]
+    }
   | { orderId: number; outcome: 'mismatch'; reason: string }
   | { orderId: number; outcome: 'superseded' }
   | { orderId: number; outcome: 'recorded' }
@@ -131,16 +155,40 @@ const statusList = (statuses: readonly PaymentStatus[]) =>
  * **`session` is required for every `checkout.session.*` event** (Phase 36, R1-01). One that
  * arrives without it cannot be checked against the order, so it is a `mismatch`, never a payment.
  */
+export type StripeEventInput = {
+  amountRefundedMinor?: null | number
+  eventType: string
+  orderId: null | number
+  paymentIntentId: null | string
+  session?: null | SessionFacts
+}
+
+/**
+ * **A mismatch is flagged on the order, not only on the event row** — Phase 36 sweep 1.
+ *
+ * A mismatched session may have taken the customer's money while the order stays unpaid, and an
+ * event row is not where anyone looks for an order. So the order named in the metadata gets
+ * `fulfilmentHold: paymentMismatch`, which the Orders list shows and filters on. Its payment status
+ * is left alone — what the money was for is exactly what is in doubt — and nothing is refunded
+ * automatically: whether this payment is a duplicate to return or the customer's only payment to
+ * reconcile is a decision for a person with the Stripe dashboard open.
+ */
 export async function applyStripeEvent(
   payload: Payload,
-  input: {
-    amountRefundedMinor?: null | number
-    eventType: string
-    orderId: null | number
-    paymentIntentId: null | string
-    session?: null | SessionFacts
-  },
+  input: StripeEventInput,
 ): Promise<FulfilOutcome> {
+  const outcome = await applyEvent(payload, input)
+
+  if (outcome.outcome === 'mismatch') {
+    await payload.db.drizzle.execute(
+      sql`UPDATE "orders" SET "fulfilment_hold" = 'paymentMismatch' WHERE "id" = ${outcome.orderId}`,
+    )
+  }
+
+  return outcome
+}
+
+async function applyEvent(payload: Payload, input: StripeEventInput): Promise<FulfilOutcome> {
   const plan = planStripeEvent(input.eventType, input.session?.paymentStatus ?? null)
 
   if (plan.kind === 'ignore') {
@@ -148,6 +196,20 @@ export async function applyStripeEvent(
   }
 
   const order = await resolveOrder(payload, input.orderId, input.paymentIntentId)
+
+  if (!order && plan.kind === 'refund' && input.orderId === null && input.paymentIntentId) {
+    /*
+     * Phase 36 sweep 1: a refund found by payment intent alone, for an intent no order holds yet.
+     * The intent is stored when the payment is applied, so the likeliest reason is that the payment
+     * event has not been processed — a refund issued within seconds, or a payment event still being
+     * retried. Acknowledging it would lose the refund for good; throwing makes the route answer 500,
+     * and Stripe's retry finds the order once the payment lands. (An intent that belongs to another
+     * application is retried until Stripe gives up, and shows as a failed row — noisy, not lossy.)
+     */
+    throw new Error(
+      `No order holds payment intent ${input.paymentIntentId} yet — the payment may not have been applied. Retry.`,
+    )
+  }
 
   if (!order) {
     /*
@@ -349,26 +411,139 @@ async function applyRefund(
   }
 
   const full = isFullRefund(amountRefundedMinor, order.totalMinor)
+  const { req, transactionID, tx } = await openTransaction(payload)
 
-  const claim = await payload.db.drizzle.execute(
-    sql`UPDATE "orders"
-        SET "refunded_minor" = GREATEST(COALESCE("refunded_minor", 0), ${amountRefundedMinor}),
-            "refunded_at" = ${new Date().toISOString()},
-            "payment_status" = ${full ? STATUS_LITERAL.refunded : sql`"payment_status"`}
-        WHERE "id" = ${order.id}
-          AND "payment_status" IN (${statusList(['paid', 'refunded'])})
-          AND COALESCE("refunded_minor", 0) < ${amountRefundedMinor}`,
-  )
+  let emailId: null | number = null
 
-  if ((claim.rowCount ?? 0) === 0) {
-    return {
-      orderId: order.id,
-      outcome: 'alreadyFinal',
-      status: (order.paymentStatus as PaymentStatus) ?? null,
+  try {
+    const claim = await tx.execute(
+      sql`UPDATE "orders"
+          SET "refunded_minor" = GREATEST(COALESCE("refunded_minor", 0), ${amountRefundedMinor}),
+              "refunded_at" = ${new Date().toISOString()},
+              "payment_status" = ${full ? STATUS_LITERAL.refunded : sql`"payment_status"`}
+          WHERE "id" = ${order.id}
+            AND "payment_status" IN (${statusList(['paid', 'refunded'])})
+            AND COALESCE("refunded_minor", 0) < ${amountRefundedMinor}`,
+    )
+
+    if ((claim.rowCount ?? 0) === 0) {
+      await payload.db.commitTransaction(transactionID)
+
+      const status = (order.paymentStatus as PaymentStatus) ?? null
+
+      if (status !== 'paid' && status !== 'refunded') {
+        /*
+         * Phase 36 sweep 1: a refund for an order whose payment has not been applied yet — the
+         * `completed` event is still on its way or being retried. Recording it `processed` lost the
+         * refund; throwing makes Stripe retry until the payment has landed and this can apply.
+         */
+        throw new Error(
+          `A refund arrived for order ${order.id} while it is ${String(status)}; the payment has not been applied yet. Retry.`,
+        )
+      }
+
+      return { orderId: order.id, outcome: 'alreadyFinal', status }
     }
+
+    /* The refund email rides in the same transaction, so it cannot be lost after the commit. */
+    emailId = await queueOnce(
+      payload,
+      req,
+      transactionID,
+      dedupeKeyFor('refund', { amountMinor: amountRefundedMinor, id: order.id }),
+      () => queueRefundMessage(payload, order.id, amountRefundedMinor, req as PayloadRequest),
+    )
+
+    await payload.db.commitTransaction(transactionID)
+  } catch (error) {
+    await payload.db.rollbackTransaction(transactionID).catch(() => undefined)
+
+    throw error
   }
 
-  return { amountRefundedMinor, full, orderId: order.id, outcome: 'refunded' }
+  return { amountRefundedMinor, emailId, full, orderId: order.id, outcome: 'refunded' }
+}
+
+type TxHandle = {
+  execute: (query: unknown) => Promise<{ rowCount?: number; rows?: unknown[] }>
+}
+
+/** A transaction, its Local API `req`, and the raw handle for expression updates. */
+async function openTransaction(payload: Payload) {
+  const transactionID = await payload.db.beginTransaction()
+
+  if (transactionID === null) {
+    throw new Error('Could not begin a transaction.')
+  }
+
+  const tx = (payload.db as unknown as { sessions?: Record<string, { db: TxHandle }> }).sessions?.[
+    String(transactionID)
+  ]?.db
+
+  if (!tx) {
+    throw new Error('The transaction session was not available.')
+  }
+
+  const req = { transactionID } as Parameters<typeof payload.find>[0]['req']
+
+  return { req, transactionID, tx }
+}
+
+/**
+ * **Queue one email inside an open transaction, without letting it endanger the transaction.**
+ *
+ * The obvious call — `enqueueEmail` with `req` — would, on a duplicate key, fail an insert inside the
+ * payment's transaction, and Payload answers a failed Local API write by **killing the transaction**:
+ * the payment would silently roll back while this code went on to report success. So the dedupe key
+ * is checked first, with the same `req` (the row being paid is already claimed in this transaction,
+ * so no other finaliser can be inserting the same key). If the transaction was killed anyway, that is
+ * thrown — the route answers 500 and Stripe retries the whole thing — never swallowed. Any other
+ * refusal (`error`) is logged and reported; the payment stands.
+ */
+async function queueOnce(
+  payload: Payload,
+  req: Parameters<typeof payload.find>[0]['req'],
+  transactionID: number | string,
+  dedupeKey: string,
+  queue: () => Promise<EnqueueOutcome>,
+): Promise<null | number> {
+  const { totalDocs } = await payload.find({
+    collection: 'email-messages',
+    depth: 0,
+    limit: 0,
+    overrideAccess: true,
+    req,
+    where: { dedupeKey: { equals: dedupeKey } },
+  })
+
+  if (totalDocs > 0) {
+    return null
+  }
+
+  const queued = await queue()
+
+  const alive = Boolean(
+    (payload.db as unknown as { sessions?: Record<string, unknown> }).sessions?.[
+      String(transactionID)
+    ],
+  )
+
+  if (!alive) {
+    throw new Error(
+      `Queueing ${dedupeKey} ended the transaction${queued.outcome === 'error' ? `: ${queued.reason}` : ''}. Retry.`,
+    )
+  }
+
+  if (queued.outcome === 'claimed') {
+    return queued.id
+  }
+
+  if (queued.outcome === 'error') {
+    payload.logger.error({ dedupeKey, msg: `An order email could not be queued: ${queued.reason}` })
+    reportFailure(new Error(queued.reason), 'checkout.queueEmail', { dedupeKey })
+  }
+
+  return null
 }
 
 /**
@@ -405,43 +580,26 @@ async function finalisePaidOrder(
   paymentIntentId: null | string,
   session: SessionFacts,
 ): Promise<FulfilOutcome> {
-  const transactionID = await payload.db.beginTransaction()
-
-  if (transactionID === null) {
-    throw new Error('Could not begin a transaction to finalise the order.')
-  }
-
-  const req = { transactionID } as Parameters<typeof payload.find>[0]['req']
+  /*
+   * `tx` is the narrowed handle for the statements that must be expression updates rather than
+   * read-then-write. Only `execute` is used, and only with parameterised SQL.
+   */
+  const { req, transactionID, tx } = await openTransaction(payload)
 
   let short: ShortLine[] = []
+  let rolledBack = false
   let promotionCounted = true
   let promotionId: null | number = null
+  let confirmationEmailId: null | number = null
 
   try {
-    /*
-     * The narrowed handle for the statements that must be expression updates rather than
-     * read-then-write. Only `execute` is used, and only with parameterised SQL.
-     */
-    const tx = (
-      payload.db as unknown as {
-        sessions?: Record<
-          string,
-          { db: { execute: (query: unknown) => Promise<{ rowCount?: number }> } }
-        >
-      }
-    ).sessions?.[transactionID]
-
-    if (!tx) {
-      throw new Error('The transaction session was not available to finalise the order.')
-    }
-
     /*
      * **The claim, and the only barrier that holds under concurrency.** Postgres serialises two
      * statements on the row, the loser sees zero rows affected, and it stops. `FINALISABLE_STATUSES`
      * comes from the state machine so the SQL and the machine cannot drift. `amount_total = NULL`
      * is never true, so a session with no amount cannot pay anything.
      */
-    const claim = await tx.db.execute(
+    const claim = await tx.execute(
       sql`UPDATE "orders"
           SET "payment_status" = 'paid',
               "paid_at" = ${new Date().toISOString()},
@@ -461,7 +619,7 @@ async function finalisePaidOrder(
     }
 
     /* Everything after this point may be undone without undoing the claim. See the docblock. */
-    await tx.db.execute(sql`SAVEPOINT "finalise_stock"`)
+    await tx.execute(sql`SAVEPOINT "finalise_stock"`)
 
     const order = await payload.findByID({
       collection: 'orders',
@@ -522,7 +680,7 @@ async function finalisePaidOrder(
        * rolled back with the savepoint, so the order takes no stock at all rather than some of it.
        */
       for (const decrement of plan.decrements) {
-        const updated = await tx.db.execute(
+        const updated = await tx.execute(
           sql`UPDATE "product_variants"
               SET "inventory_quantity" = "inventory_quantity" - ${decrement.quantity}
               WHERE "id" = ${decrement.variantId}
@@ -530,9 +688,16 @@ async function finalisePaidOrder(
         )
 
         if ((updated.rowCount ?? 0) === 0) {
-          await tx.db.execute(sql`ROLLBACK TO SAVEPOINT "finalise_stock"`)
+          await tx.execute(sql`ROLLBACK TO SAVEPOINT "finalise_stock"`)
 
-          short = [{ available: 0, quantity: decrement.quantity, variantId: decrement.variantId }]
+          rolledBack = true
+
+          /*
+           * Phase 36 sweep 1: record every short line with what is **actually** available now,
+           * not just the one that failed with a guessed zero. The stock is re-read after the
+           * rollback, so it is the committed figure the next decision would be made on.
+           */
+          short = await shortfallNow(tx, lines, decrement)
 
           break
         }
@@ -540,7 +705,7 @@ async function finalisePaidOrder(
     }
 
     if (short.length > 0) {
-      await tx.db.execute(
+      await tx.execute(
         sql`UPDATE "orders"
             SET "fulfilment_hold" = 'stockShortfall',
                 "shortfall" = ${JSON.stringify(short)}::jsonb
@@ -561,7 +726,7 @@ async function finalisePaidOrder(
     promotionId = relatedId(order.promotion)
 
     if (promotionId !== null) {
-      const counted = await tx.db.execute(
+      const counted = await tx.execute(
         sql`UPDATE "promotions"
             SET "times_used" = "times_used" + 1
             WHERE "id" = ${promotionId}
@@ -575,21 +740,32 @@ async function finalisePaidOrder(
     const cartId = relatedId(order.cart)
 
     if (cartId !== null) {
-      /* A bag deleted meanwhile is simply gone; any other failure rolls the payment back and retries. */
-      await payload
-        .update({
-          collection: 'carts',
-          data: { status: 'converted' },
-          id: cartId,
-          overrideAccess: true,
-          req,
-        })
-        .catch(notFoundAsNull)
+      /*
+       * Phase 36 sweep 1: a raw statement through this transaction, not a Local API update. A
+       * Local API write that fails — a bag deleted meanwhile is a `NotFound` — makes Payload kill
+       * the transaction, and the payment rolled back silently while this function went on to report
+       * `finalised`. Zero rows here just means the bag is gone, which is fine.
+       */
+      await tx.execute(sql`UPDATE "carts" SET "status" = 'converted' WHERE "id" = ${cartId}`)
     }
+
+    /*
+     * **The confirmation is queued in this transaction** (Phase 36 sweep 1) — it commits with the
+     * payment or not at all. It used to be queued after the response, once the event row already
+     * said `processed`, so a crash in between lost it and no retry would ever recreate it. The
+     * route now only delivers the queued row. See `queueOnce` for why this cannot harm the payment.
+     */
+    confirmationEmailId = await queueOnce(
+      payload,
+      req,
+      transactionID,
+      dedupeKeyFor('orderConfirmation', { id: orderId }),
+      () => queueOrderConfirmation(payload, orderId, req as PayloadRequest),
+    )
 
     await payload.db.commitTransaction(transactionID)
   } catch (error) {
-    await payload.db.rollbackTransaction(transactionID)
+    await payload.db.rollbackTransaction(transactionID).catch(() => undefined)
 
     throw error
   }
@@ -625,8 +801,50 @@ async function finalisePaidOrder(
       },
     )
 
-    return { orderId, outcome: 'outOfStock', short }
+    return { confirmationEmailId, orderId, outcome: 'outOfStock', rolledBack, short }
   }
 
-  return { orderId, outcome: 'finalised' }
+  return { confirmationEmailId, orderId, outcome: 'finalised' }
+}
+
+/**
+ * Every line that cannot be met, with the stock actually available, read inside the transaction
+ * after the savepoint rollback. If a re-plan finds nothing short (the stock came back in the
+ * meantime), the line whose decrement failed is still reported — the order is held either way,
+ * because a person should look at an order that raced for its last units.
+ */
+async function shortfallNow(
+  tx: TxHandle,
+  lines: StockLine[],
+  failed: { quantity: number; variantId: number },
+): Promise<ShortLine[]> {
+  const ids = [...new Set(lines.map((line) => line.variantId))]
+
+  const result = await tx.execute(
+    sql`SELECT "id", "inventory_quantity" FROM "product_variants"
+        WHERE "id" IN (${sql.join(
+          ids.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+  )
+
+  const stock = new Map(
+    ((result.rows ?? []) as { id: number | string; inventory_quantity: null | number }[]).map(
+      (row) => [Number(row.id), Number(row.inventory_quantity ?? 0)],
+    ),
+  )
+
+  const replanned = planStockDecrements(
+    lines.map((line) => ({ ...line, stock: stock.get(line.variantId) ?? 0 })),
+  )
+
+  return replanned.short.length > 0
+    ? replanned.short
+    : [
+        {
+          available: stock.get(failed.variantId) ?? 0,
+          quantity: failed.quantity,
+          variantId: failed.variantId,
+        },
+      ]
 }

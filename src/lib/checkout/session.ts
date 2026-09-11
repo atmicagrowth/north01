@@ -1,11 +1,10 @@
 import 'server-only'
 
-import { sql } from '@payloadcms/db-postgres'
-
 import { getPayloadClient } from '@/lib/payload'
 import { siteUrl } from '@/lib/env.server'
 import { reportFailure } from '@/lib/observability/report'
 
+import { claimOrderForSession } from './pending-order'
 import type { PreflightResult } from './preflight'
 import { stripeClient } from './stripe'
 
@@ -115,24 +114,21 @@ export async function createCheckoutSession(
      * **Recorded by a claim, before the redirect**, so a webhook that arrives while the customer is
      * still typing can be matched to this attempt.
      *
-     * Only an order preflight has just prepared — `checkout_started`, with no session recorded
-     * (preflight clears a reused order's old one) — can take this session. Zero rows means something
-     * else got there first: a concurrent attempt for the same bag recorded its own session, or an
-     * event moved the order. Then this session belongs to nothing, so it is expired before anyone can
-     * pay it, and the customer is asked to try again.
+     * Only an order exactly as this attempt's preflight left it — `checkout_started`, no session,
+     * the same `updated_at` — can take this session (`claimOrderForSession`). Losing means something
+     * else got there first: a concurrent attempt on the same bag rewrote or claimed the order, or an
+     * event moved it. Then this session belongs to nothing, so it is expired before anyone can pay
+     * it, and the customer is asked to try again.
      *
      * `stripeCheckoutSessionId` is also unique — two orders cannot claim the same payment.
      */
-    const claim = await payload.db.drizzle.execute(
-      sql`UPDATE "orders"
-          SET "payment_status" = 'pending_payment',
-              "stripe_checkout_session_id" = ${session.id}
-          WHERE "id" = ${preflight.orderId}
-            AND "payment_status" = 'checkout_started'
-            AND "stripe_checkout_session_id" IS NULL`,
-    )
+    const claimed = await claimOrderForSession(payload, {
+      orderId: preflight.orderId,
+      preparedAt: preflight.preparedAt,
+      sessionId: session.id,
+    })
 
-    if ((claim.rowCount ?? 0) === 0) {
+    if (!claimed) {
       payload.logger.error({
         msg: 'A Checkout Session was created for an order that had moved on; it was expired unused.',
         orderId: preflight.orderId,

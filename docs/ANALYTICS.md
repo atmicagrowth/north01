@@ -35,8 +35,9 @@ shop about people, service by service, is in [`SECURITY.md`](SECURITY.md) §3. D
 
 All three are `NEXT_PUBLIC_`, so a change takes effect at the **next build** (DEPLOYMENT.md §10). Every
 SDK import is dynamic and ends in `.catch(() => {})`: a keyless build ships none of them, and a blocked
-vendor script is neither retried nor reported (Phase 36, audit R1-30). ESLint forbids a static
-`@sentry/nextjs` import in client code (Phase 30: the SDK had been downloaded on every route).
+vendor script is neither retried nor reported (Phase 36, audit R1-30). Every client-side Sentry import is dynamic
+(Phase 30: the SDK had been downloaded on every route); ESLint enforces it in `instrumentation-client.ts`,
+`global-error.tsx` and `env.public.ts`.
 
 ## 3. Loading
 

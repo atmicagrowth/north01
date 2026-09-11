@@ -259,6 +259,14 @@ unique.
 - **`/checkout/cancelled`** is static and writes nothing — not even `cancelled`. The bag is left as it
   was. Only `checkout.session.expired` cancels an order.
 
+
+**Two checkouts on one bag** (a double click, a second tab) are serialised: preflight takes a
+per-cart `pg_advisory_xact_lock` around the pending-order lookup and write
+(`lib/checkout/pending-order.ts`), reusing an order is a conditional claim on the status and session
+it saw, and the session claim also requires the order's `updated_at` from that attempt's own write —
+so a superseded attempt loses its claim and expires the session it created. One live order and one
+payable session per bag (`verify:checkout` G2, sweep 1).
+
 ## 8. The webhook
 
 `POST /api/stripe/webhook` — `src/app/(frontend)/api/stripe/webhook/route.ts`, `force-dynamic`. It is
@@ -302,7 +310,7 @@ Only a Payload 404 counts as "no such order"; any other read error is rethrown a
 | `checkout.session.async_payment_failed` | — | claim → `payment_failed` (from every status that may reach it, this session only) |
 | `checkout.session.expired` | — | claim → `cancelled`, then `fulfillmentStatus: cancelled`. No stock to return |
 | `payment_intent.payment_failed` | — | **Record only**: a declined card inside Checkout does not end the session (R1-05) |
-| `charge.refunded` | cumulative `amount_refunded` | `refunded_minor = GREATEST(existing, new)`, `refunded_at` set; `payment_status → refunded` only when `amount_refunded >= totalMinor` (`isFullRefund`). A partial refund leaves the order `paid`. Matches only on a **new** higher amount from `paid`/`refunded`, so a redelivery changes nothing (R1-09) |
+| `charge.refunded` | cumulative `amount_refunded` | `refunded_minor = GREATEST(existing, new)`, `refunded_at` set; `payment_status → refunded` only when `amount_refunded >= totalMinor` (`isFullRefund`). A partial refund leaves the order `paid`. Matches only on a **new** higher amount from `paid`/`refunded`, so a redelivery changes nothing (R1-09). The refund email is queued in the same transaction. **If the order exists but is not yet paid** — the refund overtook its payment — or its payment intent is not stored yet, the event throws and the route answers **500**, so Stripe retries until the payment has landed (sweep 1) |
 | `payment_intent.succeeded`, anything else | — | ignored |
 
 When a claim matches no row, `classifyUnclaimedSessionEvent` decides what that means:
@@ -311,7 +319,7 @@ When a claim matches no row, `classifyUnclaimedSessionEvent` decides what that m
 |---|---|---|
 | `alreadyFinal` | This order's own session, already moved on — a redelivery, or the second event for one payment | `processed` |
 | `superseded` | An expiry or failure for a session the order has since replaced | `ignored` |
-| `mismatch` | A session reporting money that is not the order's current session at its current total and currency | `ignored`, `error: MISMATCH: …`, logged, reported `stripe.webhook.mismatch`, **200** (a retry cannot fix it), **nothing applied** |
+| `mismatch` | A session reporting money that is not the order's current session at its current total and currency | `ignored`, `error: MISMATCH: …`, logged, reported `stripe.webhook.mismatch`, **200** (a retry cannot fix it), **nothing applied** — except that the order named in the metadata gets `fulfilmentHold: paymentMismatch`, so staff see the captured money in the Orders list (sweep 1). No automatic refund: a person decides |
 
 ### 8.3 Finalisation — `finalisePaidOrder`, one transaction
 
@@ -331,24 +339,31 @@ When a claim matches no row, `classifyUnclaimedSessionEvent` decides what that m
    reported `checkout.oversold`, and the outcome is `outOfStock`. A person decides: refund in Stripe,
    back-order or substitute (R1-10, R3-19). The hold is never cleared.
 6. Promotion `timesUsed + 1` under its limit (§4).
-7. Cart → `converted` (a cart already deleted is ignored).
+7. Cart → `converted` by a raw UPDATE on the same transaction handle (a cart already deleted is
+   ignored). Not the Local API: a failed Local API write makes Payload kill the transaction, which
+   would roll the payment back while this function reported success (sweep 1).
+7a. The order-confirmation email row is queued **inside** the transaction (dedupe-key pre-check), so
+   it cannot be lost between acknowledging Stripe and queueing it (sweep 1).
 8. Commit. Anything thrown rolls back **the whole thing, claim included**, and the route returns 500.
 
 Steps 6 and 7 run on both the normal and the oversold path.
 
-### 8.4 Email after the response
+### 8.4 After the response
 
-The `stripe-events` row is marked `processed` (or `ignored`) first, then **200** is returned. Mail work
-runs in Next's `after()` (`sendOrderEmails`, R1-21):
+The `stripe-events` row is marked `processed` (or `ignored`) first, then **200** is returned. Work that
+must not delay Stripe runs in Next's `after()`:
 
-- Order confirmation for `finalised`, `outOfStock`, and for a payment event that finds the order
-  already `paid`. That last case re-queues an email lost to a crash; the dedupe key per order makes it
-  free otherwise (`lib/email/orders.ts`).
-- Refund message once per new cumulative refunded amount (the dedupe key includes the amount).
-- An opportunistic drain of up to 5 queued emails.
+- **Deliver** the email rows the transaction already queued — the confirmation, or a refund message
+  (one per new cumulative amount; the dedupe key includes it) — and log a failed delivery.
+- An opportunistic drain of up to 5 queued emails (R1-21: Resend calls time out after 8 s).
+- **Record the Stripe Tax transaction** — `tax.transactions.createFromCalculation` with the calculation
+  id stored on the order at preflight and the order number as reference (`lib/tax/transactions.ts`),
+  with an idempotency key. Skipped when there is no `taxcalc_` id; failures are reported, never
+  blocking. **Reversal on refund is not built** — a refunded sale stays in Stripe Tax's reports until
+  it is reversed by hand in the Dashboard.
 
-Nothing in `after()` can change the order or the response. Failures land on `email-messages` rows,
-which the drain retries — see EMAIL.md.
+Nothing in `after()` can change the order or the response. A failed delivery stays on its
+`email-messages` row, which the drain retries — see EMAIL.md.
 
 ## 9. Order state
 

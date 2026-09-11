@@ -31,6 +31,9 @@ describe('usableReplyTo', () => {
     'a@example.com',
     'a@mail.example.org',
     'A@NORTH01.EXAMPLE',
+    /* The bare reserved names themselves (RFC 6761) — sweep 1 found the pattern needed a leading dot. */
+    'help@localhost',
+    'help@example',
   ])('drops the reserved domain in %s', (address) => {
     expect(usableReplyTo(address)).toBeNull()
   })

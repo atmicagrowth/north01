@@ -24,13 +24,13 @@ Severity follows the audit's scale. **No High or Critical issue is open.**
 | ID | Severity | Issue | Root cause | Fix | Verification |
 |---|---|---|---|---|---|
 | R2-01 | High | Search dialog opened with focus on Close; typed text lost | Radix focuses the first tabbable element | **Fixed before this pass** — `onOpenAutoFocus` focuses the input; focus returns to the trigger | code review; mobile-navigation spec |
-| R2-02 | Medium | Signed-out Wishlist link lands on a bare sign-in | the list is an account page | Sign-in explains why when `next=/account/wishlist`; saved items merge on sign-in (DEV-68) | component test |
+| R2-02 | Medium | Signed-out Wishlist link lands on a bare sign-in | the list is an account page | Sign-in explains why when `next=/account/wishlist`; saved items merge on sign-in (DEV-68) | code review |
 | R2-03 | Medium | Sign-in merge dropped the guest's discount code and reduced lines silently | merge discarded the promotion and the merge report | Promotion carried over when the account bag has none. **The one-time notice of reduced lines is not built** — it needs a new cookie and action; recorded below | code review |
-| R2-04 | Medium | Checkout never showed what was being bought | page reused the totals-only summary | Read-only line list above the summary | component test |
-| R2-05 | Medium | Payment-unavailable panel in developer language | copy written for the project | "Online checkout isn't open yet." — and the bag says so under Checkout | component test |
+| R2-04 | Medium | Checkout never showed what was being bought | page reused the totals-only summary | Read-only line list above the summary | code review; E2E flow 1 reaches checkout |
+| R2-05 | Medium | Payment-unavailable panel in developer language | copy written for the project | "Online checkout isn't open yet." — and the bag says so under Checkout | code review |
 | R2-06 | Medium | Partial refund shown as "Refunded" with no amount | refunded amount never read | "Partially refunded" and a "Refunded −$x" row | Review Pass 1 harness |
 | R2-07 | Medium | Checkout looked the same as View bag | default button variant | `primary` in drawer and bag | screenshot |
-| R2-08 | Medium | Mobile menu sub-links 18 px tall (WCAG 2.2 target size) | text-only links | `min-h-11` rows | mobile-navigation spec |
+| R2-08 | Medium | Mobile menu sub-links 18 px tall (WCAG 2.2 target size) | text-only links | `min-h-11` rows | code review (`min-h-11`); no automated size check |
 | R2-09 | Low | `begin_checkout` fired where checkout could not happen | — | **Fixed in Phase 31** | — |
 | R2-10 | Low | Order page lacked date, address and help links; discount positive | — | Added; discount shown as "−$x" | Review Pass 1 harness |
 | R2-11 | Low | "10 in stock" when the limit was the per-order cap | limit reason not carried | "You can have up to N of this per order." | component test |
@@ -38,8 +38,8 @@ Severity follows the audit's scale. **No High or Critical issue is open.**
 | R2-13 | Low | "Checkout" twice; tax sentence wrong on checkout | copy | Eyebrow removed; "Tax is calculated from your delivery address." | unit tests |
 | R2-14 | Low | Blue native clear in search | — | **Fixed earlier** (`scheme-dark`); Escape closes rather than clears, by decision | — |
 | R2-15 | Low | PDP heading outline H1 → H3 | — | **Fixed earlier** | axe |
-| R2-16 | Low | Skip link scrolled but did not move focus | `<main>` not focusable | `tabIndex={-1}` on `<main>` in both layouts | mobile-navigation spec |
-| R2-17 | Low | Form errors not tied to fields | no `aria-invalid`/`aria-describedby` | Discount, address book and checkout wired | component test |
+| R2-16 | Low | Skip link scrolled but did not move focus | `<main>` not focusable | `tabIndex={-1}` on `<main>` in both layouts | mobile-navigation spec — asserts focus lands on `<main>` |
+| R2-17 | Low | Form errors not tied to fields | no `aria-invalid`/`aria-describedby` | Discount, address book and checkout inputs carry `aria-invalid` and point at the error | component test (checkout); code review (discount, address book) |
 | R2-18 | Low | Mega menu open state trips axe `aria-hidden-focus` | Radix NavigationMenu's focus proxy is `aria-hidden` and focusable by design | **Accepted** — keyboard behaviour is correct (Tab, Shift+Tab, Escape); documented at the component | Radix source read |
 | R2-19 | Low | Size-guide model note announced twice | description and body | Body copy removed | — |
 | R2-20 | Low | 36 px Search/Close beside 44 px siblings | — | **Fixed earlier** (`pointer-coarse:size-11`) | — |

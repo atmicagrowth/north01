@@ -488,6 +488,22 @@ export const Orders: CollectionConfig = {
               },
             }),
             {
+              /*
+               * Phase 36 sweep 1: the Stripe Tax calculation the tax amount came from. After payment
+               * the webhook turns it into a Stripe Tax transaction — the record Stripe's tax reports
+               * and filings are built from; a calculation alone is a quote. Empty when no provider
+               * calculated the tax (no Stripe keys, or nothing taxable).
+               */
+              name: 'taxCalculationId',
+              type: 'text',
+              access: { update: nobodyField },
+              admin: {
+                readOnly: true,
+                description:
+                  'The Stripe Tax calculation ("taxcalc_…") behind the tax amount. Recorded as a Stripe Tax transaction once the order is paid.',
+              },
+            },
+            {
               type: 'row',
               fields: [
                 {
@@ -647,11 +663,24 @@ export const Orders: CollectionConfig = {
                   label: 'Stock shortfall — paid, cannot be sent from stock',
                   value: 'stockShortfall',
                 },
+                /*
+                 * Phase 36 sweep 1: a signed Stripe payment that did not match this order — an older
+                 * session, another amount or currency, or a second payment. The money may have been
+                 * taken; the order's payment status is deliberately left as it was, because what the
+                 * money was for is exactly what is in doubt. **No automatic refund**: the payment
+                 * might be the customer's only one for this bag (then the fix is to reconcile, not
+                 * refund), or a genuine duplicate (then refund it) — a person with the Stripe
+                 * dashboard open decides. The reason is on the matching Stripe event row.
+                 */
+                {
+                  label: 'Payment mismatch — a Stripe payment did not match; check Stripe',
+                  value: 'paymentMismatch',
+                },
               ],
               admin: {
                 readOnly: true,
                 description:
-                  'Set automatically when an order was paid for but the stock was no longer there. No stock was taken for it. Decide with the customer — refund in Stripe, back-order, or substitute — before picking anything. Filter the list on this to find every one.',
+                  'Set automatically. "Stock shortfall": paid for, but the stock was no longer there — no stock was taken; decide with the customer (refund in Stripe, back-order, or substitute) before picking anything. "Payment mismatch": Stripe reported a payment that did not match this order (an older checkout, a different amount, or a second payment) — nothing was applied; open the Stripe events for this order and the payment in Stripe, then refund or reconcile. Filter the list on this to find every one.',
               },
             },
             {

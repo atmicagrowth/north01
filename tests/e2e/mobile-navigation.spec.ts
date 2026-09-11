@@ -397,13 +397,16 @@ test.describe('§27.1c flow 12 — mobile navigation on a real mobile viewport',
        * axe scan could ever have seen it — `accessibility.spec.ts` lists it under the manual review
        * still owed, and this closes the first half of that item.
        *
-       * **The second half is deliberately not asserted here.** Whether activating it moves *focus*
-       * into `<main id="main-content">` rather than only the scroll position depends on the target
-       * being focusable, and that `<main>` carries no `tabindex`. Asserting it would be asserting a
-       * behaviour the markup does not currently promise, which is how a suite goes red for something
-       * that was never claimed. It stays in the manual list.
+       * The second half — activating it moves *focus* into `<main id="main-content">`, not only the
+       * scroll position — became a promise in Phase 36 (audit R2-16), when `<main>` gained
+       * `tabIndex={-1}`, so it is asserted below.
        */
       await expect(page.getByRole('link', { name: 'Skip to content' })).toBeFocused()
+    })
+
+    await test.step('activating it moves focus into the main content', async () => {
+      await page.keyboard.press('Enter')
+      await expect(page.locator('main#main-content')).toBeFocused()
     })
   })
 

@@ -13,6 +13,7 @@ import * as migration_20260909_053604_phase_19_email from './20260909_053604_pha
 import * as migration_20260911_142556_cart_item_price_seen from './20260911_142556_cart_item_price_seen';
 import * as migration_20260911_164502_order_shipping_estimate from './20260911_164502_order_shipping_estimate';
 import * as migration_20260911_180257_phase_36_order_fulfilment_hold from './20260911_180257_phase_36_order_fulfilment_hold';
+import * as migration_20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation from './20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation';
 
 export const migrations = [
   {
@@ -88,6 +89,11 @@ export const migrations = [
   {
     up: migration_20260911_180257_phase_36_order_fulfilment_hold.up,
     down: migration_20260911_180257_phase_36_order_fulfilment_hold.down,
-    name: '20260911_180257_phase_36_order_fulfilment_hold'
+    name: '20260911_180257_phase_36_order_fulfilment_hold',
+  },
+  {
+    up: migration_20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation.up,
+    down: migration_20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation.down,
+    name: '20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation'
   },
 ];

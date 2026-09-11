@@ -72,7 +72,7 @@ export function usableReplyTo(value: unknown): null | string {
   if (!address.includes('@') || !domain) return null
 
   const reserved =
-    /\.(example|test|invalid|localhost)$/.test(domain) ||
+    /(^|\.)(example|test|invalid|localhost)$/.test(domain) ||
     /(^|\.)example\.(com|net|org)$/.test(domain)
 
   return reserved ? null : address

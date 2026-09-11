@@ -9,7 +9,7 @@ the gate as one sequence, a matrix of what each harness touches, and the invento
 
 | Layer | Where | Command | Needs |
 |---|---|---|---|
-| Unit | `tests/unit/*.test.ts` (18 files) | `pnpm test:unit` | nothing: Node environment, no DOM |
+| Unit | `tests/unit/*.test.ts` (20 files) | `pnpm test:unit` | nothing: Node environment, no DOM |
 | Component | `tests/components/*.test.tsx` (8 files) | `pnpm test:components` | nothing: jsdom, `tests/setup/components.ts` |
 | Both | — | `pnpm test:run` (CI), `pnpm test` (watch) | — |
 | Harnesses | `scripts/verify-*.ts` (22) | `pnpm verify:<name>` | most need the **development** database (§3) |
@@ -132,8 +132,7 @@ fail for reasons that belong to the harness. Confirm what the port serves before
 **First run, Phase 35** (notes §1.40.7): 38 passed, 5 failed, 14 skipped. One failure was a shop defect
 (the pending-review sentence disappeared), one a configuration defect (`next start` on a laptop
 resolved as production, audit R1-19), three were the suite's own. After the fixes: **43 passed,
-0 failed, 14 skipped.** The docblocks of `playwright.config.ts`, `fixtures.ts` and the specs still say
-the suite has never run; this is the current record.
+0 failed, 14 skipped.** The specs' docblocks record the same first run.
 
 ### The skips
 

@@ -71,6 +71,15 @@ collect tax. **Without registrations every calculation returns zero tax** — ch
 charge no tax anywhere, which looks like success. Check one calculation against a registered address
 before taking real orders.
 
+**Refunds and Stripe Tax.** Each paid order is recorded as a Stripe Tax transaction, but a refund does
+**not** yet reverse it (Phase 36, `src/lib/tax/transactions.ts`). Until that is built, reverse a
+refunded order's tax transaction by hand in the Stripe Dashboard (*Tax → Transactions*), or your tax
+reports will include sales you gave back.
+
+**Two order holds to watch** (Admin → Orders, filter by *Fulfilment hold*): *Stock shortfall* — paid,
+but the stock was gone; *Payment mismatch* — Stripe took money that did not match the order's current
+checkout. Both are yours to resolve in Stripe (refund, or back-order); neither clears itself.
+
 ---
 
 ## 5. Larger product photography — optional, and the most visible gap

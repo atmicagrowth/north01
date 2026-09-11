@@ -9239,7 +9239,7 @@ Of twenty findings, five were already fixed (including the one High, R2-01). The
 one Low by decision: checkout lists what is being bought; checkout buttons are primary; the
 payment-unavailable copy is written for shoppers; mobile menu rows meet the 44-pixel target; a guest's
 discount code survives sign-in; the bag distinguishes a per-order cap from stock; category filters are
-a tree; the skip link moves focus; form errors are tied to their fields. **Not built:** a one-time
+a tree; the skip link moves focus; the checkout, discount and address forms mark their fields invalid and point them at the error. **Not built:** a one-time
 notice when sign-in reduces a guest's lines — it needs a new cookie and a clearing action (R2-03's
 second half).
 
@@ -9278,6 +9278,69 @@ owner's, TODO.md §12). Plan §38's missing documents now exist: `CMS.md`, `COMM
 **Not verified, and why:** nothing that needs Stripe keys has run — session creation, a Stripe Tax
 calculation, a real payment, a real refund. The code paths are harness-tested with signed events
 offline; the first test-mode purchase is the owner's first step once keys exist (docs/COMMERCE.md).
+
+### 1.41.6 Sweep 1
+
+Two independent reviews of the phase commit: one adversarial, on the payment path only, assuming an
+attacker controls every request and Stripe delivers late, twice and out of order; one on everything
+else, including a spot-check of fifteen claims in the new documents against the code.
+
+**The payment path** — seven defects, one High, all fixed:
+
+1. **(High) Concurrent checkouts on one bag.** A double click or a second tab could create two orders
+   for one bag, or rewrite one pending order twice and leave a payable session behind — money taken
+   for an order that stayed unpaid, or a double charge. The lookup and write now run under a per-cart
+   `pg_advisory_xact_lock` (Payload's `indexes` has no `where`, so a partial unique index would have
+   meant a hand-written migration); reusing a pending order is a conditional claim on the status and
+   session it saw; and the session claim also requires the order's `updated_at` from that attempt's own
+   write, so a superseded attempt loses and expires its session. `verify:checkout` G2 races two
+   preflights with `Promise.all`.
+2. **A mismatched payment was invisible to staff.** It now sets `fulfilmentHold = paymentMismatch` on
+   the order (payment status unchanged) as well as reporting to Sentry. No automatic refund: whether
+   the money is a duplicate or the customer's only payment is a staff decision.
+3. **The confirmation email could be lost** between marking the event processed and queueing it in
+   `after()`. The email row is now queued inside the payment transaction; `after()` only delivers.
+4. **A refund that arrived before its payment was recorded as processed and lost.** It now answers
+   500 so Stripe retries until the payment has landed.
+5. **Converting the bag through the Local API could roll the payment back silently** (Payload kills
+   the transaction on a failed write) while finalise reported success. It is a raw UPDATE on the same
+   transaction now.
+6. **No Stripe Tax transaction was ever recorded**, so sales would be missing from Stripe Tax reports.
+   The calculation id is stored on the order and committed with `createFromCalculation` after payment,
+   without blocking. Reversal on refund is not built (documented in `lib/tax/transactions.ts`).
+7. **A zero taxable base called Stripe**, and **the shortfall detail was inaccurate** — both fixed; the
+   harness now proves the savepoint-rollback branch runs.
+
+One migration (`phase_36_sweep_1_mismatch_hold_tax_calculation`). `verify:webhook` 74, `verify:checkout`
+71, `verify:orders` 85.
+
+**Everything else:**
+
+- **A failed image never cleared.** `MediaFrame` remembered a failure for the life of the component,
+  and the product gallery deliberately reuses one frame across colours — so after one image failed,
+  choosing another colour loaded the new image underneath a placeholder that never lifted. The frame
+  is now keyed by its image.
+- **A category cycle hid categories.** The tree-order walk starts from roots, and two categories that
+  name each other as parent have none, so both vanished from the filter. Anything the walk misses is
+  now listed at the top level.
+- **The reply-to guard missed the bare reserved names** (`help@localhost`, `help@example`) because
+  its pattern required a leading dot.
+- **The address book was said to tie errors to fields, and did not** — only its notice had become an
+  alert. Its inputs now carry `aria-invalid` and point at the notice.
+- **The skip link's focus move** was cited as verified by the mobile-navigation spec, which in fact
+  said it deliberately did not assert it. It asserts it now.
+- **Seven documentation claims were false or overstated** — a test-file count, a sentence calling the
+  specs' docblocks stale in the commit that had just rewritten them, "component test" cited where
+  none existed, `verify:media` cited for the upload cap it never checks, and ESLint's reach over
+  Sentry imports. Each corrected to what is actually verified, or to "code review".
+
+**The gate after the fixes** — 936 unit and component tests, build, 21 of 22 harnesses and 42 of 43
+E2E flows green on the first run. The two failures were one cause: `verify:search` crashed on a
+dropped Neon connection (`Connection terminated unexpectedly`) before its cleanup, leaving its
+published fixture product in the database, and E2E flow 2 then picked that product as the first in the
+shop and searched for it. The harness's cleanup only removed what the current run had created, so a
+crashed run's debris was permanent. It now clears earlier runs' fixtures by their `vs-`/`VS-` prefixes
+before it starts; re-run, it removed the product, passed 210/210, and flow 2 passed.
 
 # 2. Deviations
 

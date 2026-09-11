@@ -1,7 +1,5 @@
 import 'server-only'
 
-import { randomBytes } from 'node:crypto'
-
 import type { Payload } from 'payload'
 
 import { getCart, hasSignedOutBag, type CartView } from '@/lib/cart/cart'
@@ -19,11 +17,10 @@ import type { TaxAddress, TaxResult } from '@/lib/tax/rules'
 
 import { reportFailure } from '@/lib/observability/report'
 
+import { upsertPendingOrder } from './pending-order'
 import {
   decidePriorSession,
-  formatOrderNumber,
   orderTotalMinor,
-  REUSABLE_ORDER_STATUSES,
   type PaymentStatus,
   type PreflightFailure,
 } from './rules'
@@ -84,6 +81,8 @@ export type PreflightResult =
       customerId: null | number
       ok: true
       orderId: number
+      /** The order's `updated_at` after this attempt wrote it — `claimOrderForSession` needs it. */
+      preparedAt: string
       rate: ShippingRate
       tax: TaxResult
       totals: {
@@ -238,208 +237,38 @@ export async function runPreflight(
     }),
   }
 
-  /* Step 10. */
+  /* Step 10 — `pending-order.ts`, which is where the concurrency is handled. */
   const payload = await getPayloadClient()
-  const upserted = await upsertPendingOrder(payload, {
-    cart,
-    contact,
-    customerId,
-    rate: validated.rate,
-    totals,
-  })
+  const upserted = await upsertPendingOrder(
+    payload,
+    {
+      cart,
+      contact,
+      customerId,
+      rate: validated.rate,
+      taxCalculationId:
+        tax.status === 'calculated' || tax.status === 'not_required' ? tax.providerRef : null,
+      totals,
+    },
+    (orderId, sessionId, orderStatus) =>
+      retirePriorSession(payload, orderId, sessionId, orderStatus),
+  )
 
   if (!upserted.ok) {
     return upserted
   }
-
-  const { orderId } = upserted
 
   return {
     cart,
     contact,
     customerId,
     ok: true,
-    orderId,
+    orderId: upserted.orderId,
+    preparedAt: upserted.preparedAt,
     rate: validated.rate,
     tax,
     totals,
   }
-}
-
-/**
- * **Step 10: *"create or update pending order context."***
- *
- * One order per cart, reused across attempts. A customer who reaches Stripe, changes their mind, comes
- * back and edits their bag must not leave a trail of abandoned orders — and more importantly, the
- * webhook needs a stable id to find its way back to, which is what §17.1b's metadata carries.
- *
- * The order is written at `checkout_started` and **never at `paid`**. `AGENTS.md`: *"Only a
- * signature-verified Stripe webhook marks an order paid."* Nothing in this file can write that status;
- * the state machine in `rules.ts` will not even allow `draft → paid`.
- *
- * The **line items are snapshotted here**, not at payment. `order-items` is where a price is frozen —
- * `CartItems.ts` says so — and freezing it at preflight rather than in the webhook means the order
- * records what the customer was shown at the moment they were sent to pay, which is the number the
- * Checkout Session will charge.
- *
- * ### Phase 36: which orders are reused, and what happens to their old session
- *
- * `REUSABLE_ORDER_STATUSES` (in `rules.ts`) now includes `pending_payment` and excludes `cancelled` —
- * audits R1-06 and R1-03, reasoned there. Reusing a `pending_payment` order is only safe because of
- * the step below: an order that has been sent to Stripe still has a live session, and rewriting the
- * order while that session can be paid let an older, smaller session pay for a newer, larger bag
- * (R1-01). So the old session is asked about first (`decidePriorSession`) and expired if it is still
- * open; one that has been paid, or is clearing a bank payment, refuses the checkout rather than
- * re-pricing a purchase. The reused order's session id is cleared in the same write, so an event for
- * the retired session can no longer match it.
- */
-async function upsertPendingOrder(
-  payload: Payload,
-  input: {
-    cart: CartView
-    contact: CheckoutContact
-    customerId: null | number
-    rate: ShippingRate
-    totals: {
-      discountMinor: number
-      shippingMinor: number
-      subtotalMinor: number
-      taxMinor: number
-      totalMinor: number
-    }
-  },
-): Promise<{ ok: false; reason: PreflightFailure } | { ok: true; orderId: number }> {
-  const { cart, contact, customerId, rate, totals } = input
-
-  const { docs: existing } = await payload.find({
-    collection: 'orders',
-    depth: 0,
-    limit: 1,
-    overrideAccess: true,
-    sort: '-createdAt',
-    where: {
-      and: [{ cart: { equals: cart.id } }, { paymentStatus: { in: [...REUSABLE_ORDER_STATUSES] } }],
-    },
-  })
-
-  const priorSessionId = existing[0]?.stripeCheckoutSessionId ?? null
-
-  if (existing[0] && priorSessionId) {
-    const refusal = await retirePriorSession(
-      payload,
-      existing[0].id,
-      priorSessionId,
-      existing[0].paymentStatus as PaymentStatus,
-    )
-
-    if (refusal !== null) {
-      return { ok: false, reason: refusal }
-    }
-  }
-
-  const address = {
-    city: trimmed(contact.shippingAddress.city),
-    company: null,
-    country: trimmed(contact.shippingAddress.country).toUpperCase(),
-    firstName: trimmed(contact.shippingAddress.firstName),
-    lastName: trimmed(contact.shippingAddress.lastName),
-    line1: trimmed(contact.shippingAddress.line1),
-    line2: trimmed(contact.shippingAddress.line2) || null,
-    phone: trimmed(contact.shippingAddress.phone) || null,
-    postalCode: trimmed(contact.shippingAddress.postalCode),
-    region: trimmed(contact.shippingAddress.region) || null,
-  }
-
-  const data = {
-    billingAddress: address,
-    cart: cart.id,
-    currency: cart.currency,
-    ...(customerId === null ? {} : { customer: customerId }),
-    discountCode: cart.discount?.code ?? null,
-    discountMinor: totals.discountMinor,
-    email: trimmed(contact.email).toLowerCase(),
-    /*
-     * `fulfillmentStatus` is required and starts unfulfilled. Nothing here may write `paid`:
-     * `AGENTS.md` says only a signature-verified webhook does that, and the state machine in
-     * `rules.ts` will not allow `draft → paid` at all.
-     */
-    fulfillmentStatus: 'unfulfilled' as const,
-    paymentStatus: 'checkout_started' as const,
-    /*
-     * Always written, and `null` when there is no code (R1-08). The conditional spread this replaced
-     * omitted the key on an update, so Payload kept the previous attempt's promotion — and paying
-     * then counted a redemption of a code the customer had removed.
-     */
-    promotion: cart.discount?.id ?? null,
-    shippingAddress: address,
-    shippingMethodCode: rate.id,
-    shippingMethodLabel: rate.name,
-    shippingEstimate: rate.estimate,
-    shippingMinor: totals.shippingMinor,
-    subtotalMinor: totals.subtotalMinor,
-    taxMinor: totals.taxMinor,
-    totalMinor: totals.totalMinor,
-  }
-
-  const order = existing[0]
-    ? await payload.update({
-        collection: 'orders',
-        /* The retired session is no longer this order's — see the docblock. */
-        data: { ...data, stripeCheckoutSessionId: null },
-        id: existing[0].id,
-        overrideAccess: true,
-      })
-    : await payload.create({
-        collection: 'orders',
-        data: { ...data, orderNumber: formatOrderNumber(new Date(), randomBytes(6)) },
-        overrideAccess: true,
-      })
-
-  /*
-   * The snapshot is rewritten from scratch on every attempt rather than diffed. A bag can change
-   * between attempts, and reconciling two sets of lines is a merge with an edge case for every way
-   * they can differ; deleting and rewriting has none, and these rows exist only for this order.
-   */
-  const { docs: staleLines } = await payload.find({
-    collection: 'order-items',
-    depth: 0,
-    limit: 500,
-    overrideAccess: true,
-    pagination: false,
-    where: { order: { equals: order.id } },
-  })
-
-  for (const line of staleLines) {
-    await payload.delete({ collection: 'order-items', id: line.id, overrideAccess: true })
-  }
-
-  for (const line of cart.lines) {
-    const unitPriceMinor = line.unitPriceMinor ?? 0
-
-    await payload.create({
-      collection: 'order-items',
-      data: {
-        /*
-         * `lineTotalMinor` is **stored, not recomputed** — `OrderItems.ts` says so. An order is a
-         * historical record, and a line total derived at render time would silently change if the
-         * arithmetic ever did.
-         */
-        lineTotalMinor: unitPriceMinor * line.effectiveQuantity,
-        order: order.id,
-        product: line.productId,
-        productName: line.productName,
-        quantity: line.effectiveQuantity,
-        /* A withdrawn variant has no SKU to read; the snapshot records that rather than inventing one. */
-        sku: line.sku ?? 'UNKNOWN',
-        unitPriceMinor,
-        variant: line.variantId,
-        variantLabel: [line.color, line.size].filter(Boolean).join(' / ') || '—',
-      },
-      overrideAccess: true,
-    })
-  }
-
-  return { ok: true, orderId: order.id }
 }
 
 /**

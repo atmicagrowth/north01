@@ -8,15 +8,14 @@ import {
   reclaimWebhookDelivery,
 } from '@/lib/checkout/events'
 import { courierFor } from '@/lib/email/courier'
-import { queueOrderConfirmation, queueRefundMessage } from '@/lib/email/orders'
 import { deliverEmail, drainEmails } from '@/lib/email/send'
+import { recordTaxTransaction, type TaxTransactionClient } from '@/lib/tax/transactions'
 import { applyStripeEvent, type FulfilOutcome, type SessionFacts } from '@/lib/checkout/fulfil'
 import {
   decideDuplicateDelivery,
   isHandledEventType,
   isSessionEvent,
   parseOrderReference,
-  planStripeEvent,
 } from '@/lib/checkout/rules'
 import { isStripeConfigured, stripeClient, stripeWebhookSecret } from '@/lib/checkout/stripe'
 import { reportFailure } from '@/lib/observability/report'
@@ -59,12 +58,12 @@ import { getPayloadClient } from '@/lib/payload'
  *
  * ### The email is after the response — Phase 36, audit R1-21
  *
- * The row is marked `processed` **before** any mail work, and the mail work runs in Next's `after()`
- * (supported in route handlers — `next/dist/docs/.../functions/after.md`). A slow mail provider used
- * to hold Stripe's request open, and a timeout there is a failure to Stripe even though the order was
- * already paid. The confirmation is keyed on the order, so it is safe to queue again: a redelivery
- * that finds the order already paid by this session re-queues it, which is what recovers an email
- * lost to a crash between the commit and the send.
+ * The email **row** is queued inside the same transaction as the state change (`fulfil.ts`, Phase 36
+ * sweep 1), so it commits with the payment or refund or not at all. The **send** runs in Next's
+ * `after()` (supported in route handlers — `next/dist/docs/.../functions/after.md`), because a slow
+ * mail provider used to hold Stripe's request open, and a timeout there is a failure to Stripe even
+ * though the order was already paid. If the send never runs, the queued row is delivered by the
+ * drain. The Stripe Tax transaction is recorded there too, for the same reason.
  *
  * ### `force-dynamic`, because a cached webhook is not a webhook
  */
@@ -261,11 +260,8 @@ export async function POST(request: Request): Promise<Response> {
       overrideAccess: true,
     })
 
-    /* §17.1d: *"Triggers email only after the correct state transition."* — see the docblock. */
-    const isPayment =
-      planStripeEvent(event.type, session?.paymentStatus ?? null).kind === 'finalise'
-
-    after(() => sendOrderEmails(payload, event.id, outcome, isPayment))
+    /* §17.1d: the email was queued with the state change; this only delivers it. */
+    after(() => afterResponse(payload, event.id, outcome))
 
     return new Response('OK', { status: 200 })
   } catch (error) {
@@ -320,45 +316,40 @@ function rowRecordFor(outcome: FulfilOutcome): { error?: string; status: 'ignore
 }
 
 /**
- * The customer's email for this outcome, run after the response.
+ * Everything that may happen after the response, none of which may throw.
  *
- * Wrapped whole, because nothing here may throw: the event row already says `processed`, and a mail
- * failure is recorded on its own `email-messages` row, which the drain retries.
+ * **Emails are delivered, not queued, here** (Phase 36 sweep 1). `fulfil.ts` queues the confirmation
+ * (for `finalised`, and `outOfStock` — the customer was charged and deserves the receipt; it confirms
+ * the order, never dispatch) and the refund message in the **same transaction** as the state change,
+ * so the row exists whether or not this runs. If it does not run, the drain delivers it later.
  *
- * **The confirmation** is queued for a new payment (`finalised`, and `outOfStock` — the customer has
- * been charged and deserves the receipt; it confirms the order, never dispatch), and also for a
- * payment event that finds the order already paid. The dedupe key makes that second case free when
- * the email already exists, and it is what recovers one lost to a crash after the commit.
- *
- * **The refund message** is queued once per new cumulative refunded amount.
+ * **The Stripe Tax transaction** is recorded for a newly paid order — see `lib/tax/transactions.ts`.
+ * A failure is logged and reported for someone to record by hand; it never touches the order.
  */
-async function sendOrderEmails(
+async function afterResponse(
   payload: Payload,
   eventId: string,
   outcome: FulfilOutcome,
-  isPayment: boolean,
 ): Promise<void> {
   try {
     const courier = await courierFor(payload)
 
-    const confirm =
-      outcome.outcome === 'finalised' ||
-      outcome.outcome === 'outOfStock' ||
-      (isPayment && outcome.outcome === 'alreadyFinal' && outcome.status === 'paid')
+    const emailId =
+      outcome.outcome === 'finalised' || outcome.outcome === 'outOfStock'
+        ? outcome.confirmationEmailId
+        : outcome.outcome === 'refunded'
+          ? outcome.emailId
+          : null
 
-    if (confirm && outcome.orderId !== null) {
-      const queued = await queueOrderConfirmation(payload, outcome.orderId)
+    if (emailId !== null && courier) {
+      const delivered = await deliverEmail(payload, emailId, courier)
 
-      if (queued.outcome === 'claimed' && courier) {
-        await deliverEmail(payload, queued.id, courier)
-      }
-    }
-
-    if (outcome.outcome === 'refunded') {
-      const queued = await queueRefundMessage(payload, outcome.orderId, outcome.amountRefundedMinor)
-
-      if (queued.outcome === 'claimed' && courier) {
-        await deliverEmail(payload, queued.id, courier)
+      if (delivered.outcome !== 'sent') {
+        payload.logger.error({
+          emailId,
+          eventId,
+          msg: `An order email was queued but not delivered (${delivered.outcome}); the drain will retry it.`,
+        })
       }
     }
 
@@ -376,5 +367,33 @@ async function sendOrderEmails(
       msg: 'Sending an order email failed. The order is unaffected — see the email-messages record.',
     })
     reportFailure(error, 'stripe.webhook.email', { eventId })
+  }
+
+  if (outcome.outcome === 'finalised' || outcome.outcome === 'outOfStock') {
+    try {
+      const order = await payload.findByID({
+        collection: 'orders',
+        depth: 0,
+        id: outcome.orderId,
+        overrideAccess: true,
+      })
+
+      const recorded = await recordTaxTransaction(stripeClient() as TaxTransactionClient, {
+        orderNumber: String(order.orderNumber),
+        taxCalculationId: order.taxCalculationId,
+      })
+
+      if (recorded.outcome === 'failed') {
+        throw new Error(recorded.reason)
+      }
+    } catch (error) {
+      payload.logger.error({
+        err: error,
+        eventId,
+        msg: 'A paid order’s Stripe Tax transaction could not be recorded. Record it in Stripe by hand.',
+        orderId: outcome.orderId,
+      })
+      reportFailure(error, 'stripe.webhook.taxTransaction', { orderId: outcome.orderId })
+    }
   }
 }

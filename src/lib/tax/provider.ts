@@ -8,6 +8,7 @@ import {
   PENDING_TAX,
   stripeTaxCalculationParams,
   taxResultFromStripeCalculation,
+  taxWithoutProvider,
   type TaxRequest,
   type TaxResult,
 } from './rules'
@@ -64,6 +65,12 @@ export const stripeTaxProvider: TaxProvider = {
 
     if (params === null) {
       return PENDING_TAX
+    }
+
+    const nothingToTax = taxWithoutProvider(request)
+
+    if (nothingToTax !== null) {
+      return nothingToTax
     }
 
     try {

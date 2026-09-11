@@ -904,6 +904,37 @@ const cleanup = async () => {
   }
 }
 
+/*
+ * **Debris from an earlier run that crashed** — Phase 36 sweep 1. `cleanup` removes what *this* run
+ * created, so a run that dies mid-way (a dropped Neon connection did it once) left its published fixture
+ * product and categories in the database for good, where the next E2E run picked "Verify Parka …" as
+ * the first product in the shop and searched for something the index did not hold. Every fixture this
+ * harness writes carries the `vs-` slug or `VS-` SKU prefix, so anything with one is left over and goes
+ * first — children before parents, permanently, through the same hooks that keep the index in step.
+ */
+for (const [collection, where] of [
+  ['product-variants', { sku: { like: 'VS-' } }],
+  ['products', { slug: { like: 'vs-product-' } }],
+  ['collections', { slug: { like: 'vs-set-' } }],
+  ['categories', { slug: { like: 'vs-parka-' } }],
+  ['categories', { slug: { like: 'vs-outer-' } }],
+] as const) {
+  const { docs } = await payload.find({
+    collection,
+    depth: 0,
+    limit: 100,
+    overrideAccess: true,
+    trash: true,
+    where,
+  })
+
+  for (const doc of docs) {
+    await payload
+      .delete({ collection, id: doc.id, overrideAccess: true, trash: false })
+      .catch(() => undefined)
+  }
+}
+
 try {
   const stamp = Date.now() % 1_000_000
 

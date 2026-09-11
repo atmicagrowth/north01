@@ -175,9 +175,15 @@ Orders are created by checkout and marked paid **only by the signature-verified 
 
 | Staff can change | Server-written, read-only |
 |---|---|
-| `fulfillmentStatus`: unfulfilled → processing → shipped → delivered, or cancelled before dispatch | `paymentStatus`, `orderNumber`, customer, email, cart, every amount, promotion and code, shipping method, Stripe ids, `paidAt`, `refundedAt`, `refundedMinor` |
+| `fulfillmentStatus`: unfulfilled → processing → shipped → delivered, or cancelled before dispatch | `paymentStatus`, `orderNumber`, customer, email, cart, every amount, promotion and code, shipping method and estimate, Stripe ids, `taxCalculationId`, `paidAt`, `refundedAt`, `refundedMinor`, `fulfilmentHold`, `shortfall` |
 | `carrier`, `trackingNumber`, `trackingUrl` | `shippedAt`, `deliveredAt` (set by the transition) |
 | Shipping and billing address snapshots — **admin only** | order items: every snapshot field and the order link (`freezeOrderLines`) |
+
+**Held orders.** Filter the Orders list by `fulfilmentHold`. `stockShortfall`: the payment went
+through but the stock was not there — refund in Stripe, back-order or substitute (the `shortfall`
+field lists what was short). `paymentMismatch`: Stripe took money that did not match this order's
+current checkout — check the payment in Stripe and refund it if it is a duplicate. The hold is never
+cleared automatically.
 
 `enforceOrderTransitions` (`src/payload/hooks/orderTransitions.ts`, rules in
 `src/lib/orders/rules.ts`) refuses illegal moves: `shipped` cannot go back or be cancelled, and

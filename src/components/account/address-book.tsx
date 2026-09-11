@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useId } from 'react'
 
 import type { AddressActionState } from '@/lib/account/addresses'
 
@@ -39,6 +39,9 @@ const FIELDS = [
 
 export function AddAddressForm() {
   const [state, action, pending] = useActionState(addAddressAction, IDLE)
+  const noticeId = useId()
+  /* The action names no field, so a failure marks the form's fields together and points each at it. */
+  const failed = !state.ok && Boolean(state.notice)
 
   return (
     <form action={action} className="flex flex-col gap-m">
@@ -50,6 +53,8 @@ export function AddAddressForm() {
               {field.required ? '' : ' (optional)'}
             </span>
             <Input
+              aria-describedby={failed ? noticeId : undefined}
+              aria-invalid={failed || undefined}
               autoComplete={field.autoComplete}
               name={field.name}
               maxLength={field.name === 'country' ? undefined : ADDRESS_MAX_LENGTH[field.name]}
@@ -67,6 +72,7 @@ export function AddAddressForm() {
 
         {/* A failure is an alert, so it is announced at once; a success stays polite. */}
         <p
+          id={noticeId}
           aria-live={state.ok ? 'polite' : undefined}
           className={cn(
             'font-sans text-body-sm',

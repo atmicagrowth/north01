@@ -54,7 +54,7 @@ settings only the owner can change, and they are listed below with the exact act
 |---|---|---|
 | Database unavailable | Header and footer render; the page shows the branded error; the success page says the order could not be read | notes §1.36; `(frontend)/error.tsx` |
 | Search unavailable | Browse falls back to Postgres; search says it is unavailable, never "no results" | `verify:search`; E2E edge case 11 |
-| Cloudinary asset unavailable | The reserved placeholder box, no broken icon, no layout shift | `media-frame.tsx`; E2E edge case "image failure" |
+| Cloudinary asset unavailable | The reserved placeholder box, no broken icon, no layout shift | `media-frame.tsx` (code review); the E2E image-failure case asserts the box keeps its geometry |
 | Resend failure | Messages stay queued; an 8-second timeout; checkout and the webhook never wait on email | `verify:email` |
 | Stripe webhook delayed | The success page says payment is being confirmed; only the webhook marks paid | `verify:webhook`; confirmation copy tests |
 | Duplicate webhook | Processed once; a failed delivery is reprocessed exactly once | `verify:webhook` |
@@ -66,7 +66,7 @@ settings only the owner can change, and they are listed below with the exact act
 | Expired session | "Your session has ended" and the bag is kept | notes §1.36.4 |
 | Unauthorized order access | "Not found", never "forbidden" | `verify:access`, `verify:account` |
 | Missing CMS media / optional content | Sections omit themselves; placeholders keep their space | `verify:home`, `verify:editorial` |
-| Large image upload | Refused above 4 MB with a clear message | `limits.ts`; `verify:media` |
+| Large image upload | Refused above 4 MB with a clear message | `limits.ts`, Payload `upload.limits` with `abortOnLimit` (code review); `verify:security` bounds the constant |
 | Empty database | Shell and pages render with no content; the homepage omits empty sections | `verify:shell` |
 
 ## Performance
