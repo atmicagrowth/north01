@@ -8804,6 +8804,22 @@ and no analytics script on `/reset-password`.
 | The scheduled drain, with a test `CRON_SECRET` | no header **401**; wrong secret **401**; right secret passes authorisation (then **503**, Resend unconfigured, queue untouched); the staff `POST` still **403** without a staff session |
 
 
+### 1.37.5 Sweeps
+
+**Sweep 1 — the pieces checked against something real.** A server started as a Vercel preview
+(`VERCEL_ENV=preview` and a branch alias) gives `/shop` a canonical on the preview's own host. `robots.txt`
+and the sitemap are prerendered, so they carry whichever host the *build* saw; on Vercel a preview builds
+with its own variables, so they will name the preview too — recorded, not changed. `STACK_VERSIONS.md`
+records the 22.x pin; `DATABASE.md` §6 points at `DEPLOYMENT.md` §4. `verify:email`, `verify:security`,
+`verify:seo` and `verify:shell` — the harnesses the changes touch — all pass.
+
+**Sweep 2 — the deployment itself.** The Phase 32 push built on Vercel and the log confirms each
+change: *"Skipping build cache since Node.js version changed from 24.x to 22.x"*, `payload migrate`
+before `next build` as the procedure says, and a Ready deployment. `pnpm smoke` against production
+afterwards: **9 passed, 3 warnings, 0 failed** — the same three, both owner settings. Vercel now notes
+that the project setting (24.x) is overridden by `engines`; setting it to 22.x in the dashboard
+silences that and changes nothing.
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
