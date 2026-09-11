@@ -27,6 +27,7 @@ import {
   requireIntegration,
   schemaPush,
   serverEnv,
+  csrfOrigins,
   siteUrl,
 } from './lib/env.core'
 import { MAX_UPLOAD_BYTES, UPLOAD_LIMIT_MESSAGE } from './lib/media/limits'
@@ -125,6 +126,14 @@ export default buildConfig({
    * relative path — so a stale value degrades one email link rather than the CMS.
    */
   serverURL: siteUrl,
+
+  /**
+   * **Every origin this deployment answers on** — Phase 33, audit R1-14. Payload accepts the session
+   * cookie on a request carrying an `Origin` only if that origin is listed, and it lists only
+   * `serverURL` by default. Production's `SITE_URL` is the team alias while customers use the public
+   * host, so every Server Action there ran as a guest. `lib/trusted-origins.ts` explains the list.
+   */
+  csrf: csrfOrigins,
 
   /**
    * **Phase 19's transport.** Every message this application sends — Payload's own password reset

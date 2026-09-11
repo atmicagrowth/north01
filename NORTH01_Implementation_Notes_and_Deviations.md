@@ -8820,6 +8820,76 @@ afterwards: **9 passed, 3 warnings, 0 failed** — the same three, both owner se
 that the project setting (24.x) is overridden by `engines`; setting it to 22.x in the dashboard
 silences that and changes nothing.
 
+## 1.38 Phase 33 — Cloudflare, domain and DNS
+
+Plan §33.1a–§33.1c. No dependency, no migration. There is no custom domain yet, and §33.1a says the
+Vercel host is sufficient during development — so most of this phase is the procedure for the day one
+is bought. One part of it was not future work at all: the host question was already breaking
+signed-in customers in production.
+
+### 1.38.1 Signed-in actions ran as a guest on production's public host
+
+Audit R1-14, confirmed and fixed. Payload accepts the session cookie on a request carrying an `Origin`
+only if that origin is in its `csrf` allowlist, and by default the list is `serverURL` alone —
+`SITE_URL`. A Server Action always sends `Origin`. Production's `SITE_URL` is the team alias
+(`north01apparel-mi-ca-growth.vercel.app`) while customers use `north01apparel.vercel.app`, so on the
+public host **every signed-in action ran as a guest**: the account pages rendered (a plain GET sends no
+`Origin`), and saving an address answered *"Sign in to save an address."* And the UI sign-out, whose
+`payload.auth` also returned nobody, cleared the cookie without revoking the session — the old token
+kept working.
+
+Notes §1.12.10 had deferred `csrf` to "Phase 26, with Phase 33's domain settled"; Phase 26 did not do
+it, and the domain was never the variable — the deployment's own hosts were.
+
+- `csrf` is now every origin this deployment answers on (`lib/trusted-origins.ts`, pure and
+  unit-tested): `SITE_URL`, Vercel's production host, this deployment's own host, a preview's branch
+  alias — all set by the platform at deploy time, never taken from a request — and, off Vercel, the
+  machine on the port it serves. A foreign origin is still refused.
+- A sign-out that clears a cookie which did not authenticate now logs a warning, so a session left
+  unrevoked is visible rather than silent.
+
+**Verified with the audit's own reproduction**, on port 3211 while `SITE_URL` resolves to
+`http://localhost:3000`: signed in, saving an address answered *"Address saved."* (the test address was
+removed again), and after the UI sign-out the old token returned `user: null` from `/api/customers/me`.
+Pushed immediately rather than at the end of the phase, because the defect was live.
+
+This does not replace setting production's `SITE_URL` correctly (DEPLOYMENT.md §9) — canonicals, the
+sitemap and reset links still name the team alias until the owner changes it. It means signed-in
+customers are no longer broken while they wait.
+
+### 1.38.2 The domain procedure — `docs/DEPLOYMENT.md` §11
+
+§33's prompt: *"Document the exact DNS records that will be required once a domain is purchased…
+Do not change DNS records blindly; inspect current records first and preserve unrelated services."*
+
+- **Inspected first.** `vercel domains ls`: the team holds one unrelated domain,
+  `dippedncolorsplatstudio.com`, which nothing here touches. The shop has no custom domain. HTTPS on the
+  Vercel host is Vercel's, with `Strict-Transport-Security: max-age=63072000; includeSubDomains;
+  preload` on every response.
+- **Pointing a domain at Vercel** — both apex and `www` added to the project with one redirecting to the
+  other (the §33.1b canonical-host redirect, served at Vercel's edge, so no application code), and the
+  Cloudflare records Vercel shows, typically `A @ 76.76.21.21` and `CNAME www cname.vercel-dns.com`,
+  **DNS only**. The Domains page is named as the source of truth, because Vercel can issue
+  project-specific values; proxied through Cloudflare, SSL must be Full (strict), never Flexible.
+- **Everything that names the host** — `SITE_URL` (which now also carries the CSRF allowlist with it),
+  Turnstile's widget hostnames (a widget refuses an unlisted host, which would stop sign-in), the Stripe
+  webhook endpoint and its new signing secret, Search Console and the sitemap.
+- **Email** — a Resend sending subdomain, so the apex's own mail records are never touched; DKIM, MX,
+  SPF and DMARC by shape, with the values deliberately **not** reproduced because Resend's are
+  region-specific. §33.1c's rule is stated as written: not production-ready until Resend says Verified
+  and one message has reached a real inbox.
+- **Verification** — `curl -I` for the 200, the `www` 308 and the HTTP→HTTPS redirect; `pnpm smoke` with
+  no canonical or sitemap warning; a signed-in action on the new host; a reset email whose link names it.
+
+### 1.38.3 What was verified
+
+| Check | Result |
+|---|---|
+| `pnpm typecheck`, `pnpm lint --max-warnings 0`, `pnpm format:check`, `pnpm build` | pass |
+| `pnpm test:run` | **836** (seven new: the trusted-origins list) |
+| R1-14, reproduced and fixed on a non-canonical origin | *"Address saved."*; old token `user: null` after sign-out |
+| Production before the fix | HTTPS and HSTS present; the public host's signed-in actions affected |
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -10730,4 +10800,5 @@ the popover offers, so the announcement is not a lie about where it goes.
 | Phase 30 — performance and responsive polish | 2026-09-11 | Notes **§1.35**. **No dependency and no migration.** The phase opened by asking a browser for every navigation href and found four 404s: Phase 23 had built `/edits/[slug]` while every link in the shop said `/edit/`, and `/collections` and `/edit` had no index at all. **The product page spent 2.1s before its first byte**, none of it images: a depth-2 read populating a discarded variants join, two independent reads awaited in series, and no storefront read anywhere turning off joins — 2.09s → 1.07s, with collection and edit pages close behind. **First-load JavaScript fell about a third** (home 369,897 → 256,295 B gzip): all of Zod shipped to every route to re-check ten public strings the server had validated at boot, and the Sentry SDK shipped with no DSN configured; ESLint now forbids both in the files every client graph contains. **Sweep 1's worst finding was the phase's own regression** — a populate-select without `status` dropped every lookbook hotspot, missed by a DOM diff whose fixtures had no hotspot to lose; `verify:editorial` now resolves every lookbook two ways and was proven by putting the bug back. Sweep 1 also fixed a 0.36-CLS gallery shift on choosing a size, a mobile filter drawer that closed after every tick (it lived inside a keyed Suspense boundary), a cart page that scrolled sideways at 320, a cart drawer that showed no lines in landscape, 14px inputs that made iOS zoom, and a CLI path that orphaned a search-index record on every `verify:search` run. **Sweep 2 found that no shop-the-look hotspot had ever opened** — since Phase 22, a `preventDefault` meant to stop the anchor also stopped Radix's toggle — and that Add to bag opened nothing, though structure §13 draws the drawer. Mid-sweep the development database stopped accepting its password after production moved to a new Neon account; it was rebuilt on `ep-wandering-surf-ax7ia116` with the project's own idempotent scripts, and every harness passed on it: **1,829 checks**, plus 815 Vitest tests. **DEV-07 amended** from six primary items to five: ABOUT had no page behind it. |
 | Phase 31 — error, empty and loading states | 2026-09-11 | Notes **§1.36**. **One migration** (`cart_items.price_seen_minor`, nullable, display only), no dependency. **Began with a live leak from Phase 30's deploy**: the GA4 ID was already in Vercel, so that build was the first to load `gtag`, whose `page_location` carried every opened password-reset link's token to Google — hotfixed (`95c040b`) and verified with every vendor request intercepted, with one source of page views and idle loading. **The storefront now survives a database outage**: measured with a second server on a wrong password, every route including `/help/faq` was a bare 500 because the root layout's customer and bag reads threw; they degrade to a signed-out shell, and a new `(frontend)/error.tsx` renders inside it with retry. A malformed URL is a branded 404, not a 21-byte 500. Turnstile explains itself when blocked (it was locking sign-in with "try again") and the footer newsletter loads it on first focus. The success page says what happened for each payment status; an unreadable order is not reported as a missing one; an expired session is a sign-in, not "your bag is empty" — which required keeping the bag cookie through sign-in. "Price changed" now exists. The degraded search no longer announces "No products" or offers controls that can change nothing. **The build caught one of the phase's own fixes**: a `try/catch` swallowed Next's dynamic-usage interrupt and would have made per-visitor routes static with a signed-out shell baked in — `unstable_rethrow` first. 829 tests; all 22 harnesses. |
 | Phase 32 — deployment to Vercel | 2026-09-11 | Notes **§1.37**. No dependency, no migration. **The dashboard settings were documented, not changed from the CLI** — production's environment is the owner's decision — in a new `docs/DEPLOYMENT.md` (plan §38's missing deployment document) and TODO.md §8: Production `SITE_URL` is the team alias, Preview has no variables so no preview can build, the production search index has never been built, no function region, no queued builds, no CI secrets. **What the repository could carry, it now does**: the six-step migration procedure (§32.1d) and rollback; `pnpm smoke <url>`, a read-only post-deployment smoke test whose first production run passed 9, warned 3 (the canonical and sitemap host, and search) and failed none; Node pinned to 22.x (Vercel was running 24.x, which no gate had exercised); a preview's `SITE_URL` resolves to its own branch alias instead of production, so preview reset links and Stripe returns stop pointing at the live shop; and DEV-67's scheduled drain, a daily Vercel Cron answering only a constant-time-compared `CRON_SECRET`. |
+| Phase 33 — Cloudflare, domain and DNS | 2026-09-11 | Notes **§1.38**. No dependency, no migration, no custom domain yet. **One part was not future work**: Payload's CSRF allowlist defaulted to `SITE_URL` alone, and production's `SITE_URL` is the team alias while customers use the public host — so every signed-in Server Action there ran as a guest (*"Sign in to save an address"* to a signed-in customer), and the UI sign-out cleared the cookie without revoking the session (audit R1-14). `csrf` is now every origin the deployment answers on, from platform-set values only (`lib/trusted-origins.ts`, unit-tested); reproduced and fixed on a non-canonical origin — the address saved, the old token dead after sign-out — and pushed at once. **The domain procedure is `docs/DEPLOYMENT.md` §11**: existing records inspected first (the team's unrelated domain untouched; HTTPS and HSTS on the Vercel host), apex and `www` with Vercel's edge redirect as the canonical-host rule, unproxied Cloudflare records with the Domains page as the source of truth, every service that names the host, and Resend's DKIM, MX, SPF and DMARC by shape — values not reproduced because they are region-specific, and email not called production-ready until Resend says Verified. |
 > **Append this table, and the sections above it, at the end of every phase.**

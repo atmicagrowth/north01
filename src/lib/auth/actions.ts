@@ -513,6 +513,17 @@ export async function logout(): Promise<void> {
     }
   }
 
+  if (!user && (await cookies()).get(`${payload.config.cookiePrefix}-token`)) {
+    /*
+     * A session cookie that did not authenticate — an origin missing from `csrf`, or a token that
+     * has already expired. The cookie is cleared below, but the session row was not revoked, and
+     * that is worth knowing: audit R1-14 found exactly this, silently, on production's public host.
+     */
+    payload.logger.warn(
+      'Sign-out cleared a session cookie that did not authenticate; its session was not revoked.',
+    )
+  }
+
   await clearSessionCookie(payload, payload.collections.customers.config)
 
   /*

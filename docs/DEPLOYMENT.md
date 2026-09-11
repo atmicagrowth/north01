@@ -141,6 +141,7 @@ canonical and sitemap host (§9, `SITE_URL`) and search (§6).
 | Add the CI repository secrets (§8) | CI has never built the application (R3-05) |
 | Switch off GA4's "page changes based on browser history events" | The storefront sends every page view itself (TODO.md §6) |
 | Take a Neon branch before any deploy that carries a migration (§4) | There is no automatic backup |
+| When a custom domain is bought, follow §11 in order | Every integration below names the host; changing it is one variable and five dashboards |
 
 ## 10. Platform behaviour worth knowing
 
@@ -149,3 +150,79 @@ canonical and sitemap host (§9, `SITE_URL`) and search (§6).
 - **`NEXT_PUBLIC_` variables are fixed at build time.** Adding GA4, PostHog, Sentry or Turnstile keys in
   the dashboard changes nothing until the next build — which is how Phase 30's deploy switched on six
   integrations at once (notes §1.36.1).
+
+## 11. A custom domain and its DNS — plan §33
+
+**Today there is no custom domain.** The shop is served on Vercel's hosts — `north01apparel.vercel.app`
+and the team alias — which plan §33.1a says is sufficient during development. HTTPS is Vercel's, with
+`Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` on every response (measured,
+2026-09-11). The team's Vercel account holds one unrelated domain, `dippedncolorsplatstudio.com`; nothing
+here touches it.
+
+This section is the procedure for the day a domain is bought, written so nothing is changed blind:
+**inspect the domain's existing records first, export them, and change only the ones named here** —
+a domain that already receives mail has MX and SPF records that must survive.
+
+### 11.1 Point the domain at Vercel
+
+1. Vercel → Project → Settings → **Domains** → add both `example.com` and `www.example.com`. Choose one
+   as the canonical host and set the other to **redirect** to it (308). That is the canonical-host
+   redirect plan §33.1b asks for; Vercel serves it at the edge, so the application needs no code for it.
+2. In **Cloudflare DNS**, add exactly the records Vercel's Domains page shows for the project. For most
+   projects they are:
+
+   | Type | Name | Value | Proxy status |
+   |---|---|---|---|
+   | `A` | `@` | `76.76.21.21` | **DNS only** (grey cloud) |
+   | `CNAME` | `www` | `cname.vercel-dns.com` | **DNS only** (grey cloud) |
+
+   Vercel may show project-specific values instead; **the Domains page is the source of truth**, and
+   these are only what to expect. Leave the records **unproxied**: Vercel issues and renews the
+   certificate itself, and Cloudflare's proxy in front of it breaks that issuance and double-caches
+   pages whose freshness this application manages. If the domain must be proxied, Cloudflare's SSL mode
+   has to be **Full (strict)** — never Flexible, which serves the shop over HTTP between the two.
+3. Wait for Vercel to show both domains **Valid Configuration** and a certificate issued.
+
+### 11.2 Tell the application, and every service that names the host
+
+| Where | Change | Why |
+|---|---|---|
+| Vercel → Production `SITE_URL` | `https://example.com` (the canonical host) | canonicals, sitemap, `robots.txt`, reset links, Stripe return URLs, Payload `serverURL` and the CSRF allowlist all follow it |
+| Cloudflare Turnstile → the widget → hostnames | add `example.com` and `www.example.com` | a widget refuses a host it does not list — sign-in and registration would stop |
+| Stripe → Webhooks | an endpoint at `https://example.com/api/stripe/webhook`, and its new signing secret as `STRIPE_WEBHOOK_SECRET` | the signature is per endpoint |
+| Google Search Console | add the property, submit `https://example.com/sitemap.xml` | the sitemap names the new host once `SITE_URL` does |
+| Resend | §11.3 | email from the domain |
+
+Then redeploy (a `NEXT_PUBLIC_` or build-time value changes nothing until a build), and run
+`pnpm smoke https://example.com` — the canonical and sitemap lines must pass, not warn.
+
+### 11.3 Email from the domain — Resend (plan §33.1c)
+
+Resend → Domains → add a **sending subdomain** such as `send.example.com` (keeps the apex's own mail
+records untouched), then add in Cloudflare **exactly the records Resend displays** — they are
+region-specific, so none are reproduced here as values. Their shape is:
+
+| Type | Name | What it is |
+|---|---|---|
+| `TXT` | `resend._domainkey.send` | **DKIM** — the public key Resend signs with |
+| `MX` | `send` | the bounce/feedback route Resend's sending service uses (priority as shown) |
+| `TXT` | `send` | **SPF** — `v=spf1 include:…` naming Resend's sending service |
+| `TXT` | `_dmarc` | **DMARC** — start with `v=DMARC1; p=none; rua=mailto:…`, tighten to `quarantine` once reports are clean |
+
+All **DNS only**. When Resend shows the domain **Verified**, set `EMAIL_FROM` to an address on it (for
+example `NORTH / 01 <orders@send.example.com>`) and `RESEND_API_KEY` in Production.
+
+**Do not call email production-ready until Resend says Verified** (§33.1c), and until one message has
+reached a real inbox through `EMAIL_DEV_ALLOWLIST` on a preview. An unverified domain sends nothing, and
+a verified one without DMARC lands in spam.
+
+### 11.4 Verification
+
+- `curl -I https://example.com` → `200`, with `Strict-Transport-Security`.
+- `curl -I https://www.example.com` → `308` to `https://example.com/`.
+- `curl -I http://example.com` → a redirect to `https://`.
+- `pnpm smoke https://example.com` → no `FAIL`, and no `WARN` on the canonical or the sitemap.
+- Sign in and save an address on the new host — a Server Action carries the new `Origin`, which the CSRF
+  allowlist accepts because it follows `SITE_URL` (Phase 33, `lib/trusted-origins.ts`).
+- Resend shows **Verified**; a password-reset email sent to an allowlisted address arrives, and its link
+  names the new host.

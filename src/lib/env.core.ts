@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { PublicEnvSchema, parseEnv } from './env.schema'
+import { trustedOrigins } from './trusted-origins'
 
 /**
  * The server-side environment: schemas, validation, the §4.1c environment discriminator, and the
@@ -105,6 +106,12 @@ const ServerEnvSchema = PublicEnvSchema.extend({
    */
   VERCEL_BRANCH_URL: z.string().min(1).optional(),
   VERCEL_URL: z.string().min(1).optional(),
+
+  /**
+   * The port `next start`/`next dev` serves on, when not 3000. Read only to trust the machine's own
+   * origin off Vercel (`csrfOrigins`, Phase 33); never written into a `.env` for a deployment.
+   */
+  PORT: z.string().min(1).optional(),
 
   /**
    * Phase 32 — the bearer secret Vercel Cron sends to `/api/email/drain` (DEV-67's scheduled drain).
@@ -334,6 +341,19 @@ function resolveSiteUrl(env: ServerEnv, current: AppEnv): string {
 }
 
 export const siteUrl: string = resolveSiteUrl(serverEnv, appEnv)
+
+/**
+ * Payload's `csrf` allowlist — every origin this deployment answers on, and nothing else. See
+ * `lib/trusted-origins.ts` for why it is not just `siteUrl` (Phase 33, audit R1-14).
+ */
+export const csrfOrigins: string[] = trustedOrigins({
+  onVercel: Boolean(serverEnv.VERCEL),
+  port: serverEnv.PORT,
+  siteUrl,
+  vercelBranchUrl: serverEnv.VERCEL_BRANCH_URL,
+  vercelProductionUrl: serverEnv.VERCEL_PROJECT_PRODUCTION_URL,
+  vercelUrl: serverEnv.VERCEL_URL,
+})
 
 /**
  * §4.1c: "Never use production Stripe credentials in local or preview."
