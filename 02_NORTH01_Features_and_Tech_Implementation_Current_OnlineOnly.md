@@ -12,11 +12,11 @@
 >
 > **Fulfillment model:** inventory represents centralized online fulfillment stock. Orders are paid online, fulfilled remotely, shipped to the customer, tracked, and returned through an online-first process.
 
-> **As built (Phase 36 documentation audit).** The sections below are the original specification and are not rewritten. Where the build departs from them, the deviation register (`NORTH01_Implementation_Notes_and_Deviations.md` §2) and the gap register (`docs/ARCHITECTURE.md` §3.2) govern:
+> **As built (Phase 36 documentation audit; revised in Phase 37, 2026-09-13).** The sections below are the original specification and are not rewritten. Where the build departs from them, the deviation register (`NORTH01_Implementation_Notes_and_Deviations.md` §2) and the gap register (`docs/ARCHITECTURE.md` §3.2) govern:
 >
 > - **Motion** in the *Uses* lines of §1, §3, §4, §6, §7, §11, §14 and §33 — not installed. Motion is CSS on the duration tokens (DEV-40, ARCHITECTURE D-13 and D-34).
 > - **React Hook Form** in §7 and §9 — Server Actions with `useActionState` and Zod (DEV-80).
-> - **§1 Footer** — Contact is not built (G-08, open), and the legal links wait on legal text (G-19, owner action).
+> - **§1 Footer** — Contact is a published support address, `admin@micagrowth.com`, with no contact form (G-08, closed 2026-09-11). Privacy and Terms render at `/legal/privacy` and `/legal/terms` from `site-settings` (G-19, closed 2026-09-11); each footer link shows only while its document has text. The seeded text is an unreviewed draft, and the company name, address and governing law are still to be confirmed (TODO.md §9).
 > - **§3 Homepage** — the newsletter is the footer's column, not a homepage block (DEV-42). The social gallery shows only with at least three editorial images (DEV-82).
 > - **§5 Sorting** — no rating sort; five sort options (DEV-46).
 > - **§6 Quick View / Quick Add** — withdrawn. The card is a link plus the wishlist heart (DEV-76).
@@ -27,13 +27,13 @@
 > - **§13 Edits** — Essentials is a Collection, not an Edit (DEV-01).
 > - **§16 Wishlist** — "Move to cart" is not built (notes §1.25.9 lists it as owed).
 > - **§17 Cart** — there is no "Clear" control, and no deviation records that yet.
-> - **§19 Tax** — Stripe Tax is not wired; a provider boundary answers `unavailable` (DEV-61).
+> - **§19 Tax** — Stripe Tax calculates tax from the delivery address at checkout (Phase 36, closing DEV-61); without Stripe keys the provider boundary answers `unavailable`. The tax is included in the single total on Stripe's page and itemised on the order.
 > - **§23 Order tracking** — signed-in customers see tracking in their account and everyone gets the shipped email. There is no public lookup (DEV-77).
 > - **§24 Email** — eight templates, not ten (DEV-65), and two of the eight are unwired (DEV-66).
 > - **§26 Analytics** — `add_payment_info` and `quick_view_opened` are never emitted (DEV-73, DEV-74). No consent gate (G-17).
-> - **§28 Bot protection** — Turnstile is skipped when unconfigured and refuses during an outage (DEV-75). Contact has no form to protect (G-08), and Payload's REST login is not guarded (G-18).
+> - **§28 Bot protection** — Turnstile is skipped when unconfigured and refuses during an outage (DEV-75). Contact is an email address, so there is no contact form to protect (G-08), and Payload's REST login is not guarded (G-18).
 > - **§33 Design System / Storybook** — the in-app `/design-system` route instead of Storybook (DEV-20).
-> - **Online returns** — no return-request flow exists (G-20, open).
+> - **Online returns** — no return-request flow exists (G-20, open). Returns are arranged by email at `admin@micagrowth.com`, which the returns policy, the FAQ and the terms say.
 
 ## 0. Feature Implementation Rules
 

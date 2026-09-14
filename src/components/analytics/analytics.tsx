@@ -2,9 +2,16 @@
 
 import Script from 'next/script'
 import { usePathname } from 'next/navigation'
+import { SpeedInsights as VercelSpeedInsights } from '@vercel/speed-insights/next'
 import { useEffect } from 'react'
 
 import { publicEnv } from '@/lib/env.public'
+import {
+  isPrivatePath,
+  reportableReferrer,
+  speedInsightsBeforeSend,
+  withoutQuery,
+} from '@/lib/analytics/private-paths'
 import { registerPostHog } from '@/lib/analytics/track'
 
 /**
@@ -12,9 +19,12 @@ import { registerPostHog } from '@/lib/analytics/track'
  *
  * > *"Add PostHog, GA4, Sentry, and Vercel Speed Insights behind integration boundaries."*
  *
- * The boundary is this file. Nothing else in the storefront imports `posthog-js` or touches
- * `window.gtag`; every call site goes through `trackEvent`, which knows about neither. Removing a
- * vendor is deleting a block here, and it costs the application nothing.
+ * The boundary is this file. Nothing else in the storefront imports `posthog-js` or
+ * `@vercel/speed-insights`, or touches `window.gtag`; every call site goes through `trackEvent`,
+ * which knows about none of them. Removing a vendor is deleting a block here, and it costs the
+ * application nothing. (`speed-insights.tsx` decides *whether* Speed Insights renders, on the
+ * server; what it reports is decided here, because a `beforeSend` function cannot be passed from a
+ * server component.)
  *
  * ### Not configured means not loaded
  *
@@ -23,7 +33,7 @@ import { registerPostHog } from '@/lib/analytics/track'
  * That is what makes a local checkout run at full speed with no accounts configured, and it is the
  * shape §25.1b asks for from the other direction: a missing analytics vendor is a non-event.
  *
- * ### No URL leaves this file unredacted — and one route is never reported at all
+ * ### No URL leaves this file unredacted — and one route is never reported at all, by any vendor
  *
  * **Found live, the day the keys were first built.** The password-reset email links to
  * `/reset-password?token=…`, and the token is a one-hour credential. `gtag('config')` sent
@@ -31,16 +41,44 @@ import { registerPostHog } from '@/lib/analytics/track'
  * `$current_url` — so every reset link a customer opened handed its token to two third parties. The
  * redaction Phase 25 built (`lib/observability/redact.ts`) was applied to Sentry and to nothing else.
  *
- * Now, for both vendors:
+ * Now:
  *
- * - `/reset-password` is **not reported at all** — neither SDK loads when a session starts there,
- *   and no page view is sent for it when a session arrives there later.
- * - Every other URL passes through `redactUrl` first: `token`, `code`, `session`, `session_id`,
- *   `email` and the rest of `SENSITIVE_PARAM` become `[redacted]`, and the value patterns (emails,
- *   card-length digit runs, keys) are scrubbed from what is left.
+ * - `/reset-password` (`PRIVATE_PATHS`, in `lib/analytics/private-paths.ts`) is **not reported at
+ *   all** — neither GA4 nor PostHog loads when a session starts there, no page view is sent for it
+ *   when a session arrives there later, and Speed Insights drops its vitals in `beforeSend`. A
+ *   referrer on that path is reported as the bare origin.
+ * - Every other GA4 and PostHog URL — the page **and the referrer** — passes through
+ *   `redactPageUrl` first: `token`, `code`, `session`, `session_id`, `email`, `order` and the rest
+ *   of `SENSITIVE_PARAM` become `[redacted]`, every parameter value is scrubbed by value (emails,
+ *   card-length digit runs, keys), and a search term that looks like an email or an order number
+ *   is `[redacted]`, as it already is in `search_submitted`.
+ * - Speed Insights reports origin and path only. No query string, redacted or not.
  *
- * `redact.ts` is imported **dynamically**, with the SDKs, so a storefront with no analytics keys
- * ships none of it — the first-load budget Phase 30 measured stays where it is.
+ * The redaction is imported **dynamically**, with the SDKs, so a storefront with no analytics keys
+ * ships none of it — the first-load budget Phase 30 measured stays where it is. Until it arrives,
+ * GA4 holds the page and the referrer with their query strings removed, so nothing it sends early
+ * can carry one.
+ *
+ * ### Phase 37: what the privacy notice promises is pinned here, not left to a dashboard
+ *
+ * The notice promises no advertising use and no recording of what a visitor does on a page. Each
+ * was true only while nobody changed a vendor setting, so each is now a line of config:
+ *
+ * - **GA4:** `allow_google_signals: false` and `allow_ad_personalization_signals: false` on
+ *   `config`. Google signals is what lets GA4 use Google's advertising cookies; switching it on in
+ *   the property can no longer do that here.
+ * - **PostHog:** heatmaps, dead-click capture, exception autocapture, web vitals and surveys are
+ *   off explicitly. Each otherwise follows a project-settings toggle, and the SDK caches that toggle
+ *   in the visitor's storage, so a setting switched on once kept working for returning visitors
+ *   after it was switched off again.
+ * - **PostHog `advanced_disable_flags: true`.** The feature-flag request runs outside `before_send`
+ *   and sends the visitor's stored *first* page and referrer as `person_properties`, unredacted.
+ *   The storefront uses no feature flags, and the same request carried the remote config those
+ *   toggles came from.
+ *
+ * **What code cannot pin, and an owner must:** PostHog stores the IP address its servers receive
+ * each request from. `posthog-js` 1.418 documents its own `ip` option as having *"NO EFFECT AT
+ * ALL"*; the switch is PostHog **Project settings → "Discard client IP data"** (TODO.md).
  *
  * ### One source of GA4 page views
  *
@@ -75,16 +113,6 @@ function safeGtag(...args: unknown[]): void {
     /* A tracker that throws is a tracker that is not running. */
   }
 }
-
-/** Routes whose URL carries a credential. Neither vendor is told about them. */
-const PRIVATE_PATHS = ['/reset-password'] as const
-
-function isPrivatePath(pathname: string): boolean {
-  return PRIVATE_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
-}
-
-/** PostHog properties that hold a URL. `$set_once` carries the person's first-seen copies. */
-const URL_PROPERTIES = ['$current_url', '$referrer', '$initial_current_url', '$initial_referrer']
 
 /** Runs `task` once the page has loaded and the browser is idle. Returns a cancel function. */
 function whenIdle(task: () => void): () => void {
@@ -135,20 +163,10 @@ export function Analytics() {
     let cancelled = false
 
     const cancelIdle = whenIdle(() => {
-      void Promise.all([import('posthog-js'), import('@/lib/observability/redact')])
-        .then(([{ default: posthog }, { redactUrl }]) => {
+      void Promise.all([import('posthog-js'), import('@/lib/analytics/redact-for-vendors')])
+        .then(([{ default: posthog }, { scrubUrlProperties }]) => {
           if (cancelled) {
             return
-          }
-
-          const scrub = (properties: Record<string, unknown> | undefined) => {
-            if (!properties) return
-
-            for (const key of URL_PROPERTIES) {
-              const value = properties[key]
-
-              if (typeof value === 'string') properties[key] = redactUrl(value)
-            }
           }
 
           posthog.init(posthogKey, {
@@ -174,6 +192,24 @@ export function Analytics() {
             disable_session_recording: true,
             person_profiles: 'identified_only',
 
+            /* Phase 37 — see "what the privacy notice promises is pinned here" above. */
+            advanced_disable_flags: true,
+            capture_dead_clicks: false,
+            capture_exceptions: false,
+            capture_heatmaps: false,
+            capture_performance: false,
+            disable_surveys: true,
+
+            /*
+             * The SDK's own defaults, written out because the privacy notice describes them: a
+             * first-party cookie and a `localStorage` entry, both named `ph_<project key>_posthog`,
+             * holding a random device id and the session id, the cookie kept 365 days. An SDK
+             * upgrade that changed a default would otherwise change what the notice means without a
+             * diff here.
+             */
+            cookie_expiration: 365,
+            persistence: 'localStorage+cookie',
+
             before_send: (event) => {
               if (!event) return event
 
@@ -183,9 +219,11 @@ export function Analytics() {
                 return null
               }
 
-              scrub(properties)
-              scrub(properties.$set_once as Record<string, unknown> | undefined)
-              scrub(event.$set_once as Record<string, unknown> | undefined)
+              scrubUrlProperties(properties)
+              scrubUrlProperties(properties.$set as Record<string, unknown> | undefined)
+              scrubUrlProperties(properties.$set_once as Record<string, unknown> | undefined)
+              scrubUrlProperties(event.$set as Record<string, unknown> | undefined)
+              scrubUrlProperties(event.$set_once as Record<string, unknown> | undefined)
 
               return event
             },
@@ -234,23 +272,42 @@ export function Analytics() {
         window.dataLayer?.push(arguments)
       }
 
+    /*
+     * **Before the redaction has loaded, GA4 already holds URLs with no query string.** An event a
+     * component fires on mount can reach `dataLayer` before the dynamic import below resolves, and
+     * gtag would otherwise fill `page_location` and `page_referrer` from the raw `location` and
+     * `document.referrer`. Origin and path need no pattern table, so they are set synchronously;
+     * the redacted full URLs replace them once the import lands.
+     */
+    safeGtag('set', {
+      page_location: withoutQuery(window.location.href) ?? window.location.origin,
+      page_referrer: reportableReferrer(document.referrer),
+    })
+
     if (!gaConfigured) {
       gaConfigured = true
       safeGtag('js', new Date())
-      safeGtag('config', measurementId, { send_page_view: false })
+      safeGtag('config', measurementId, {
+        allow_ad_personalization_signals: false,
+        allow_google_signals: false,
+        send_page_view: false,
+      })
     }
 
-    void import('@/lib/observability/redact')
-      .then(({ redactUrl }) => {
+    void import('@/lib/analytics/redact-for-vendors')
+      .then(({ redactPageUrl, redactReferrer }) => {
         if (cancelled) {
           return
         }
 
-        const location = redactUrl(window.location.href)
+        const page = {
+          page_location: redactPageUrl(window.location.href),
+          page_referrer: redactReferrer(document.referrer),
+        }
 
-        /* `set`, so anything GA sends on its own from this page carries the redacted URL too. */
-        safeGtag('set', { page_location: location })
-        safeGtag('event', 'page_view', { page_location: location })
+        /* `set`, so anything GA sends on its own from this page carries the redacted URLs too. */
+        safeGtag('set', page)
+        safeGtag('event', 'page_view', page)
       })
       .catch(() => {})
 
@@ -269,4 +326,19 @@ export function Analytics() {
       strategy="lazyOnload"
     />
   )
+}
+
+/**
+ * **Vercel Speed Insights, with what it may report decided here** — plan §25.1e, Phase 37.
+ *
+ * Rendered by `speed-insights.tsx`, which is a server component because its gate reads server-only
+ * environment. A `beforeSend` function cannot be passed across that boundary, so the client half —
+ * the part that decides what leaves the browser — lives with the other vendors.
+ *
+ * `@vercel/speed-insights` 2.0.0 registers `beforeSend` with its queue before it injects the
+ * script. `speedInsightsBeforeSend` drops every event for `/reset-password` and reports every other
+ * page as origin and path, with no query string or fragment.
+ */
+export function SpeedInsightsReporter() {
+  return <VercelSpeedInsights beforeSend={speedInsightsBeforeSend} />
 }

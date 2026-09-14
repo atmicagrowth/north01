@@ -2,6 +2,7 @@ import type { Payload } from 'payload'
 
 import { sql } from '@payloadcms/db-postgres'
 
+import type { FulfilOutcome } from './fulfil'
 import { STALE_RECEIVED_SECONDS } from './rules'
 
 /**
@@ -97,4 +98,55 @@ export async function reclaimWebhookDelivery(
   )
 
   return (result.rowCount ?? 0) > 0
+}
+
+/**
+ * **How each outcome is recorded on the `stripe-events` row** — moved here from the webhook route so
+ * the wording can be unit-tested (a route module may export only its handlers).
+ *
+ * The `error` column is what a person reads when they open the event in the admin, so each sentence
+ * has to be true about *this* event. The retention review found the one that was not: an event naming
+ * an order that no longer exists was recorded as *"No order reference and no known payment intent"*,
+ * which sent a reader looking for a metadata problem instead of a deleted order and possibly captured
+ * money. `orderMissing` now says what happened; `noOrder` keeps its sentence for the case it describes.
+ *
+ * `ignored` for both, like `mismatch`: the route answers 200, because a retry cannot recreate an order
+ * — and the alert, not a retry loop, is what gets a person to Stripe.
+ */
+export function eventRowRecordFor(outcome: FulfilOutcome): {
+  error?: string
+  status: 'ignored' | 'processed'
+} {
+  switch (outcome.outcome) {
+    case 'noOrder':
+      return {
+        error: 'No order reference and no known payment intent in the event.',
+        status: 'ignored',
+      }
+    case 'orderMissing':
+      return {
+        error:
+          `ORDER MISSING: the event names order ${outcome.reference}, which does not exist here. ` +
+          'Unpaid orders are deleted 30 days after their last activity (lib/cart/sweep.ts), so it was ' +
+          'most likely deleted before this event was processed. Nothing was applied — if this event ' +
+          'moved money, reconcile or refund it in Stripe.',
+        status: 'ignored',
+      }
+    case 'mismatch':
+      return { error: `MISMATCH: ${outcome.reason}`.slice(0, 900), status: 'ignored' }
+    case 'superseded':
+      return {
+        error: 'Superseded: this session is no longer the order’s current one. Nothing changed.',
+        status: 'ignored',
+      }
+    case 'outOfStock':
+      return {
+        error:
+          'Paid, but stock was unavailable at finalisation. Held (fulfilmentHold = stockShortfall) ' +
+          'for a human decision; no stock was taken — plan §17.1f.',
+        status: 'processed',
+      }
+    default:
+      return { status: 'processed' }
+  }
 }

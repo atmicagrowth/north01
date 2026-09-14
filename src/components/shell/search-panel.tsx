@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 
 import { MediaImage } from '@/components/media/media-image'
+import { PERSONAL_SEARCH } from '@/lib/analytics/search-term'
 import { trackEvent } from '@/lib/analytics/track'
 import { useShellOverlay } from '@/components/shell/overlay-context'
 import { cn } from '@/lib/cn'
@@ -352,9 +353,12 @@ export function SearchPanel() {
        * the alternative, firing this after the grid renders, would miss every search that navigated
        * away or failed. An event that describes intent belongs at the moment of the intent.
        */
-      /* Plan §34: a search box is where people paste an email address or an order number. */
+      /*
+       * Plan §34: a search box is where people paste an email address or an order number. The rule
+       * is shared with the `/search?q=` page URL's redaction — see `lib/analytics/search-term.ts`.
+       */
       trackEvent('search_submitted', {
-        term: /@|\d{6,}/.test(normalised) ? '[redacted]' : normalised,
+        term: PERSONAL_SEARCH.test(normalised) ? '[redacted]' : normalised,
       })
 
       go(`${SEARCH_PATH}?q=${encodeURIComponent(normalised)}`)

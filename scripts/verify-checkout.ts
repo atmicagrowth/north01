@@ -854,6 +854,35 @@ try {
         ),
       `${secondClaims.join(',')} → ${finalOrder?.stripeCheckoutSessionId}`,
     )
+
+    /*
+     * **The retention review: recording a session is activity on the order.** `claimOrderForSession`
+     * is raw SQL, which Payload does not stamp, so it sets `updated_at = now()` itself — the
+     * unpaid-order sweep's clock (`lib/cart/sweep.ts`). And because its own guard is
+     * `updated_at = preparedAt`, the bump must not let the same preparation claim twice: a second
+     * claim with the same `preparedAt` has to lose.
+     */
+    const third = await upsertPendingOrder(payload, input, retire)
+
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    const thirdClaim = await claimFor(third, `cs_race_e_${suffix}`)
+    const afterThird = (await ordersForCart())[0]
+
+    check(
+      'G2: **a session claim bumps `updated_at`** — the retention clock restarts when a session is recorded',
+      third.ok &&
+        thirdClaim &&
+        afterThird?.stripeCheckoutSessionId === `cs_race_e_${suffix}` &&
+        new Date(afterThird.updatedAt).getTime() > new Date(third.preparedAt).getTime(),
+      third.ok ? `preparedAt ${third.preparedAt} → updatedAt ${afterThird?.updatedAt}` : 'refused',
+    )
+
+    check(
+      'G2: …and the bump cannot let the same preparation claim a second session',
+      !(await claimFor(third, `cs_race_f_${suffix}`)) &&
+        (await ordersForCart())[0]?.stripeCheckoutSessionId === `cs_race_e_${suffix}`,
+    )
   }
 } finally {
   await cleanup()

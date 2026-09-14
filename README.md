@@ -82,9 +82,9 @@ decision changes, update the affected documents and re-run the consistency audit
 
 ## Status
 
-**Phases 1–35 are complete. Phase 36 (final review and documentation audit) is in progress.** Next.js
+**Phases 1–36 are complete; the plan's §37 acceptance record is notes §1.42, and the owner's follow-up decisions are §1.43.** Next.js
 16.3.3 with Payload 3.88.0 embedded, on Neon PostgreSQL 17. Each phase's record is in the notes
-(§1.7–§1.40 and the append log). Every departure from the specification is a DEV entry in the notes'
+(§1.7–§1.43 and the append log). Every departure from the specification is a DEV entry in the notes'
 Section 2, and every specification gap is a G entry in `docs/ARCHITECTURE.md` §3.2.
 
 **What works:**
@@ -105,12 +105,20 @@ Section 2, and every specification gap is a G entry in `docs/ARCHITECTURE.md` §
   suite first ran in Phase 35: 43 passed, 0 failed, 14 skipped
   ([`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)).
 
-**Recorded as not built:** a contact form (G-08), privacy and terms pages (G-19), online returns
-(G-20), a public order-tracking lookup (DEV-77), Quick View and Quick Add (DEV-76), and Buy Now
-(DEV-78). Every storefront page renders per request rather than from a cache (DEV-83).
+**Support and legal.** Customers contact the shop at a published address, `admin@micagrowth.com`
+(G-08, closed without a contact form), and returns are arranged by email with it. A privacy notice
+and terms of sale render at `/legal/privacy` and `/legal/terms` from Site Settings (G-19): each is
+linked from the footer, the help pages and checkout only while its text exists, and the seeded text is
+an unreviewed starting draft. Once `CRON_SECRET` is set in production, a daily sweep deletes bags 30
+days after creation and never-paid orders 30 days after their last change.
+
+**Recorded as not built:** an online return-request flow (G-20 — returns are by email), a public
+order-tracking lookup (DEV-77), Quick View and Quick Add (DEV-76), and Buy Now (DEV-78). Every
+storefront page renders per request rather than from a cache (DEV-83).
 
 **Needs the owner:** as of the Phase 35 audit, no environment has Stripe keys, Resend is not
 configured, and production search has no index. The canonical host, Preview, the function region and
-the legal text are also owner decisions. The checklist is [`TODO.md`](TODO.md).
+a qualified review of the legal text (plus the company name, address and governing law it still
+leaves to be confirmed) are also owner decisions. The checklist is [`TODO.md`](TODO.md).
 
 Local setup: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).

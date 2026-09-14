@@ -4,6 +4,7 @@ import type Stripe from 'stripe'
 
 import {
   countWebhookDelivery,
+  eventRowRecordFor,
   isUniqueViolation,
   reclaimWebhookDelivery,
 } from '@/lib/checkout/events'
@@ -55,6 +56,12 @@ import { getPayloadClient } from '@/lib/payload'
  * - **200** for everything else: done, duplicate, unknown type, not our order — and a **mismatch**,
  *   a session that does not match the order it names. That is recorded, logged and alerted, and a
  *   retry could never fix it, so asking Stripe for one would only bury it.
+ * - **200** too for **an order that is missing** (the retention review): the metadata names an order
+ *   id that parses, and no such order exists — most likely an unpaid order the retention sweep
+ *   deleted after 30 days without activity, reached by a late or resent event. A retry cannot
+ *   recreate the order, so it is not requested; instead the row says `ORDER MISSING: …`, and the
+ *   event is logged and reported as `stripe.webhook.orderMissing` so a person checks Stripe for
+ *   money it may have moved. (An event with no reference at all stays `noOrder`, unalerted.)
  *
  * ### The email is after the response — Phase 36, audit R1-21
  *
@@ -230,6 +237,23 @@ export async function POST(request: Request): Promise<Response> {
       session,
     })
 
+    if (outcome.outcome === 'orderMissing') {
+      /* Possibly captured money with no order behind it. See the docblock's status list. */
+      payload.logger.error({
+        eventId: event.id,
+        eventType: event.type,
+        msg:
+          `A Stripe event named order ${outcome.reference}, which does not exist; nothing was ` +
+          'applied. If the event moved money, reconcile it in Stripe.',
+        orderReference: outcome.reference,
+      })
+      reportFailure(
+        new Error('A Stripe event named an order that does not exist.'),
+        'stripe.webhook.orderMissing',
+        { eventType: event.type, orderReference: outcome.reference },
+      )
+    }
+
     if (outcome.outcome === 'mismatch') {
       /*
        * Money may have moved for something this order no longer describes. Not applied, not retried,
@@ -254,7 +278,7 @@ export async function POST(request: Request): Promise<Response> {
       collection: 'stripe-events',
       data: {
         ...(outcome.orderId === null ? {} : { order: outcome.orderId }),
-        ...rowRecordFor(outcome),
+        ...eventRowRecordFor(outcome),
       },
       id: eventRowId,
       overrideAccess: true,
@@ -285,33 +309,6 @@ export async function POST(request: Request): Promise<Response> {
       .catch(() => undefined)
 
     return new Response('Processing failed.', { status: 500 })
-  }
-}
-
-/** How each outcome is recorded on the `stripe-events` row. */
-function rowRecordFor(outcome: FulfilOutcome): { error?: string; status: 'ignored' | 'processed' } {
-  switch (outcome.outcome) {
-    case 'noOrder':
-      return {
-        error: 'No order reference and no known payment intent in the event.',
-        status: 'ignored',
-      }
-    case 'mismatch':
-      return { error: `MISMATCH: ${outcome.reason}`.slice(0, 900), status: 'ignored' }
-    case 'superseded':
-      return {
-        error: 'Superseded: this session is no longer the order’s current one. Nothing changed.',
-        status: 'ignored',
-      }
-    case 'outOfStock':
-      return {
-        error:
-          'Paid, but stock was unavailable at finalisation. Held (fulfilmentHold = stockShortfall) ' +
-          'for a human decision; no stock was taken — plan §17.1f.',
-        status: 'processed',
-      }
-    default:
-      return { status: 'processed' }
   }
 }
 

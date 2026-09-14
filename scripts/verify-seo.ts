@@ -29,11 +29,13 @@ import {
   richTextToPlainText,
   trimDescription,
 } from '../src/lib/seo/metadata'
+import { NO_LEGAL_DOCUMENTS } from '../src/lib/navigation/utility'
 import {
   NON_INDEXABLE_PREFIXES,
   STATIC_SITEMAP_ROUTES,
   buildSitemap,
   isIndexablePath,
+  legalSitemapRoutes,
 } from '../src/lib/seo/routes'
 import {
   breadcrumbStructuredData,
@@ -275,6 +277,9 @@ const SITE = 'https://north01.example'
     '/lookbook',
     '/collections/ss26',
     '/edit/layering',
+    /* Phase 37: a privacy notice and a set of terms are public documents, and indexable ones. */
+    '/legal/privacy',
+    '/legal/terms',
   ]) {
     check(`E: \`${path}\` is indexable`, isIndexablePath(path))
   }
@@ -289,6 +294,7 @@ const SITE = 'https://north01.example'
 {
   const map = buildSitemap(SITE, [
     ...STATIC_SITEMAP_ROUTES,
+    ...legalSitemapRoutes({ privacy: true, terms: true }),
     { path: '/product/one', priority: 0.8 },
     { path: '/cart' },
     { path: '/account/orders' },
@@ -305,6 +311,39 @@ const SITE = 'https://north01.example'
   )
 
   check('F: a product is present', urls.includes(`${SITE}/product/one`))
+
+  check(
+    'F: **the legal pages are submitted when published** — Privacy and Terms, built in Phase 37 (G-19)',
+    urls.includes(`${SITE}/legal/privacy`) && urls.includes(`${SITE}/legal/terms`),
+  )
+
+  /*
+   * **And only when published.** `/legal/privacy` and `/legal/terms` answer 404 while their
+   * `site-settings` field has no text — production's state until the owner enters it — so they are not
+   * static routes, and a sitemap that listed them regardless would submit two dead URLs.
+   */
+  const legalUrls = (privacy: boolean, terms: boolean) =>
+    buildSitemap(SITE, [...STATIC_SITEMAP_ROUTES, ...legalSitemapRoutes({ privacy, terms })])
+      .map((entry) => entry.url)
+      .filter((url) => url.includes('/legal/'))
+
+  check(
+    'F: **an unpublished legal document is not submitted** — neither page while both fields are empty',
+    legalUrls(false, false).length === 0 && legalSitemapRoutes(NO_LEGAL_DOCUMENTS).length === 0,
+    legalUrls(false, false).join(', '),
+  )
+
+  check(
+    'F: each legal page follows its own document — privacy alone, terms alone',
+    legalUrls(true, false).join() === `${SITE}/legal/privacy` &&
+      legalUrls(false, true).join() === `${SITE}/legal/terms`,
+    `${legalUrls(true, false).join()} | ${legalUrls(false, true).join()}`,
+  )
+
+  check(
+    'F: the legal pages are not static routes — they exist only with a document behind them',
+    !STATIC_SITEMAP_ROUTES.some((entry) => entry.path.startsWith('/legal/')),
+  )
 
   check(
     'F: **the bag, the account, the admin and search are excluded** — §24.1c, by name',

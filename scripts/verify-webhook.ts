@@ -22,6 +22,7 @@
  * The **D-10** guard applies: it creates and deletes orders, variants, carts, promotions and events.
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
@@ -76,7 +77,7 @@ const cleanup = async () => {
 
   for (const doc of [...created].reverse()) {
     await payload
-      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
+      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: true })
       .catch(() => undefined)
   }
 }
@@ -671,9 +672,22 @@ try {
     })
 
     check(
-      'G: §17.1h an event for an order this application does not hold is acknowledged, not crashed on',
-      missing.outcome === 'noOrder',
+      'G: §17.1h an event naming an order that does not exist is acknowledged, not crashed on — as `orderMissing`, with its reference',
+      missing.outcome === 'orderMissing' && missing.reference === 2_147_483_600,
       missing.outcome,
+    )
+
+    const unreferenced = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: null,
+      paymentIntentId: null,
+      session: { amountTotal: 1, currency: 'usd', id: 'cs_nowhere', paymentStatus: 'paid' },
+    })
+
+    check(
+      'G: …while one with no reference and no payment intent at all stays `noOrder`',
+      unreferenced.outcome === 'noOrder',
+      unreferenced.outcome,
     )
 
     const unknown = await applyStripeEvent(payload, {
@@ -1089,6 +1103,212 @@ try {
       'O: a session that needed no payment is a mismatch — there are no free orders',
       free.outcome === 'mismatch',
       free.outcome,
+    )
+  }
+
+  /* ====================================== T — the retention review, every claim restarts the clock */
+  {
+    /*
+     * `updated_at` is the unpaid-order retention sweep's clock (`lib/cart/sweep.ts`). Payload stamps
+     * it on Local API writes; `fulfil.ts`'s claims are raw SQL and used to leave it alone, so the
+     * sweep measured thirty days from the preflight write even while a delayed payment was clearing.
+     * Each fixture is put 400 days in the past with raw SQL (the Local API cannot backdate it) and
+     * then driven through exactly one statement.
+     */
+    const longAgo = new Date(Date.now() - 400 * 86_400_000).toISOString()
+
+    const backdate = (orderId: number) =>
+      payload.db.drizzle.execute(
+        sql`UPDATE "orders" SET "updated_at" = ${longAgo} WHERE "id" = ${orderId}`,
+      )
+
+    const updatedAtOf = async (orderId: number) =>
+      new Date((await orderNow(orderId)).updatedAt).getTime()
+
+    const touchedNow = async (orderId: number) =>
+      (await updatedAtOf(orderId)) > Date.now() - 10 * 60_000
+
+    const { product, variant } = await makeStock(5, 'tt')
+    const lines = [{ productId: product.id, quantity: 1, variantId: variant.id }]
+
+    /* The delayed-payment claim: `completed`, unpaid → `pending_payment`. */
+    const waiting = await makeOrder(lines, 'TT1')
+
+    await backdate(waiting.id)
+
+    const awaited = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: waiting.id,
+      paymentIntentId: null,
+      session: sessionOf(waiting, 'unpaid'),
+    })
+
+    check(
+      'T: **the delayed-payment claim bumps `updated_at`** — a clearing payment restarts the retention clock',
+      awaited.outcome === 'awaitingPayment' && (await touchedNow(waiting.id)),
+      `${awaited.outcome} ${new Date(await updatedAtOf(waiting.id)).toISOString()}`,
+    )
+
+    /* A transition claim: async failure → `payment_failed`, one raw statement and nothing else. */
+    await backdate(waiting.id)
+
+    const bounced = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.async_payment_failed',
+      orderId: waiting.id,
+      paymentIntentId: null,
+      session: sessionOf(waiting, 'unpaid'),
+    })
+
+    check(
+      'T: **a status transition claim bumps it**',
+      bounced.outcome === 'transitioned' && (await touchedNow(waiting.id)),
+      `${bounced.outcome} ${new Date(await updatedAtOf(waiting.id)).toISOString()}`,
+    )
+
+    /* A claim that matches nothing changes nothing, `updated_at` included. */
+    const idle = await makeOrder(lines, 'TT2')
+
+    await backdate(idle.id)
+
+    const superseded = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.expired',
+      orderId: idle.id,
+      paymentIntentId: null,
+      session: sessionOf(idle, 'unpaid', { id: `cs_wh_tt2_replaced_${suffix}` }),
+    })
+
+    check(
+      'T: …while a claim that matches no row leaves it alone — only a real change restarts the clock',
+      superseded.outcome === 'superseded' &&
+        (await updatedAtOf(idle.id)) === new Date(longAgo).getTime(),
+      `${superseded.outcome} ${new Date(await updatedAtOf(idle.id)).toISOString()}`,
+    )
+
+    /* The payment-mismatch hold. */
+    const mismatched = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: idle.id,
+      paymentIntentId: null,
+      session: sessionOf(idle, 'paid', { id: `cs_wh_tt2_other_${suffix}` }),
+    })
+
+    check(
+      'T: **the paymentMismatch hold write bumps it**',
+      mismatched.outcome === 'mismatch' &&
+        (await statusOf(idle.id)).hold === 'paymentMismatch' &&
+        (await touchedNow(idle.id)),
+      `${mismatched.outcome} ${new Date(await updatedAtOf(idle.id)).toISOString()}`,
+    )
+
+    /* The payment claim. */
+    const paying = await makeOrder(lines, 'TT3')
+
+    await backdate(paying.id)
+
+    const finalised = await pay(paying, `pi_wh_tt3_${suffix}`)
+
+    check(
+      'T: **the payment claim bumps it**',
+      finalised.outcome === 'finalised' && (await touchedNow(paying.id)),
+      `${finalised.outcome} ${new Date(await updatedAtOf(paying.id)).toISOString()}`,
+    )
+
+    /* The refund claim. */
+    await backdate(paying.id)
+
+    const refunded = await applyStripeEvent(payload, {
+      amountRefundedMinor: 1_000,
+      eventType: 'charge.refunded',
+      orderId: null,
+      paymentIntentId: `pi_wh_tt3_${suffix}`,
+    })
+
+    check(
+      'T: **the refund claim bumps it**',
+      refunded.outcome === 'refunded' && (await touchedNow(paying.id)),
+      `${refunded.outcome} ${new Date(await updatedAtOf(paying.id)).toISOString()}`,
+    )
+
+    /* The stock-shortfall hold, written in the payment transaction. */
+    const { product: shortProduct, variant: shortVariant } = await makeStock(0, 'tt4')
+    const short = await makeOrder(
+      [{ productId: shortProduct.id, quantity: 1, variantId: shortVariant.id }],
+      'TT4',
+    )
+
+    await backdate(short.id)
+
+    /*
+     * **The hold write is isolated, or this check cannot fail.** It runs in the payment's transaction
+     * after the claim, and `now()` is the transaction's start time — so the claim's own bump used to
+     * leave `updated_at` at "now" whether or not the hold statement set it. A `BEFORE UPDATE` trigger
+     * scoped to this one order keeps the old `updated_at` on every statement that does not change
+     * `fulfilment_hold`, so the claim cannot move the clock and the hold write is the only statement
+     * that can. Created after the backdate (which it would otherwise undo), dropped in `finally`.
+     */
+    if (!Number.isSafeInteger(short.id)) {
+      throw new Error(`T: unexpected order id ${String(short.id)}`)
+    }
+
+    const isolation = `verify_webhook_tt4_hold_${short.id}`
+
+    try {
+      await payload.db.drizzle.execute(
+        sql.raw(`CREATE OR REPLACE FUNCTION "${isolation}"() RETURNS trigger LANGUAGE plpgsql AS $fn$
+          BEGIN
+            IF NEW."fulfilment_hold" IS NOT DISTINCT FROM OLD."fulfilment_hold" THEN
+              NEW."updated_at" := OLD."updated_at";
+            END IF;
+            RETURN NEW;
+          END
+          $fn$`),
+      )
+      await payload.db.drizzle.execute(
+        sql.raw(`CREATE TRIGGER "${isolation}" BEFORE UPDATE ON "orders"
+          FOR EACH ROW WHEN (OLD."id" = ${short.id}) EXECUTE FUNCTION "${isolation}"()`),
+      )
+
+      /* The control: with the isolation live, a write that sets no hold cannot move the clock. */
+      await payload.db.drizzle.execute(
+        sql`UPDATE "orders" SET "updated_at" = now() WHERE "id" = ${short.id}`,
+      )
+
+      check(
+        'T: (harness) the isolation holds — a write to the order that sets no hold leaves `updated_at` alone',
+        (await updatedAtOf(short.id)) === new Date(longAgo).getTime(),
+        new Date(await updatedAtOf(short.id)).toISOString(),
+      )
+
+      const oversold = await pay(short, `pi_wh_tt4_${suffix}`)
+
+      check(
+        'T: **the stockShortfall hold write bumps it**, measured apart from the payment claim in its transaction',
+        oversold.outcome === 'outOfStock' &&
+          (await statusOf(short.id)).hold === 'stockShortfall' &&
+          (await touchedNow(short.id)),
+        `${oversold.outcome} ${new Date(await updatedAtOf(short.id)).toISOString()}`,
+      )
+    } finally {
+      await payload.db.drizzle.execute(sql.raw(`DROP TRIGGER IF EXISTS "${isolation}" ON "orders"`))
+      await payload.db.drizzle.execute(sql.raw(`DROP FUNCTION IF EXISTS "${isolation}"()`))
+    }
+
+    /* A payment for an order that has been deleted, as the retention sweep deletes one. */
+    const gone = await makeOrder([], 'TT5')
+
+    await payload.delete({ collection: 'orders', id: gone.id, overrideAccess: true, trash: true })
+
+    const late = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.async_payment_succeeded',
+      orderId: gone.id,
+      paymentIntentId: `pi_wh_tt5_${suffix}`,
+      session: sessionOf(gone, 'paid'),
+    })
+
+    check(
+      'T: **a payment for an order the sweep deleted is `orderMissing`**, named by its reference',
+      late.outcome === 'orderMissing' && late.reference === gone.id,
+      late.outcome,
     )
   }
 

@@ -1,5 +1,4 @@
-import { SpeedInsights as VercelSpeedInsights } from '@vercel/speed-insights/next'
-
+import { SpeedInsightsReporter } from '@/components/analytics/analytics'
 import { appEnv, serverEnv } from '@/lib/env.server'
 
 /**
@@ -18,6 +17,15 @@ import { appEnv, serverEnv } from '@/lib/env.server'
  * **There is a second gate this file cannot control**, and it is worth stating so nobody looks for
  * data that was never being collected: the component reports nothing until Speed Insights is enabled
  * for the project in the Vercel dashboard. `TODO.md` carries that as an owner action.
+ *
+ * ### What it reports — Phase 37
+ *
+ * This rendered `<SpeedInsights />` bare, on every storefront page, so `/reset-password?token=…` was
+ * reported to Vercel with its URL like any other page while the privacy notice said that page was
+ * never reported anywhere. The component it renders now is `SpeedInsightsReporter`, in
+ * `analytics.tsx` beside the other vendors, whose `beforeSend` drops every event for
+ * `/reset-password` and reports every other page as origin and path only — no query string. It
+ * lives there because a `beforeSend` function cannot be passed from this server component.
  */
 export function SpeedInsights() {
   /**
@@ -36,5 +44,5 @@ export function SpeedInsights() {
     return null
   }
 
-  return <VercelSpeedInsights />
+  return <SpeedInsightsReporter />
 }

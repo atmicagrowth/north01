@@ -35,7 +35,7 @@ defined in [`ENVIRONMENT.md`](ENVIRONMENT.md); the Resend domain and DNS procedu
 | `welcome` | `Welcome to NORTH / 01` | `register` in `src/lib/auth/actions.ts`, after the account and session exist | `welcome:<customerId>` |
 | `passwordReset` | `Reset your NORTH / 01 password` | Payload `forgotPassword`, through `serviceEmailAdapter` | `password-reset:<sha-256 digest of the address>:<issued at>` — a new request is a new message |
 | `verification` | `Confirm your email address` | **nothing** — `Customers.auth.verify` is off (DEV-66) | `verification:<customerId>` |
-| `contactConfirmation` | `We have your message` | **nothing** — there is no contact form (DEV-66, gap G-08) | `contact-confirmation:<submission>` |
+| `contactConfirmation` | `We have your message` | **nothing** — there is no contact form (DEV-66). Contact is the published address `admin@micagrowth.com` instead, which closed gap G-08 without a form | `contact-confirmation:<submission>` |
 
 Features §24's *Order cancelled* and *back-in-stock* are not built (DEV-65). `EMAIL_KINDS` keys the
 template map exhaustively, so adding a kind without a template is a type error.
@@ -60,6 +60,11 @@ One row per message the shop **intended** to send, written `pending` **before** 
 
 **Access:** `create` and `update` are closed to everyone, staff included; staff read; admins delete
 (`EmailMessages.ts`). Server code writes with `overrideAccess`. Every field is read-only in the admin.
+
+**Retention:** none. Rows are kept indefinitely — including `to`, `subject` and `data` after the
+customer's account or the order is deleted, since only the links clear. That is an open owner
+decision (`docs/SECURITY.md` §4, decision 2), and the privacy notice says so: copies of the emails
+sent are kept *"for now with no fixed deletion date"*. A decision here changes the notice too.
 
 ### Statuses and retries (`rules.ts`)
 
@@ -171,7 +176,9 @@ TODO.md §2, and [`DEPLOYMENT.md`](DEPLOYMENT.md) §11.3 for the domain.
 2. Set in Vercel: `RESEND_API_KEY`, `EMAIL_FROM` (an address on the verified domain, for example
    `NORTH / 01 <orders@send.example.com>`), and `CRON_SECRET` for the scheduled drain. Preview: also
    `EMAIL_DEV_ALLOWLIST` with your own address.
-3. Admin → Site settings → set `contactEmail` to a real mailbox, or messages carry no reply-to.
+3. Admin → Site settings → Contact → set `contactEmail` to `admin@micagrowth.com`, the owner's support
+   address (the seed writes it; production's settings are entered by hand, TODO.md §12). Without a
+   usable address messages carry no reply-to.
 4. Redeploy, request a password reset for an allowlisted address on a preview, and confirm it arrives
    and its link names the right host (DEPLOYMENT.md §11.4).
 5. Watch `email-messages` for `failed` rows. Fix the cause, then wait for the daily cron or send

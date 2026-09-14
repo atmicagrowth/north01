@@ -15,6 +15,9 @@
  *    numbers are already in the property.
  * 2. **The Sentry redaction.** §25.1d: *"do not send sensitive payment data or raw secrets."* When
  *    redaction stops working, nothing breaks. The reports just quietly start carrying more.
+ * 3. **What the measurement vendors are told** (Phase 37). The privacy notice says web addresses
+ *    are stripped of anything sensitive and that the password-reset page is never reported. Section
+ *    J asserts the rules that make that true for GA4, PostHog and Vercel Speed Insights.
  *
  * No database, like `verify:seo`, so **no D-10 guard**: it opens no connection and writes nothing.
  * Both modules under test are pure by design, for exactly this reason.
@@ -30,6 +33,16 @@ import {
   type AnalyticsItem,
 } from '../src/lib/analytics/events'
 import { cardToAnalyticsItem, variantLabel } from '../src/lib/analytics/items'
+import {
+  isPrivatePath,
+  reportableReferrer,
+  speedInsightsBeforeSend,
+} from '../src/lib/analytics/private-paths'
+import {
+  redactPageUrl,
+  redactReferrer,
+  scrubUrlProperties,
+} from '../src/lib/analytics/redact-for-vendors'
 import { IGNORED_ERRORS } from '../src/lib/observability/sentry-options'
 import {
   REDACTED,
@@ -505,6 +518,71 @@ const has = (haystack: unknown, needle: string) => JSON.stringify(haystack).incl
   check(
     'I: **nothing commerce-shaped is ignored** — a filter is where real failures get buried',
     !IGNORED_ERRORS.some((entry) => /stripe|checkout|payment|order|cart/i.test(String(entry))),
+  )
+}
+
+/* ============================================ J — Phase 37, what the measurement vendors are told */
+{
+  const reset = 'https://north01.test/reset-password?token=EXAMPLEtoken123'
+
+  check('J: the reset-password page is a private path', isPrivatePath('/reset-password'))
+  check('J: …and the forgot-password page is not', !isPrivatePath('/forgot-password'))
+
+  check(
+    'J: **Speed Insights drops every event for the reset page**',
+    speedInsightsBeforeSend({ type: 'vital', url: reset }) === null,
+  )
+
+  check(
+    'J: …and reports every other page with no query string at all',
+    speedInsightsBeforeSend({
+      type: 'vital',
+      url: 'https://north01.test/checkout/success?order=42&size=m',
+    })?.url === 'https://north01.test/checkout/success',
+  )
+
+  check(
+    'J: **a reset-page referrer is reported as the bare origin** — GA4 page_referrer and PostHog alike',
+    redactReferrer(reset) === 'https://north01.test/' &&
+      reportableReferrer(reset) === 'https://north01.test/',
+  )
+
+  check(
+    'J: any other referrer is redacted, harmless parameters kept',
+    !redactReferrer('https://north01.test/checkout/success?order=42&utm_source=mail').includes(
+      'order=42',
+    ) && redactReferrer('https://north01.test/shop?utm_source=mail').includes('utm_source=mail'),
+  )
+
+  check(
+    'J: **an email in a percent-encoded query is scrubbed** — `@` is `%40` once serialised',
+    !decodeURIComponent(redactUrl('https://north01.test/search?q=jane%40example.com')).includes(
+      'jane',
+    ),
+  )
+
+  check(
+    'J: a search URL withholds what `search_submitted` withholds',
+    !redactPageUrl('https://north01.test/search?q=12345678').includes('12345678'),
+  )
+
+  const properties: Record<string, unknown> = {
+    $current_url: 'https://north01.test/shop?size=m',
+    $session_entry_referrer: reset,
+    $session_entry_url: 'https://north01.test/checkout/success?order=42',
+    transactionId: 'N1-2609-EXAMPL',
+  }
+
+  scrubUrlProperties(properties)
+
+  check(
+    'J: **PostHog URLs are scrubbed by value** — the session-entry pair the old name list missed',
+    !has(properties, 'EXAMPLEtoken123') && !has(properties, 'order=42'),
+  )
+  check(
+    'J: …and a value that is not a URL is left alone',
+    properties.transactionId === 'N1-2609-EXAMPL' &&
+      properties.$current_url === 'https://north01.test/shop?size=m',
   )
 }
 

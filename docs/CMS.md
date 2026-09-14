@@ -13,7 +13,7 @@ sign in to the admin (**D-21**).
 
 | Role (`users.role`) | Can |
 |---|---|
-| `editor` (default) | create and edit catalogue, editorial and content documents; edit the three globals except admin-only fields; moderate reviews; update order fulfilment and tracking; read customers, orders, bags, newsletter, email outbox, Stripe events. Sees and edits only their own user row |
+| `editor` (default) | create and edit catalogue, editorial and content documents; edit the three globals except admin-only fields; moderate reviews; update order fulfilment and tracking; create and edit discount codes (both intended — the owner's Phase 37 decision); record newsletter unsubscribes; read customers, orders, bags, newsletter, email outbox, Stripe events. Sees and edits only their own user row |
 | `admin` | everything an editor can, plus: **delete** any document, create staff users and change roles, admin-only settings (§3), order address snapshots |
 
 - The first user created on an empty database becomes `admin` (`Users.ts`). After that only an admin
@@ -29,7 +29,8 @@ sign in to the admin (**D-21**).
 ## 2. Collections
 
 **Delete is admin-only on every content collection.** Products, customers and orders go to the trash
-first (`trash: true`), recoverable by an admin.
+first (`trash: true`), recoverable by an admin. A trashed customer is **not** erased — see §10,
+*Delete a customer's account on request*, before deleting one for a privacy request.
 
 | Admin group | Collection | What it is |
 |---|---|---|
@@ -58,12 +59,47 @@ custom admin components.
 
 | Global | Group | Contains |
 |---|---|---|
-| **Site settings** | Settings | Site name, logo, tagline, contact email and phone, popular searches, shipping and returns policy text, default SEO title, description and share image, the announcement bar. **Admin only:** currency, locale, free-shipping threshold, low-stock threshold, maximum quantity per line |
+| **Site settings** | Settings | Site name, logo, tagline, contact email and phone, popular searches, the four policy documents (§3.1), default SEO title, description and share image, the announcement bar. **Admin only:** currency, locale, free-shipping threshold, low-stock threshold, maximum quantity per line |
 | **Navigation** | Settings | Primary menu, footer columns, social links (§6) |
 | **Homepage** | Editorial | The homepage's sections (§6) |
 
 `contactEmail` is the reply-to on every order email; an address on a reserved domain such as
 `.example` is ignored ([`EMAIL.md`](EMAIL.md) §7).
+
+### 3.1 The Policies tab — four documents, each rendered somewhere
+
+Rich text, one policy with one source: editing a field changes every surface that shows it.
+
+| Field | Renders at |
+|---|---|
+| `shippingPolicy` | the product page's **Shipping & Returns** accordion, and `/help/shipping` |
+| `returnsPolicy` | the other half of that accordion, and `/help/returns` |
+| `privacyPolicy` | `/legal/privacy`, linked from the footer, the Support nav on the help pages, and the sentence above checkout's payment button |
+| `termsOfSale` | `/legal/terms`, linked from the same three places |
+
+The two legal pages were built in Phase 37, closing gap **G-19**. **The text is a seeded starting
+draft, not the owner's own words and not legal advice.** On 2026-09-11 the owner supplied the
+decisions it rests on — the contact address `admin@micagrowth.com` and the thirty-day retention of
+unpaid orders — and asked for the text, which was then drafted from the code
+(`scripts/seed/legal.ts`) and revised on 2026-09-13 after a review. **The owner is accountable for
+it**: read it, correct it, and have somebody qualified review it before live orders. Both documents
+still say the registered company name and address — and, in the terms, the governing law — are to be
+confirmed; none is known to this build (TODO.md §9). The seed never runs against production, so the
+live copy is pasted into the production admin by hand (TODO.md §12).
+
+**The privacy notice describes the procedures in §10.** It promises that an account deleted on
+request is deleted permanently, that a review is removed on request, and that staff record a
+newsletter unsubscribe. Those are true only while staff follow §10. It also promises retention the
+daily sweep enforces, which runs only once `CRON_SECRET` is set in production
+([`SECURITY.md`](SECURITY.md) §4). **Editing either document:** change the *Last updated* date in its
+first paragraph by hand — there are no versions (§4), and the notice promises the date moves.
+
+**Empty behaves differently for the two kinds of document.** An empty `shippingPolicy` or
+`returnsPolicy` still renders its page, which says the policy is not published yet and offers the FAQ.
+An empty `privacyPolicy` or `termsOfSale` — including one whose words were all deleted, which the
+admin saves as an empty paragraph (`hasPublishedText`) — is **unpublished**: `/legal/privacy` or
+`/legal/terms` answers 404, and the footer, the Support nav, the checkout sentence and the sitemap all
+drop its link (`publishedLegalNav`, `getLegalPublication`). Nothing links to a missing document.
 
 ## 4. Publishing
 
@@ -114,8 +150,10 @@ media document deletes the file production also shows ([`DEPLOYMENT.md`](DEPLOYM
 - Limits: 6 primary items, each with up to 4 columns of 8 links and an optional featured panel; 4
   footer columns; 6 social links, `https://` only. As built the header has five items — **DEV-07** was amended in
   Phase 30 because `/about` has no page, and the field help says so.
-- The Privacy/Terms row (`src/lib/navigation/utility.ts`) and the footer newsletter column (**DEV-42**)
-  are code, not content.
+- The Privacy/Terms row (`legalNav` in `src/lib/navigation/utility.ts`) and the footer newsletter
+  column (**DEV-42**) are code, not content — but the legal *text* those two links lead to is content,
+  in Site settings (§3.1), and each link appears only while its document has text. Navigation cannot
+  add or remove them; emptying the document in Site settings removes its link everywhere.
 
 ### Homepage
 
@@ -246,3 +284,33 @@ send `POST /api/email/drain` from a browser tab signed in to the admin (for exam
 it). See [`EMAIL.md`](EMAIL.md) §5.
 
 **Add an editor.** Users → create (admin only) → role `editor`.
+
+### Privacy requests — what the privacy notice promises staff will do
+
+Requests come by email to `admin@micagrowth.com`; there is no self-service erasure, export or review
+removal. Before acting, make sure the request comes from the email address on the account or order —
+reply to that address if it does not. The facts behind each step are in [`SECURITY.md`](SECURITY.md)
+§4.1.
+
+**Delete a customer's account on request** (admin only). Customers → open the account → **Delete** →
+tick **Skip trash and delete permanently** → confirm. If it is already in the trash: Customers →
+Trash → select it → **Permanently Delete**. Only the permanent delete runs the cascade
+(`Customers.ts` `beforeDelete`): the account, its saved addresses, its wishlist and its reviews are
+removed. A plain **Delete** only moves the account to the trash — everything stays, restorable, and
+its approved reviews **stay on product pages** — which does not meet what the notice promises. What a
+permanent delete deliberately keeps, as the notice says: orders (with the name, email and addresses
+they were placed with; the account link clears), the email outbox rows sent to that address, the
+newsletter row, and a bag until it expires. If the customer is on the newsletter, also do the
+unsubscribe below. Reply to confirm it is done.
+
+**Remove a review on request** (admin only). Reviews → find it (filter the list by product or by
+customer) → **Delete** → confirm. Reviews have no trash: this is permanent.
+Rejecting a review hides it but keeps it, which is not removal.
+
+**Record a newsletter unsubscribe.** Newsletter subscribers → find the email → set `status` to
+*Unsubscribed* → save. Do not delete the row: it is what stops the address being added back.
+
+**Send a copy of what is held, or correct it.** Read the account (Customers), its Addresses, Wishlist
+items and Reviews; Orders searched by the email; Email messages filtered by `to`; Newsletter
+subscribers by email. A customer's name and addresses can be corrected by staff; the sign-in email and
+an order's address snapshots only by an admin; a review's words by nobody (delete it instead).

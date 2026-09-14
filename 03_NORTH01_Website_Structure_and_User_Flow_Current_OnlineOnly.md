@@ -4,15 +4,15 @@
 >
 > Visual presentation is governed by `NORTH01_Visual_Guide_OnlineOnly.md` and `NORTH01_Visual_Reference_OnlineOnly.png`.
 
-> **As built (Phase 36 documentation audit).** The structure below is the original specification. Where the build departs from it, the deviation register (`NORTH01_Implementation_Notes_and_Deviations.md` §2) and the gap register (`docs/ARCHITECTURE.md` §3.2) govern:
+> **As built (Phase 36 documentation audit; revised in Phase 37, 2026-09-13).** The structure below is the original specification. Where the build departs from it, the deviation register (`NORTH01_Implementation_Notes_and_Deviations.md` §2) and the gap register (`docs/ARCHITECTURE.md` §3.2) govern:
 >
 > - **ABOUT** — withdrawn from the navigation; there is no page (DEV-07, amended in Phase 30).
 > - **ORDER TRACKING** — no public lookup. Signed-in customers see tracking in `/account/orders`, and guests get the shipped email (DEV-77).
-> - **FAQ / CONTACT / SUPPORT** — `/help/faq`, `/help/shipping` and `/help/returns` exist. Contact does not (G-08, open).
-> - **Online return request** — no return-request flow exists (G-20, open).
+> - **FAQ / CONTACT / SUPPORT** — `/help/faq`, `/help/shipping` and `/help/returns` exist. Contact is a published support address, `admin@micagrowth.com`, with no contact page or form (G-08, closed 2026-09-11).
+> - **Online return request** — no return-request flow exists (G-20, open). Returns are arranged by email at `admin@micagrowth.com`.
 > - **§6 Quick add / quick view** — withdrawn (DEV-76).
 > - **§7 Product page** — no Buy Now (DEV-78). Recommendations are one row with no Complete the Look (DEV-79).
-> - **Legal pages** — not published; they wait on legal text (G-19, owner action).
+> - **Legal pages** — `/legal/privacy` and `/legal/terms` render the privacy notice and terms of sale from `site-settings` (G-19, closed 2026-09-11). Each page, and its links in the footer, the Support nav, checkout and the sitemap, exists only while its document has text; otherwise the page is a 404. Checkout tells the customer that placing an order accepts the terms. The seeded text is an unreviewed draft (TODO.md §9).
 
 # 1. Overall Experience
 

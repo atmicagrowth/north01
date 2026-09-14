@@ -14,6 +14,7 @@ import * as migration_20260911_142556_cart_item_price_seen from './20260911_1425
 import * as migration_20260911_164502_order_shipping_estimate from './20260911_164502_order_shipping_estimate';
 import * as migration_20260911_180257_phase_36_order_fulfilment_hold from './20260911_180257_phase_36_order_fulfilment_hold';
 import * as migration_20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation from './20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation';
+import * as migration_20260912_064949_phase_37_legal_pages from './20260912_064949_phase_37_legal_pages';
 
 export const migrations = [
   {
@@ -94,6 +95,11 @@ export const migrations = [
   {
     up: migration_20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation.up,
     down: migration_20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation.down,
-    name: '20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation'
+    name: '20260911_185753_phase_36_sweep_1_mismatch_hold_tax_calculation',
+  },
+  {
+    up: migration_20260912_064949_phase_37_legal_pages.up,
+    down: migration_20260912_064949_phase_37_legal_pages.down,
+    name: '20260912_064949_phase_37_legal_pages'
   },
 ];

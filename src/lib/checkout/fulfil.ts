@@ -62,6 +62,24 @@ import {
  * session. A claim that matches nothing is then classified — a redelivery (`alreadyFinal`), an
  * expected event for a replaced session (`superseded`), or money that moved against something this
  * order no longer describes (`mismatch`), which is recorded and alerted and never applied.
+ *
+ * ### Every raw write to an order sets `updated_at` — the retention review
+ *
+ * `updated_at` is the unpaid-order retention sweep's clock (`lib/cart/sweep.ts`): thirty days in
+ * which nothing happened to the order. Payload stamps it on Local API writes; the claims here are
+ * raw SQL, and none of them used to touch it, so a delayed payment moving an order to
+ * `pending_payment`, an expiry, a refund or a hold left the clock at the preflight write. Every
+ * `UPDATE "orders"` in this file therefore sets `"updated_at" = now()` in the same statement — a claim
+ * that matches no row changes nothing, so only an event that actually moved the order restarts the
+ * clock. `verify:webhook` T measures it.
+ *
+ * ### An order that is not there — `orderMissing`
+ *
+ * An event whose metadata names an order id that parses but resolves to no row is **not** the same as
+ * one with no reference at all (`noOrder`). Our own orders stop existing for one reason in normal
+ * operation — the retention sweep deleted an unpaid order — so an event arriving for one afterwards
+ * (a webhook outage recovered late, a Dashboard resend) may describe real money. It is returned as
+ * `orderMissing` with the reference, and the route records, logs and reports it.
  */
 
 /** The four facts about a Checkout Session the order is checked against. */
@@ -108,6 +126,8 @@ export type FulfilOutcome =
   | { orderId: number; outcome: 'superseded' }
   | { orderId: number; outcome: 'recorded' }
   | { orderId: null; outcome: 'noOrder' }
+  /** The event named order `reference`, and no such order exists — see the file docblock. */
+  | { orderId: null; outcome: 'orderMissing'; reference: number }
   | { orderId: null; outcome: 'ignored' }
 
 const relatedId = (value: unknown): null | number =>
@@ -181,7 +201,9 @@ export async function applyStripeEvent(
 
   if (outcome.outcome === 'mismatch') {
     await payload.db.drizzle.execute(
-      sql`UPDATE "orders" SET "fulfilment_hold" = 'paymentMismatch' WHERE "id" = ${outcome.orderId}`,
+      sql`UPDATE "orders"
+          SET "fulfilment_hold" = 'paymentMismatch', "updated_at" = now()
+          WHERE "id" = ${outcome.orderId}`,
     )
   }
 
@@ -211,11 +233,19 @@ async function applyEvent(payload: Payload, input: StripeEventInput): Promise<Fu
     )
   }
 
+  if (!order && input.orderId !== null) {
+    /*
+     * A reference that parses and names nothing. Most likely an unpaid order the retention sweep has
+     * deleted, and possibly real money — so it is not folded into `noOrder`. See the file docblock.
+     */
+    return { orderId: null, outcome: 'orderMissing', reference: input.orderId }
+  }
+
   if (!order) {
     /*
-     * §17.1h's *"invalid metadata"*. A signature proves Stripe sent it; it does not prove the order
-     * exists here — another application on the same account, an older deploy, a hand-made test event.
-     * Acknowledged and recorded, never crashed on.
+     * §17.1h's *"invalid metadata"*: no reference, and no payment intent any order holds. A signature
+     * proves Stripe sent it; it does not prove it is about an order here. Acknowledged and recorded,
+     * never crashed on.
      */
     return { orderId: null, outcome: 'noOrder' }
   }
@@ -266,7 +296,8 @@ async function applyEvent(payload: Payload, input: StripeEventInput): Promise<Fu
 
   const claim = await payload.db.drizzle.execute(
     sql`UPDATE "orders"
-        SET "payment_status" = ${STATUS_LITERAL[to]}
+        SET "payment_status" = ${STATUS_LITERAL[to]},
+            "updated_at" = now()
         WHERE "id" = ${order.id}
           AND "stripe_checkout_session_id" = ${session.id}
           AND "payment_status" IN (${statusList(from)})`,
@@ -295,19 +326,31 @@ async function applyEvent(payload: Payload, input: StripeEventInput): Promise<Fu
     : { orderId: order.id, outcome: 'transitioned', status: to }
 }
 
-/** Re-read the order after a claim matched nothing, and say why — see `classifyUnclaimedSessionEvent`. */
+/**
+ * Re-read the order after a claim matched nothing, and say why — see `classifyUnclaimedSessionEvent`.
+ *
+ * The order can have been deleted between the lookup and the claim — the retention sweep locks and
+ * deletes it, and the claim waits for that commit and then finds no row. That is `orderMissing`, not
+ * a crash.
+ */
 async function classifyUnclaimed(
   payload: Payload,
   orderId: number,
   kind: 'awaitPayment' | 'finalise' | 'transition',
   session: SessionFacts,
 ): Promise<FulfilOutcome> {
-  const order = await payload.findByID({
-    collection: 'orders',
-    depth: 0,
-    id: orderId,
-    overrideAccess: true,
-  })
+  const order = await payload
+    .findByID({
+      collection: 'orders',
+      depth: 0,
+      id: orderId,
+      overrideAccess: true,
+    })
+    .catch(notFoundAsNull)
+
+  if (!order) {
+    return { orderId: null, outcome: 'orderMissing', reference: orderId }
+  }
 
   const status = order.paymentStatus as PaymentStatus
 
@@ -420,7 +463,8 @@ async function applyRefund(
       sql`UPDATE "orders"
           SET "refunded_minor" = GREATEST(COALESCE("refunded_minor", 0), ${amountRefundedMinor}),
               "refunded_at" = ${new Date().toISOString()},
-              "payment_status" = ${full ? STATUS_LITERAL.refunded : sql`"payment_status"`}
+              "payment_status" = ${full ? STATUS_LITERAL.refunded : sql`"payment_status"`},
+              "updated_at" = now()
           WHERE "id" = ${order.id}
             AND "payment_status" IN (${statusList(['paid', 'refunded'])})
             AND COALESCE("refunded_minor", 0) < ${amountRefundedMinor}`,
@@ -604,7 +648,8 @@ async function finalisePaidOrder(
           SET "payment_status" = 'paid',
               "paid_at" = ${new Date().toISOString()},
               "fulfillment_status" = 'unfulfilled',
-              "stripe_payment_intent_id" = COALESCE(${paymentIntentId}, "stripe_payment_intent_id")
+              "stripe_payment_intent_id" = COALESCE(${paymentIntentId}, "stripe_payment_intent_id"),
+              "updated_at" = now()
           WHERE "id" = ${orderId}
             AND "payment_status" IN (${statusList(FINALISABLE_STATUSES)})
             AND "stripe_checkout_session_id" = ${session.id}
@@ -708,7 +753,8 @@ async function finalisePaidOrder(
       await tx.execute(
         sql`UPDATE "orders"
             SET "fulfilment_hold" = 'stockShortfall',
-                "shortfall" = ${JSON.stringify(short)}::jsonb
+                "shortfall" = ${JSON.stringify(short)}::jsonb,
+                "updated_at" = now()
             WHERE "id" = ${orderId}`,
       )
     }

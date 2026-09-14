@@ -1,9 +1,15 @@
 import type { MetadataRoute } from 'next'
 
 import { siteUrl } from '@/lib/env.server'
+import { getLegalPublication } from '@/lib/help/read'
 import { getPayloadClient } from '@/lib/payload'
 import { publishedProductWhere } from '@/lib/catalog/query'
-import { buildSitemap, STATIC_SITEMAP_ROUTES, type SitemapEntry } from '@/lib/seo/routes'
+import {
+  buildSitemap,
+  legalSitemapRoutes,
+  STATIC_SITEMAP_ROUTES,
+  type SitemapEntry,
+} from '@/lib/seo/routes'
 
 /**
  * **`/sitemap.xml`** — plan §24.1c: *"include relevant published routes."*
@@ -24,16 +30,26 @@ import { buildSitemap, STATIC_SITEMAP_ROUTES, type SitemapEntry } from '@/lib/se
  * Payload stamps it on every write. It is omitted rather than defaulted for the static routes,
  * because "today" on the homepage every day is a claim that stops meaning anything.
  *
+ * ### The legal pages are submitted only when they have a document
+ *
+ * `/legal/privacy` and `/legal/terms` answer 404 while their `site-settings` field has no text, so
+ * they are added from `getLegalPublication` — the same answer the footer's legal row is built from —
+ * rather than listed as static routes. See `legalSitemapRoutes`.
+ *
  * ### It degrades rather than failing
  *
- * A database that cannot be reached returns the four static routes instead of a 500. A sitemap
- * missing its product URLs for an hour is a recoverable problem; a sitemap URL that answers 500 is
- * one a crawler remembers.
+ * A database that cannot be reached returns the static routes instead of a 500 — and no legal pages,
+ * since `getLegalPublication` fails closed. A sitemap missing its product URLs for an hour is a
+ * recoverable problem; a sitemap URL that answers 500 is one a crawler remembers.
  */
 export const revalidate = 3600
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const entries: SitemapEntry[] = [...STATIC_SITEMAP_ROUTES]
+  const entries: SitemapEntry[] = [
+    ...STATIC_SITEMAP_ROUTES,
+    /* Never throws: an unreadable settings global is "neither published". */
+    ...legalSitemapRoutes(await getLegalPublication()),
+  ]
 
   try {
     const payload = await getPayloadClient()

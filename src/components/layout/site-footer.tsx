@@ -3,7 +3,8 @@ import type { ReactNode } from 'react'
 import { PageContainer } from '@/components/layout/page-container'
 import { Link, NewTabHint } from '@/components/ui/link'
 import { cn } from '@/lib/cn'
-import { legalNav } from '@/lib/navigation/utility'
+import { getLegalPublication } from '@/lib/help/read'
+import { publishedLegalNav } from '@/lib/navigation/utility'
 import { getShell } from '@/lib/navigation/shell'
 
 /**
@@ -35,6 +36,16 @@ import { getShell } from '@/lib/navigation/shell'
  * columns to four, exactly as this layout was built to do.
  *
  * What is still owed is the **mail**, not the column: Phase 19 sends, and Phase 26 adds Turnstile.
+ *
+ * ### The legal row links only to documents that have text
+ *
+ * Privacy and Terms are code, so an editor cannot remove them — but each is shown only while its
+ * `site-settings` field has text (`publishedLegalNav`, fed by `getLegalPublication`). Production's two
+ * fields are empty until the owner enters the text, and the routes answer 404 until then; a row that
+ * linked to them regardless would put two dead legal links on every page of the shop. The read is
+ * the footer's own rather than a prop, because the footer mounts in two root documents —
+ * `(frontend)/layout.tsx` and `global-not-found.tsx` — and both get the same answer without either
+ * having to remember it. It is cached under the `site-settings` tag, so it costs no query per page.
  */
 export async function SiteFooter({
   className,
@@ -44,8 +55,9 @@ export async function SiteFooter({
   /** Filled by `NewsletterSignup` in the root layout since Phase 10. See the docblock. */
   newsletter?: ReactNode
 }) {
-  const { navigation, settings } = await getShell()
+  const [{ navigation, settings }, legal] = await Promise.all([getShell(), getLegalPublication()])
   const columns = navigation.footer
+  const legalLinks = publishedLegalNav(legal)
 
   return (
     <footer data-slot="site-footer" className={cn('border-t border-border', className)}>
@@ -136,14 +148,14 @@ export async function SiteFooter({
                 © {settings.siteName}
               </p>
               {/*
-                Nothing rather than an empty `<ul>`. `legalNav` is empty today — Phase 28's audit
-                found both of its links 404ing, and a privacy policy is text somebody has to write
-                rather than a page to generate. An empty list element is still an element, and a
-                screen reader announces "list, 0 items" over a footer that has nothing to say.
+                Nothing rather than an empty `<ul>`. The row is empty whenever neither legal document
+                has text — production's state until the owner enters it, and the state it was in from
+                Phase 28 to Phase 37 (G-19) — and an empty list element is still an element: a screen
+                reader announces "list, 0 items" over a footer that has nothing to say.
               */}
-              {legalNav.length > 0 ? (
+              {legalLinks.length > 0 ? (
                 <ul className="flex items-center gap-m">
-                  {legalNav.map((item) => (
+                  {legalLinks.map((item) => (
                     <li key={item.href}>
                       <Link href={item.href} variant="meta" className="text-micro">
                         {item.label}

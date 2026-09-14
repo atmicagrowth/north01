@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { eventRowRecordFor } from '@/lib/checkout/events'
 import {
   canTransition,
   classifyUnclaimedSessionEvent,
@@ -302,5 +303,40 @@ describe('reusing an order for a new checkout attempt (R1-01, R1-03, R1-06)', ()
         sessionStatus: null,
       }),
     ).toBe('refuse')
+  })
+})
+
+describe('what the stripe-events row says about an order that is not there (retention review)', () => {
+  it('names a missing order as missing — with its reference — and not as a metadata problem', () => {
+    /*
+     * An event naming an order id that parses, for an order that no longer exists: most likely an
+     * unpaid order the retention sweep deleted, reached by a late or resent event. It used to be
+     * recorded as "No order reference", which sent a reader looking in the wrong place for what may
+     * be captured money.
+     */
+    const record = eventRowRecordFor({ orderId: null, outcome: 'orderMissing', reference: 4821 })
+
+    expect(record.status).toBe('ignored')
+    expect(record.error).toMatch(/^ORDER MISSING: /)
+    expect(record.error).toContain('4821')
+    expect(record.error).toMatch(/Stripe/)
+    expect(record.error).not.toMatch(/No order reference/)
+    expect(record.error!.length).toBeLessThanOrEqual(900)
+  })
+
+  it('keeps the no-reference sentence for the case it actually describes', () => {
+    expect(eventRowRecordFor({ orderId: null, outcome: 'noOrder' })).toEqual({
+      error: 'No order reference and no known payment intent in the event.',
+      status: 'ignored',
+    })
+  })
+
+  it('records a mismatch with its reason, and a finalised payment as processed with no error', () => {
+    expect(
+      eventRowRecordFor({ orderId: 7, outcome: 'mismatch', reason: 'amount 1 does not match' }),
+    ).toEqual({ error: 'MISMATCH: amount 1 does not match', status: 'ignored' })
+    expect(
+      eventRowRecordFor({ confirmationEmailId: null, orderId: 7, outcome: 'finalised' }),
+    ).toEqual({ status: 'processed' })
   })
 })

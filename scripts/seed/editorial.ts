@@ -271,7 +271,7 @@ const FAQS: {
   },
   {
     answer: [
-      'Contact us as soon as you can and we will try. Once an order is packed we cannot alter it, and after that the answer is a return. Contact details will be published here.',
+      'Email admin@micagrowth.com as soon as you can and we will try. Once an order is packed we cannot alter it, and after that the answer is a return.',
     ],
     question: 'Can I change or cancel an order after placing it?',
     sortOrder: 30,
@@ -288,7 +288,7 @@ const FAQS: {
   },
   {
     answer: [
-      'Standard and Express go worldwide. Overnight is United States only, because next-day is a promise we can keep in one country.',
+      'Yes, to Canada, the United Kingdom, Ireland, France, Germany, the Netherlands and Australia, by Standard or Express. Overnight is United States only, because next-day is a promise we can keep in one country. Checkout will not accept an address anywhere else yet.',
     ],
     question: 'Do you ship outside the United States?',
     sortOrder: 30,

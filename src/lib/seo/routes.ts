@@ -11,6 +11,8 @@
  * Pure, so `pnpm verify:seo` can assert the exclusions without booting anything.
  */
 
+import { publishedLegalNav, type LegalPublication } from '@/lib/navigation/utility'
+
 /**
  * **Everything a crawler must be kept out of.**
  *
@@ -85,6 +87,28 @@ export const STATIC_SITEMAP_ROUTES: readonly SitemapEntry[] = [
   { changeFrequency: 'monthly', path: '/help/shipping', priority: 0.4 },
   { changeFrequency: 'monthly', path: '/help/returns', priority: 0.4 },
 ]
+
+/**
+ * **`/legal/privacy` and `/legal/terms`, submitted only when there is a document behind them.**
+ *
+ * Phase 37, closing **G-19**. Nobody searches for these, and that is not what they are indexed for:
+ * a privacy notice and a set of terms are the pages a customer — or a regulator — looks for when
+ * they already have a reason to, and a page absent from the sitemap is one they may not find.
+ * Monthly and low, like the support pages, because they change when the business does.
+ *
+ * They are not in `STATIC_SITEMAP_ROUTES` because they do not exist regardless of the database. A
+ * legal route whose `site-settings` field has no text answers 404, so submitting it would hand a
+ * crawler a dead URL — and before the routes 404'd, it submitted a *privacy notice* page that held no
+ * notice, under a description saying it explained how personal data is used. The entries are derived
+ * from `publishedLegalNav`, so the sitemap submits exactly the legal pages the footer links to.
+ */
+export function legalSitemapRoutes(published: LegalPublication): SitemapEntry[] {
+  return publishedLegalNav(published).map((entry) => ({
+    changeFrequency: 'monthly',
+    path: entry.href,
+    priority: 0.4,
+  }))
+}
 
 /**
  * Assemble the sitemap, dropping anything that must not be indexed.

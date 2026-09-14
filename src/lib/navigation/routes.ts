@@ -151,6 +151,8 @@ export const PAGE_ROUTE_PATTERNS: readonly string[] = [
   '/help/shipping',
   '/journal',
   '/journal/*',
+  '/legal/privacy',
+  '/legal/terms',
   '/login',
   '/lookbook',
   '/lookbook/*',

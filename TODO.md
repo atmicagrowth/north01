@@ -94,7 +94,7 @@ file to change.
 
 ---
 
-## 6. Analytics and error reporting — keys are set in Production; two settings remain
+## 6. Analytics and error reporting — keys are set in Production; three dashboard settings to change
 
 Production has `NEXT_PUBLIC_GA_MEASUREMENT_ID`, the PostHog key and host, and `NEXT_PUBLIC_SENTRY_DSN`
 (`vercel env ls`, 2026-09-11). Preview and local have none, which is the intended local state.
@@ -104,6 +104,15 @@ Production has `NEXT_PUBLIC_GA_MEASUREMENT_ID`, the PostHog key and host, and `N
 sends every page view itself, with sensitive query values redacted (Phase 31 hotfix); with this
 setting on, every client-side navigation is counted twice.
 
+**Switch on one PostHog setting.** PostHog → Project settings → **enable "Discard client IP data"**.
+Code cannot do it (`posthog-js`'s own `ip` option has no effect), so until it is on PostHog keeps every
+visitor's IP address. The privacy notice says those services *may* keep it, which stays true either
+way; this setting is what stops PostHog keeping it.
+
+**Keep two GA4 settings as they are.** GA4 → Admin → Data collection → **Google signals stays off**,
+and Admin → Product links → **do not link Google Ads**. The privacy notice says Google Analytics runs
+*with Google signals and ad personalisation switched off* and that personal information is not used for
+advertising. The code sends both flags off; the property must not say otherwise.
 
 Every integration is behind a key check, so with none of these set the SDKs are **never loaded** —
 `posthog-js` is not even fetched. That is the intended local state, not a broken one.
@@ -130,7 +139,7 @@ Every integration is behind a key check, so with none of these set the SDKs are 
 
 The Phase 25 prompt asks for it in as many words: *"verify events in local/preview environments
 before enabling production measurement."* That has **not** been done — no account exists to do it
-against. The taxonomy and the GA4 reshaping are covered by `pnpm verify:analytics` (115 checks); what
+against. The taxonomy and the GA4 reshaping are covered by `pnpm verify:analytics` (125 checks); what
 is unverified is that events arrive, which only a network tab against a real property can show.
 
 ---
@@ -173,7 +182,8 @@ short, all in the Vercel, Neon, Algolia or GitHub dashboards:
   No preview can build until then.
 - **Build the production search index** — production Algolia keys in Vercel, then `pnpm reindex` once
   under the production environment (DEPLOYMENT.md §6). Search and three filters are off until then.
-- **`CRON_SECRET`** in Production, for the daily email drain.
+- **`CRON_SECRET`** in Production, for both daily crons: the email drain and the retention sweep
+  (bags, and unpaid orders after 30 days), which the privacy notice promises.
 - **Function region `cle1`**, once the production Neon endpoint is confirmed to be `us-east-2`.
 - **Queued production builds**, so two deployments never migrate at once.
 - **CI repository secrets** — `DATABASE_URL` (non-production, read-only role), `PAYLOAD_SECRET`,
@@ -182,18 +192,39 @@ short, all in the Vercel, Neon, Algolia or GitHub dashboards:
   Vercel domains with the `www` redirect, unproxied Cloudflare records, then `SITE_URL`, Turnstile's
   hostnames, the Stripe webhook endpoint, and Resend's DNS (Phase 33).
 
-## 9. A privacy policy and terms — the site collects personal data with no notice
+## 9. ~~A privacy policy and terms~~ — written; what is still yours
 
-Gap G-19, audit DOC-08. The shop takes names, email addresses, postal addresses and phone numbers,
-and it keeps order history, and there is no privacy notice and no terms of sale. The footer's legal row
-is empty on purpose (`src/lib/navigation/utility.ts`): these are legal texts somebody has to write and
-answer for, so no page with made-up wording was built.
+**Supplied 2026-09-11.** You gave a contact address (`admin@micagrowth.com`) and asked for the text,
+so it exists: a privacy notice and terms of sale, drafted from what the code actually does — the
+cookies and device storage it uses, the services it calls, the retention windows it enforces — and
+revised on 2026-09-13 after a review found sentences the code did not back. The words are in
+`scripts/seed/legal.ts`. They render at `/legal/privacy` and `/legal/terms`, and both live in
+**Admin → Settings → Site Settings → Policies** (the *Privacy Policy* and *Terms Of Sale* fields), so
+you can edit them without a developer. Each page — and its link in the footer, the help pages'
+Support nav, checkout and the sitemap — exists only while its field has text; an empty field is a 404
+and no link. **Production shows neither until you paste them in (§12).**
 
-- **Supply the two texts** — a lawyer's, or a reviewed template's. [`docs/SECURITY.md`](docs/SECURITY.md)
-  lists what the shop actually collects, where it goes (Stripe, Resend, analytics, logs) and how long
-  it is kept. That is the factual input a privacy policy needs.
-- **Say where they should live** — pages in the admin, or files in the repository. When the text
-  exists, adding the two routes and the footer links is a small change.
+What is still owed, and none of it is something a developer can invent:
+
+- **Company details.** The last paragraph of the terms says the registered company name, its address
+  and the governing law are to be confirmed, and the privacy notice's *Contact* paragraph says the
+  company name and address will be added. Fill those in, in both documents, before live orders.
+- **A review by somebody qualified.** This is a plain-English starting draft written from the
+  implementation ([`docs/SECURITY.md`](docs/SECURITY.md) is the same facts in detail). It is not legal
+  advice, and a lawyer should read both pages before the shop sells to the public. Change the *Last
+  updated* date in the first paragraph whenever you change either text.
+- **`CRON_SECRET` in Production (§8).** The notice promises that bags are deleted thirty days after
+  they are created and unpaid orders thirty days after their last change. The daily sweep that does
+  it refuses to run until that secret is set, so those promises are only kept from then on.
+- **The staff procedures the notice promises** — a permanent (not trash) delete for an account
+  deletion request, removing a review on request, recording a newsletter unsubscribe — are in
+  [`docs/CMS.md`](docs/CMS.md) §10. Whoever answers `admin@micagrowth.com` needs to follow them.
+
+One more thing the text does not claim: there is **no cookie-consent banner** (gap G-17). The privacy
+notice says plainly what measurement records — a random identifier per browser, the pages and shopping
+events, the order number of a purchase — and never says analytics is anonymous, but selling into the EU
+or California generally needs consent before measurement cookies are set at all.
+
 
 ## 10. How long personal data is kept — five decisions
 
@@ -222,19 +253,38 @@ The storefront hides what is missing rather than showing it broken, but only you
 - **Photography (§5):** the supplied photographs are 217–467 pixels wide and have white borders, so
   every full-width image is visibly soft. Larger, borderless exports are the fix.
 
-## 12. Wording to update in the live admin — Phase 36
+## 12. Wording to update in the live admin — Phase 36, revised Phase 37
 
-The seed now writes these, but production's content was entered separately and still carries the old
-wording, which promises an online returns flow that does not exist and names an address that cannot
-receive mail (audit DOC-01, DOC-02):
+The seed now writes all of this, but production's content was entered separately and still carries the
+old wording, which promises an online returns flow that does not exist and names an address that cannot
+receive mail (audit DOC-01, DOC-02). **Do not run the seed against production to get it there**: the
+seed refuses any database but the development one `DATABASE_PUSH_TARGET` names (D-10), and it would
+overwrite production's settings, navigation and homepage and add demo customers, orders and reviews.
+Enter it by hand, in **Admin → Settings → Site Settings** and **Admin → FAQs**:
 
+- **Site Settings → Contact → Contact Email** → `admin@micagrowth.com`.
+- **Site Settings → Policies → Returns Policy**, second paragraph → *Returns are arranged with our team
+  rather than started online — email admin@micagrowth.com and we will send you what to do.*
+- **Site Settings → Policies → Privacy Policy** and **→ Terms Of Sale** → set `CRON_SECRET` first
+  (§8), then paste the paragraphs of `PRIVACY_PARAGRAPHS` and `TERMS_PARAGRAPHS` from
+  `scripts/seed/legal.ts`, one paragraph per string, in order (both dated *Last updated 13 September
+  2026*). The terms' *Delivery* paragraph builds its country list in code, so paste it as: *Delivery.
+  We deliver to the United States, Canada, the United Kingdom, Ireland, France, Germany, the
+  Netherlands and Australia, and checkout will not accept an address anywhere else. Standard and
+  Express delivery are available to all of them; Overnight is available in the United States only.
+  Standard delivery is free when your order reaches the free-delivery threshold shown in your bag
+  ($150 when these terms were last updated), counted after any discount, or with a free-delivery code;
+  otherwise it is charged. Express and Overnight are always charged. Delivery times are estimates, and
+  they run from dispatch rather than from your order.* If production's **Commerce → Free shipping
+  threshold** is not $150, change that figure. Until a field has text, production has no page for that
+  document and no link to it.
 - **FAQ — "Can I return something?"** → *Anything unworn, with its tags on, can be returned within 30
-  days of delivery. Returns are arranged with our team rather than started online.*
-- **Site settings → Returns policy**, second paragraph → *Returns are arranged with our team rather
-  than started online. Contact details for returns will be published here.*
-- **FAQ — "Can I change or cancel an order after placing it?"** → remove the `help@north01.example`
-  address: *Contact us as soon as you can and we will try. Once an order is packed we cannot alter it,
-  and after that the answer is a return. Contact details will be published here.*
-- **Site settings → Contact email** → clear it until a real support mailbox exists. Emails already
-  ignore the placeholder as a reply-to.
-- **Then supply a real support address** (gap G-08), and the three sentences above can name it.
+  days of delivery. Email admin@micagrowth.com to arrange one — returns are arranged with our team
+  rather than started online.*
+- **FAQ — "Can I change or cancel an order after placing it?"** → *Email admin@micagrowth.com as soon
+  as you can and we will try. Once an order is packed we cannot alter it, and after that the answer is
+  a return.*
+- **FAQ — "Do you ship outside the United States?"**, if production has it → *Yes, to Canada, the
+  United Kingdom, Ireland, France, Germany, the Netherlands and Australia, by Standard or Express.
+  Overnight is United States only, because next-day is a promise we can keep in one country. Checkout
+  will not accept an address anywhere else yet.* It said *worldwide*, which checkout refuses.

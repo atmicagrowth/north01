@@ -199,7 +199,7 @@ export const SiteSettings: GlobalConfig = {
               label: 'Free shipping threshold',
               admin: {
                 description:
-                  "The subtotal at which standard delivery is free. Drives the bag's shipping-progress message (plan §14.1e) and is re-evaluated server-side at checkout.",
+                  "The subtotal at which standard delivery is free. Drives the bag's shipping-progress message (plan §14.1e) and is re-evaluated server-side at checkout. The terms of sale quote this figure in their Delivery paragraph, so when you change it, change the terms of sale on the Policies tab too.",
               },
             }),
             {
@@ -326,6 +326,25 @@ export const SiteSettings: GlobalConfig = {
            * The dedicated `/help/shipping` and `/help/returns` pages are gap **G-08**, assigned to
            * Phase 23. When they arrive they should render these same fields rather than a second
            * copy — one policy, one source.
+           *
+           * ---
+           *
+           * **The two legal documents are here for the same reason, and for one more.** Gap **G-19**
+           * held the footer's Privacy and Terms links empty for ten phases because the copy did not
+           * exist. On 2026-09-11 the owner supplied the decisions it rests on — a real contact
+           * address and a thirty-day retention window for unpaid orders — and asked for the text,
+           * which was then drafted from the code as a plain-English starting draft
+           * (`scripts/seed/legal.ts`). It is not legal advice and nobody qualified has reviewed it;
+           * the owner is accountable for it, which the two field descriptions below say to the
+           * person editing it. §6.1o puts it here rather than in the repository: legal text is
+           * corrected far more often than it is written, and a correction that needs a developer
+           * and a deployment is a correction that waits. `/legal/privacy` and `/legal/terms` render
+           * these two fields and hold no words of their own.
+           *
+           * **An empty field is an unpublished document**, and for these two that means no page:
+           * the route answers 404 and the footer, the Support nav, the checkout sentence and the
+           * sitemap all drop the link (`publishedLegalNav`). Shipping and Returns instead say they
+           * are not published yet. *Empty* means no text — see `hasPublishedText`.
            */
           fields: [
             {
@@ -341,7 +360,23 @@ export const SiteSettings: GlobalConfig = {
               type: 'richText',
               admin: {
                 description:
-                  'The Returns half. Online-only: returns are initiated through the account or support flow, never in a store.',
+                  'The Returns half of the PDP accordion, and the /help/returns page. Returns are arranged by email with the team: there is no online or account return flow, and nothing is returned in a store, so do not describe either here.',
+              },
+            },
+            {
+              name: 'privacyPolicy',
+              type: 'richText',
+              admin: {
+                description:
+                  'The privacy notice, rendered at /legal/privacy and linked from the footer, the support pages and checkout. The text was seeded as a plain-English starting draft, written from how this site actually works (its cookies, the services it uses, how long it keeps data). It is not legal advice. You are accountable for it, so read it, correct it, and have someone qualified review it before live orders. Change the "Last updated" date in the first paragraph by hand whenever you change the text. Leave the field empty and the page is not published: /legal/privacy returns "not found", and the links the site adds by itself (in the footer, on the support pages, at checkout and in the sitemap) are hidden. A link to it that someone has added by hand in Navigation is not hidden, and leads to that "not found" page until the text is published.',
+              },
+            },
+            {
+              name: 'termsOfSale',
+              type: 'richText',
+              admin: {
+                description:
+                  'The terms of sale, rendered at /legal/terms and linked from the footer, the support pages and checkout, where customers are told that placing an order means accepting them. The text was seeded as a plain-English starting draft, written from how this site actually works. It is not legal advice. You are accountable for it, so read it, correct it, and have someone qualified review it before live orders. The company’s registered name, its registered address and the governing law still need filling in: the last paragraph says they are to be confirmed. The Delivery paragraph quotes the free shipping threshold from the Commerce tab, so change it here whenever that figure changes. Change the "Last updated" date in the first paragraph by hand whenever you change the text. Leave the field empty and the page is not published: /legal/terms returns "not found", and the links the site adds by itself (in the footer, on the support pages, at checkout and in the sitemap) are hidden. A link to it that someone has added by hand in Navigation is not hidden, and leads to that "not found" page until the text is published.',
               },
             },
           ],

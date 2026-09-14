@@ -4,6 +4,7 @@ import { useActionState, useId } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Link } from '@/components/ui/link'
 import { CHECKOUT_ACTION_IDLE } from '@/lib/checkout/action-state'
 import { startCheckoutAction } from '@/lib/checkout/actions'
 import type { ShippingRate } from '@/lib/shipping/rules'
@@ -11,6 +12,7 @@ import { cn } from '@/lib/cn'
 import { formatMinorUnits } from '@/lib/money'
 import type { CurrencyCode } from '@/payload/fields/money'
 import { ADDRESS_MAX_LENGTH } from '@/lib/address-limits'
+import type { LegalPublication } from '@/lib/navigation/utility'
 
 /**
  * **Structure §14's checkout form**: customer information, shipping, shipping method — then Stripe.
@@ -36,16 +38,23 @@ import { ADDRESS_MAX_LENGTH } from '@/lib/address-limits'
  *
  * Payment happens on Stripe's page. Nothing in this form touches a card number, which is why this
  * integration has no PCI surface at all and why `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is unused.
+ *
+ * ### The terms are named beside the button that leads to accepting them
+ *
+ * See `CheckoutLegalNotice` below.
  */
 export function CheckoutForm({
   currency,
   defaultEmail,
+  legal,
   locale,
   rates,
 }: {
   currency: CurrencyCode
   /** Pre-filled for a signed-in customer. A guest types it. */
   defaultEmail: string
+  /** Which legal documents have text — `getLegalPublication()`. Only those are linked. */
+  legal: LegalPublication
   locale: string
   rates: ShippingRate[]
 }) {
@@ -266,6 +275,8 @@ export function CheckoutForm({
         </p>
       ) : null}
 
+      <CheckoutLegalNotice legal={legal} />
+
       <Button size="lg" type="submit">
         {pending ? 'Taking you to payment…' : 'Continue to payment'}
       </Button>
@@ -274,5 +285,51 @@ export function CheckoutForm({
         Payment is handled by Stripe. Card details are never sent to this site.
       </p>
     </form>
+  )
+}
+
+/**
+ * **The one sentence that makes the terms part of the order.**
+ *
+ * The terms of sale say *"Placing an order means you accept them"*. A customer who can pay without
+ * ever being shown those terms has not been given the chance to read what binds them, so the
+ * sentence sits directly above the payment button — the last thing read before leaving for Stripe.
+ *
+ * **Each link renders only while its document has text**, because `/legal/privacy` and
+ * `/legal/terms` answer 404 without it (`publishedLegalNav`). The sentence is built from whichever
+ * halves exist: both, the acceptance half alone, or the privacy half alone. With neither published it
+ * renders nothing — an acceptance line with no terms to link would be the looks-functional-but-is-not
+ * UI the project rules forbid, and a claim of agreement to text the customer could not open.
+ */
+function CheckoutLegalNotice({ legal }: { legal: LegalPublication }) {
+  if (!legal.terms && !legal.privacy) {
+    return null
+  }
+
+  const terms = (
+    <Link href="/legal/terms" variant="inline">
+      Terms of sale
+    </Link>
+  )
+
+  const privacy = (
+    <Link href="/legal/privacy" variant="inline">
+      Privacy notice
+    </Link>
+  )
+
+  return (
+    <p className="font-sans text-body-sm text-foreground-muted">
+      {legal.terms && legal.privacy ? (
+        <>
+          By placing your order you accept our {terms}. Our {privacy} explains how we use your
+          details.
+        </>
+      ) : legal.terms ? (
+        <>By placing your order you accept our {terms}.</>
+      ) : (
+        <>Our {privacy} explains how we use your details.</>
+      )}
+    </p>
   )
 }

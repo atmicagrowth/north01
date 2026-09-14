@@ -2212,7 +2212,7 @@ export interface Faq {
 export interface User {
   id: number;
   /**
-   * Editors manage catalogue and content. Admins additionally manage staff, orders, promotions and deletions.
+   * Editors manage the catalogue and content, update orders' fulfilment and tracking, and create and edit discount codes. Admins can also manage staff, change a customer's sign-in email or password, correct order addresses, edit the Commerce settings, and delete records — the only deletions editors can make are a customer's saved addresses and wishlist items.
    */
   role: 'editor' | 'admin';
   updatedAt: string;
@@ -3257,7 +3257,7 @@ export interface SiteSetting {
    */
   defaultLocale: string;
   /**
-   * The subtotal at which standard delivery is free. Drives the bag's shipping-progress message (plan §14.1e) and is re-evaluated server-side at checkout.
+   * The subtotal at which standard delivery is free. Drives the bag's shipping-progress message (plan §14.1e) and is re-evaluated server-side at checkout. The terms of sale quote this figure in their Delivery paragraph, so when you change it, change the terms of sale on the Policies tab too.
    */
   freeShippingThresholdMinor?: number | null;
   /**
@@ -3301,9 +3301,45 @@ export interface SiteSetting {
     [k: string]: unknown;
   } | null;
   /**
-   * The Returns half. Online-only: returns are initiated through the account or support flow, never in a store.
+   * The Returns half of the PDP accordion, and the /help/returns page. Returns are arranged by email with the team: there is no online or account return flow, and nothing is returned in a store, so do not describe either here.
    */
   returnsPolicy?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * The privacy notice, rendered at /legal/privacy and linked from the footer, the support pages and checkout. The text was seeded as a plain-English starting draft, written from how this site actually works (its cookies, the services it uses, how long it keeps data). It is not legal advice. You are accountable for it, so read it, correct it, and have someone qualified review it before live orders. Change the "Last updated" date in the first paragraph by hand whenever you change the text. Leave the field empty and the page is not published: /legal/privacy returns "not found", and the links the site adds by itself (in the footer, on the support pages, at checkout and in the sitemap) are hidden. A link to it that someone has added by hand in Navigation is not hidden, and leads to that "not found" page until the text is published.
+   */
+  privacyPolicy?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * The terms of sale, rendered at /legal/terms and linked from the footer, the support pages and checkout, where customers are told that placing an order means accepting them. The text was seeded as a plain-English starting draft, written from how this site actually works. It is not legal advice. You are accountable for it, so read it, correct it, and have someone qualified review it before live orders. The company’s registered name, its registered address and the governing law still need filling in: the last paragraph says they are to be confirmed. The Delivery paragraph quotes the free shipping threshold from the Commerce tab, so change it here whenever that figure changes. Change the "Last updated" date in the first paragraph by hand whenever you change the text. Leave the field empty and the page is not published: /legal/terms returns "not found", and the links the site adds by itself (in the footer, on the support pages, at checkout and in the sitemap) are hidden. A link to it that someone has added by hand in Navigation is not hidden, and leads to that "not found" page until the text is published.
+   */
+  termsOfSale?: {
     root: {
       type: string;
       children: {
@@ -3499,7 +3535,7 @@ export interface Navigation {
       }[]
     | null;
   /**
-   * Structure §20: Shop, Help, About/editorial. Four columns at most. A column needs a heading and at least one working link or the whole column is left off the footer — and a link whose page has been unpublished or deleted is dropped silently, so a column can empty itself without anyone editing it here. Three parts of the footer are not edited on this screen. The shop name and the line beneath it, and therefore the copyright line, come from Site Settings → Identity. The newsletter column is a signup form rather than navigation, so its wording is set in code (DEV-42). The Privacy and Terms row is fixed in code on purpose: legal links have to be on every page, and a column that can be reordered is a column that can be emptied. Changing those two needs a developer.
+   * Structure §20: Shop, Help, About/editorial. Four columns at most. A column needs a heading and at least one working link or the whole column is left off the footer — and a link whose page has been unpublished or deleted is dropped silently, so a column can empty itself without anyone editing it here. Three parts of the footer are not edited on this screen. The shop name and the line beneath it, and therefore the copyright line, come from Site Settings → Identity. The newsletter column is a signup form rather than navigation, so its wording is set in code (DEV-42). Privacy and Terms do not need adding here: the footer shows each of them automatically whenever its text is published in Site Settings → Policies, and hides it while that text is empty.
    */
   footer?:
     | {
@@ -3900,6 +3936,8 @@ export interface SiteSettingsSelect<T extends boolean = true> {
       };
   shippingPolicy?: T;
   returnsPolicy?: T;
+  privacyPolicy?: T;
+  termsOfSale?: T;
   defaultSeoTitle?: T;
   defaultSeoDescription?: T;
   defaultOgImage?: T;

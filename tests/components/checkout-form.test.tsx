@@ -12,6 +12,7 @@ import type { PromotionActionState } from '@/lib/promotions/action-state'
 import { applyCodeAction, removeCodeAction } from '@/lib/promotions/actions'
 import type { ResolvedPromotion } from '@/lib/promotions/promotions'
 import { PROMOTION_COPY, type PromotionInput } from '@/lib/promotions/rules'
+import type { LegalPublication } from '@/lib/navigation/utility'
 import type { ShippingRate } from '@/lib/shipping/rules'
 import { TAX_COPY } from '@/lib/tax/rules'
 
@@ -157,8 +158,16 @@ function makeRate(overrides: Partial<ShippingRate> = {}): ShippingRate {
   }
 }
 
-function renderCheckoutForm(rates: ShippingRate[] = [makeRate()]) {
-  return render(<CheckoutForm currency="GBP" defaultEmail="" locale={LOCALE} rates={rates} />)
+/** Both legal documents published — the state the seeded database is in. */
+const LEGAL_BOTH: LegalPublication = { privacy: true, terms: true }
+
+function renderCheckoutForm(
+  rates: ShippingRate[] = [makeRate()],
+  legal: LegalPublication = LEGAL_BOTH,
+) {
+  return render(
+    <CheckoutForm currency="GBP" defaultEmail="" legal={legal} locale={LOCALE} rates={rates} />,
+  )
 }
 
 /** The `FormData` of the nth checkout submission, as the server would read it. */
@@ -752,6 +761,7 @@ describe('CheckoutForm — what reaches the server, and what never does', () => 
       <CheckoutForm
         currency="GBP"
         defaultEmail="ada@example.com"
+        legal={LEGAL_BOTH}
         locale={LOCALE}
         rates={[makeRate()]}
       />,
@@ -917,5 +927,71 @@ describe('CheckoutForm — DEV-62, and the half of it that is not this component
     expect(screen.queryByText(/unavailable/i)).not.toBeInTheDocument()
     /* And the label names the handoff rather than the charge: this button takes nobody's money. */
     expect(screen.getByRole('button', { name: 'Continue to payment' })).toBeInTheDocument()
+  })
+})
+
+describe('CheckoutForm — the terms are named where they are accepted', () => {
+  /*
+   * The terms of sale say *"Placing an order means you accept them"*, so the last thing before the
+   * handoff to Stripe names them. Each link exists only while its document has text, because
+   * `/legal/privacy` and `/legal/terms` answer 404 without it; with neither, there is no sentence.
+   */
+  const notice = () =>
+    screen.queryByText((_, element) =>
+      element?.tagName === 'P'
+        ? /By placing your order|Our Privacy notice/.test(element.textContent ?? '')
+        : false,
+    )
+
+  it('links the Terms of sale and the Privacy notice when both are published', () => {
+    renderCheckoutForm(undefined, LEGAL_BOTH)
+
+    expect(notice()).toHaveTextContent(
+      'By placing your order you accept our Terms of sale. Our Privacy notice explains how we use your details.',
+    )
+    expect(screen.getByRole('link', { name: 'Terms of sale' })).toHaveAttribute(
+      'href',
+      '/legal/terms',
+    )
+    expect(screen.getByRole('link', { name: 'Privacy notice' })).toHaveAttribute(
+      'href',
+      '/legal/privacy',
+    )
+  })
+
+  it('sits before the payment button, inside the form', () => {
+    renderCheckoutForm()
+
+    const button = screen.getByRole('button', { name: 'Continue to payment' })
+    const sentence = notice() as HTMLElement
+
+    expect(button.closest('form')).toContainElement(sentence)
+    expect(sentence.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('states acceptance of the terms alone when only the terms are published', () => {
+    renderCheckoutForm(undefined, { privacy: false, terms: true })
+
+    expect(notice()).toHaveTextContent('By placing your order you accept our Terms of sale.')
+    expect(screen.queryByRole('link', { name: 'Privacy notice' })).not.toBeInTheDocument()
+  })
+
+  it('names only the privacy notice, and claims no acceptance, when only it is published', () => {
+    renderCheckoutForm(undefined, { privacy: true, terms: false })
+
+    expect(notice()).toHaveTextContent('Our Privacy notice explains how we use your details.')
+    expect(screen.queryByText(/accept/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Terms of sale' })).not.toBeInTheDocument()
+  })
+
+  it('renders no sentence at all when neither document is published', () => {
+    renderCheckoutForm(undefined, { privacy: false, terms: false })
+
+    expect(notice()).not.toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    /* The Stripe promise is a different sentence, and it stays. */
+    expect(
+      screen.getByText('Payment is handled by Stripe. Card details are never sent to this site.'),
+    ).toBeInTheDocument()
   })
 })

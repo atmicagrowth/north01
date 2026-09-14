@@ -31,6 +31,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { hasText as lexicalHasText } from '@payloadcms/richtext-lexical/shared'
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
@@ -46,7 +47,13 @@ import {
 import { documentHref, isExternalHref, isInternalHref } from '../src/lib/navigation/routes'
 import { LINKABLE_COLLECTIONS, linkFields } from '../src/payload/fields/link'
 import { isSameSitePath } from '../src/lib/same-site-path'
-import { legalNav, utilityNav } from '../src/lib/navigation/utility'
+import {
+  hasPublishedText,
+  legalNav,
+  NO_LEGAL_DOCUMENTS,
+  publishedLegalNav,
+  utilityNav,
+} from '../src/lib/navigation/utility'
 
 if (!developmentDatabase.ok) {
   throw new Error(
@@ -690,21 +697,64 @@ check(
   utilityNav.wishlist.href === '/account/wishlist',
 )
 /*
- * **The legal row is EMPTY, and that is the assertion now — Phase 28's first sweep.**
+ * **The legal row names both documents again — Phase 37, closing G-19 — and shows the published ones.**
  *
- * This read `legalNav.length === 2`. Those two entries pointed at `/legal/privacy` and
- * `/legal/terms`, and Phase 28's audit found that neither route exists: the footer shipped two 404s
- * on every page of the shop. They were removed rather than built, because a privacy policy and a set
- * of terms are legal text somebody has to write and be accountable for — generating plausible
- * privacy copy would be worse than the broken link, since it is a false statement about what this
- * shop does with personal data on the page a regulator reads first. Recorded as gap **G-19**.
+ * This read `legalNav.length === 0`, and before Phase 28 it read `=== 2`. The round trip is the
+ * history: the two entries pointed at `/legal/privacy` and `/legal/terms` with neither route built,
+ * so the footer shipped two 404s on every page of the shop; they were withdrawn rather than filled
+ * in, because a privacy policy and a set of terms are legal text somebody has to be accountable for,
+ * and plausible-sounding privacy copy would have been a false statement about what this shop does
+ * with personal data on the page a regulator reads first.
  *
- * The assertion is inverted rather than deleted, so that restoring the links is a deliberate act
- * that has to come here and say so — with routes behind them.
+ * Phase 37 built the routes. The owner supplied the decisions the text rests on and asked for the
+ * text, which was drafted from the code as a plain-English starting draft that the owner is
+ * accountable for and is to have reviewed; it lives in `site-settings` so it can be corrected without
+ * a deployment. The count is asserted because Phase 28 inverted it and restoring it had to be
+ * deliberate — and the check below it is the one Phase 28 wished it had: **every entry resolved
+ * against the route tree**, so a legal link can never again name a page that does not exist.
+ *
+ * A route that exists is still not a page with anything on it. Production's two fields are empty until
+ * the owner enters the text, and the routes answer 404 until then, so the row a customer sees is
+ * `publishedLegalNav`, never `legalNav` itself. Every combination is asserted here; section G asserts
+ * the row against the real `site-settings`, including a field emptied the way the admin empties one.
  */
 check(
-  'utilities: the legal row is empty until the pages exist (G-19), and is not CMS content',
-  legalNav.length === 0,
+  'utilities: the legal row names Privacy and Terms (G-19 closed), and is not CMS content',
+  legalNav.length === 2 &&
+    legalNav.some((entry) => entry.href === '/legal/privacy' && entry.document === 'privacy') &&
+    legalNav.some((entry) => entry.href === '/legal/terms' && entry.document === 'terms'),
+  legalNav.map((entry) => entry.href).join(', '),
+)
+
+const deadLegal = legalNav.map((entry) => entry.href).filter((href) => !isRenderedPage(href))
+
+check(
+  'utilities: every href in the legal row is a page the app renders — resolved against the route tree',
+  deadLegal.length === 0,
+  deadLegal.join(', '),
+)
+
+const shownLegal = (privacy: boolean, terms: boolean) =>
+  publishedLegalNav({ privacy, terms })
+    .map((entry) => entry.href)
+    .join(', ')
+
+check(
+  'utilities: the legal row shows only published documents — both, privacy alone, terms alone, neither',
+  shownLegal(true, true) === '/legal/privacy, /legal/terms' &&
+    shownLegal(true, false) === '/legal/privacy' &&
+    shownLegal(false, true) === '/legal/terms' &&
+    publishedLegalNav(NO_LEGAL_DOCUMENTS).length === 0,
+)
+
+check(
+  'utilities: published means has text — null, an empty paragraph and whitespace are not; a sentence is',
+  !hasPublishedText(null) &&
+    !hasPublishedText({
+      root: { children: [{ children: [], type: 'paragraph' }], type: 'root' },
+    }) &&
+    !hasPublishedText({ root: { children: [{ children: [{ text: '   ' }] }] } }) &&
+    hasPublishedText({ root: { children: [{ children: [{ text: 'Last updated.' }] }] } }),
 )
 
 /* -------------------------------------------------------------------------------------------------
@@ -772,6 +822,101 @@ try {
     `${navigation.footer.length} column(s)`,
   )
   check('live: the site name is set', settings.siteName.length > 0, settings.siteName)
+
+  /*
+   * **The legal row against the real `site-settings`.**
+   *
+   * The footer renders `publishedLegalNav(getLegalPublication())`, and `getLegalPublication` is
+   * `hasPublishedText` over `privacyPolicy` and `termsOfSale` behind Next's data cache, which this CLI
+   * cannot import. So the same rule is applied to the row Payload actually returns, and checked
+   * against Payload's own `hasText` — the test its `RichText` renderer uses to decide whether a
+   * document renders anything. Ours is the stricter of the two (whitespace is not text), so a
+   * document we would link must be one Lexical would render.
+   */
+  const rawSettings = await payload.findGlobal({ slug: 'site-settings', depth: 0 })
+  const liveLegal = {
+    privacy: hasPublishedText(rawSettings.privacyPolicy),
+    terms: hasPublishedText(rawSettings.termsOfSale),
+  }
+  const liveRow = publishedLegalNav(liveLegal).map((entry) => entry.href)
+
+  check(
+    'live: the legal row links exactly the legal documents site-settings has text for',
+    liveRow.includes('/legal/privacy') === liveLegal.privacy &&
+      liveRow.includes('/legal/terms') === liveLegal.terms &&
+      (!liveLegal.privacy || lexicalHasText(rawSettings.privacyPolicy as never)) &&
+      (!liveLegal.terms || lexicalHasText(rawSettings.termsOfSale as never)),
+    `row: ${liveRow.join(', ') || '(no legal row — neither document has text)'}`,
+  )
+
+  /*
+   * **An emptied field, as Payload stores it.** When every word is deleted the admin saves the editor
+   * state rather than `null` — a root holding one empty paragraph. This writes exactly that into
+   * `privacyPolicy`, reads it back through Payload, and checks the stored value is still a truthy
+   * object that nonetheless reads as unpublished: the case a truthiness check got wrong, which left
+   * a blank privacy page with the footer still linking to it. The original is restored in `finally`.
+   */
+  const originalPrivacy = rawSettings.privacyPolicy ?? null
+  const emptiedByAdmin = {
+    root: {
+      children: [
+        {
+          children: [],
+          direction: null,
+          format: '',
+          indent: 0,
+          textFormat: 0,
+          type: 'paragraph',
+          version: 1,
+        },
+      ],
+      direction: null,
+      format: '',
+      indent: 0,
+      type: 'root',
+      version: 1,
+    },
+  }
+
+  try {
+    await payload.updateGlobal({
+      slug: 'site-settings',
+      data: { privacyPolicy: emptiedByAdmin as never },
+      overrideAccess: true,
+    })
+
+    const emptied = await payload.findGlobal({ slug: 'site-settings', depth: 0 })
+
+    check(
+      'live: an emptied privacy notice is stored as a truthy document, and reads as unpublished',
+      Boolean(emptied.privacyPolicy) &&
+        !hasPublishedText(emptied.privacyPolicy) &&
+        !lexicalHasText(emptied.privacyPolicy as never),
+      JSON.stringify(emptied.privacyPolicy).slice(0, 60),
+    )
+    check(
+      'live: …so the legal row drops Privacy and leaves Terms as it was',
+      publishedLegalNav({
+        privacy: hasPublishedText(emptied.privacyPolicy),
+        terms: hasPublishedText(emptied.termsOfSale),
+      })
+        .map((entry) => entry.href)
+        .join(', ') === (liveLegal.terms ? '/legal/terms' : ''),
+    )
+  } finally {
+    await payload.updateGlobal({
+      slug: 'site-settings',
+      data: { privacyPolicy: originalPrivacy as never },
+      overrideAccess: true,
+    })
+  }
+
+  const restored = await payload.findGlobal({ slug: 'site-settings', depth: 0 })
+
+  check(
+    'live: the privacy notice is restored after the emptied-field check',
+    JSON.stringify(restored.privacyPolicy ?? null) === JSON.stringify(originalPrivacy),
+  )
 
   /*
    * The three publication states, as real rows.

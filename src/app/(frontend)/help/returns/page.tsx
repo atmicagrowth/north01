@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 
 import { PolicyPage } from '@/components/help/policy-page'
-import { getSupportPolicies } from '@/lib/help/read'
+import { getLegalPublication, getSupportPolicies } from '@/lib/help/read'
 import { pageMetadata } from '@/lib/seo/site'
 
 /**
@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function ReturnsPage() {
-  const policies = await getSupportPolicies()
+  const [policies, legal] = await Promise.all([getSupportPolicies(), getLegalPublication()])
 
-  return <PolicyPage body={policies.returns} title="Returns" />
+  return <PolicyPage body={policies.returns} legal={legal} title="Returns" />
 }

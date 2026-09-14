@@ -47,6 +47,13 @@ export default defineConfig({
           environment: 'jsdom',
           include: ['tests/components/**/*.test.tsx'],
           name: 'components',
+          /*
+           * Fifteen seconds, not the default five. The checkout-form tests type a whole delivery address
+           * through userEvent, which takes about 1.5 s each on its own and went past 5 s when all 34
+           * files ran in parallel (owner follow-up, notes 1.43). A slower CI runner would flake the same
+           * way. A test that genuinely hangs still fails, just later.
+           */
+          testTimeout: 15_000,
           setupFiles: ['tests/setup/components.ts'],
         },
       },

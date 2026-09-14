@@ -108,10 +108,38 @@ Queued emails are delivered on the next webhook, by staff from the admin, and �
 anything else, including when no secret is set. Daily is the one schedule every Vercel plan accepts —
 a more frequent expression fails the deployment on Hobby. On Pro, tighten it (`*/15 * * * *`).
 
-**The cart sweep** (Phase 34, audit R1-27) is the second cron: `GET /api/carts/sweep` daily at 03:30
-UTC deletes up to 200 `active` bags past their `expiresAt`, and their lines — `converted` bags are
-order history and are never touched. Same secret, same 401. Two daily crons is the Hobby plan's limit;
-a third scheduled job would need Pro or to share one of these routes.
+**The retention sweep** (Phase 34, audit R1-27; extended 2026-09-11) is the second cron:
+`GET /api/carts/sweep` daily at 03:30 UTC. Same secret, same 401. It runs **two** rules from the one
+request, and answers `{"carts": {...}, "orders": {...}}`, each with `deleted`, `more` (the batch was
+full, so more waits for tomorrow) and `failed`:
+
+- up to 200 `active` bags past their `expiresAt`, and their lines — `converted` bags are order
+  history and are never touched;
+- up to 200 **unpaid orders** with no activity for 30 days, and their lines — the owner's retention
+  decision. Only the five unpaid statuses can match (never `paid` or `refunded`), and **never an
+  order under a fulfilment hold**: a `paymentMismatch` hold means a signed payment may have been
+  captured while the order's status stayed unpaid, so the sweep never deletes a held order, however
+  old. Nobody can clear a hold (`fulfilmentHold` is `update: nobodyField`), so a held order stays
+  until an admin permanently deletes it after resolving the payment mismatch in Stripe.
+  "Activity" is any write to the order, each of which sets `updated_at`: admin edits, a checkout
+  attempt and the Checkout Session it records, and every Stripe webhook claim that changes the order
+  (a delayed payment moving to `pending_payment`, a payment, an expiry, a failure, a refund, a hold).
+  The delete re-checks the whole rule under a row lock, so an order paid, held or touched a moment
+  before it is left alone. See `lib/cart/sweep.ts` and `docs/SECURITY.md` §4.
+
+The 30 days clear a Checkout Session (31 minutes) and the settlement time of ACH, Bacs and SEPA
+(up to about three weeks, counted from the `completed` event). **Before enabling a payment method
+that stays payable for longer** in the Stripe Dashboard (a voucher or bank-transfer method), revisit
+the window. An event that still arrives for an order already deleted — a late recovery from a webhook
+outage, or a Dashboard resend — is recorded on its `stripe-events` row as `ORDER MISSING: …`, answered
+200 (a retry cannot recreate the order), and reported to Sentry as `stripe.webhook.orderMissing`: check
+Stripe for money it moved and refund or reconcile it there.
+
+The route keeps its `carts` path, which is historical: two daily crons is the Hobby plan's limit, so
+a third scheduled job would need Pro, and sharing this route was cheaper than renaming the path the
+`vercel.json` cron entry calls (`docs/COMMERCE.md` §3 and `docs/SECURITY.md` §4 also name it; no
+customer-facing text does). A step that throws is logged, sent to Sentry and reported as `failed`
+without stopping the other.
 
 Both routes share `lib/security/cron-auth.ts`, so they cannot disagree about what counts as Vercel.
 
@@ -142,11 +170,12 @@ canonical and sitemap host (§9, `SITE_URL`) and search (§6).
 | Set Production `SITE_URL` to `https://north01apparel.vercel.app` (or the custom domain, Phase 33) | It is the team alias `north01apparel-mi-ca-growth.vercel.app`, so every canonical, the sitemap, reset links and Stripe return URLs name a host customers do not use. The smoke test warns about it |
 | Populate Preview (§3) | No preview can build (R3-03), so no change is rehearsed before production |
 | Build the production search index (§6) | Search and three filters are unavailable in production |
-| Set `CRON_SECRET` in Production (§7) | The daily drain and the cart sweep refuse the cron without it |
+| Set `CRON_SECRET` in Production (§7) | The daily drain and the retention sweep (bags, and unpaid orders after 30 days) refuse the cron without it |
 | Confirm the production Neon region; if `us-east-2`, set the Function region to `cle1` | Functions run in `iad1`, so every query crosses regions (R3-08) |
 | Project Settings → Git → enable **queued** production builds (no concurrent builds) | Two concurrent builds would migrate at once (R3-12) |
 | Add the CI repository secrets (§8) | CI has never built the application (R3-05) |
 | Switch off GA4's "page changes based on browser history events" | The storefront sends every page view itself (TODO.md §6) |
+| PostHog → Project settings → enable **Discard client IP data**; in GA4 keep Google signals off and do not link Google Ads | The privacy notice relies on them, and they are project and property settings, not code (TODO.md §6, SECURITY.md §1) |
 | Take a Neon branch before any deploy that carries a migration (§4) | There is no automatic backup |
 | When a custom domain is bought, follow §11 in order | Every integration below names the host; changing it is one variable and five dashboards |
 

@@ -20,14 +20,15 @@ import { revalidateGlobal } from '../hooks/revalidateTags'
  * | The wordmark and the line under it | Site Settings → Identity (`siteName`, `tagline`) |
  * | The © line | nowhere — it is the site name again, so it follows Site Settings |
  * | The newsletter column | nowhere — it is a form, not navigation (**DEV-42**) |
- * | Privacy and Terms | nowhere — `lib/navigation/utility.ts` (**see below**) |
+ * | Privacy and Terms | not as links — `lib/navigation/utility.ts` (**see below**) |
  *
- * **The legal row is deliberately not content, and this is the one entry worth defending.** It is a
- * two-item array in code because a legal notice is not merchandising: it must be present on every
- * page of a trading storefront, and a footer column an editor can reorder is a footer column an
- * editor can empty. Making it editable would put "can this shop legally trade" behind a drag handle.
- * An editor who needs different legal wording is asking for a development change, and the
- * description says so rather than leaving them to look for a field that does not exist.
+ * **The legal row is deliberately not a footer column.** Its two entries are fixed in code
+ * (`legalNav`) because a legal notice is not merchandising, and a footer column an editor can reorder
+ * is a footer column an editor can empty. Since Phase 37 whether each entry *shows* follows its text
+ * instead: `publishedLegalNav` offers Privacy or Terms only while `site-settings.privacyPolicy` or
+ * `termsOfSale` has text, because the page behind an empty one answers 404. The words themselves are
+ * edited in Site Settings → Policies, and the description says so rather than leaving an editor to
+ * look for a link here.
  */
 const FOOTER_GUIDE = [
   'Structure §20: Shop, Help, About/editorial. Four columns at most.',
@@ -35,7 +36,7 @@ const FOOTER_GUIDE = [
   'Three parts of the footer are not edited on this screen.',
   'The shop name and the line beneath it, and therefore the copyright line, come from Site Settings → Identity.',
   'The newsletter column is a signup form rather than navigation, so its wording is set in code (DEV-42).',
-  'The Privacy and Terms row is fixed in code on purpose: legal links have to be on every page, and a column that can be reordered is a column that can be emptied. Changing those two needs a developer.',
+  'Privacy and Terms do not need adding here: the footer shows each of them automatically whenever its text is published in Site Settings → Policies, and hides it while that text is empty.',
 ].join(' ')
 
 /**

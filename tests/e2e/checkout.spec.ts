@@ -120,8 +120,14 @@ const WEBHOOK_PATH = '/api/stripe/webhook'
  *
  * `parseOrderReference` requires a positive safe integer, so it has to parse; `orders.id` is a
  * Postgres `integer`, so this sits one below the type's ceiling and simply finds nothing. A value
- * past `int4` would overflow inside `findByID` and be swallowed by its `.catch(() => null)` — the
- * same outcome by accident rather than on purpose, which is a worse thing for a test to rely on.
+ * past `int4` would overflow inside `findByID`, and since Phase 36 (R1-04) only a 404 counts as
+ * absence there — the overflow would be rethrown and the route would answer 500, which is not the
+ * branch these tests mean to reach.
+ *
+ * **Against a deployment with a Sentry DSN, the test that signs an event for this id raises a real
+ * alert, by design.** A reference that parses and names no order is `orderMissing` — most likely an
+ * unpaid order the retention sweep deleted, possibly with money behind it — and the route reports
+ * it as `stripe.webhook.orderMissing`. Expect one such issue per run, carrying this reference.
  */
 const UNCLAIMED_ORDER_ID = 2_147_483_646
 
@@ -562,10 +568,14 @@ test.describe('§27.1c flow 7 — the webhook, and the bodies it refuses', () =>
       )
 
       /*
-       * `applyStripeEvent` resolves no order, returns `noOrder`, and the route records the row as
-       * `ignored` and answers `OK`. §17.1h's *"invalid metadata"*: a signature proves Stripe sent
-       * it, not that the order lives here — another application on the same account, an older
-       * deploy, or exactly this test. A 500 would make Stripe retry it for three days.
+       * `applyStripeEvent` resolves no order for a reference that parses, so it returns
+       * `orderMissing` (not `noOrder`, which is an event with no reference at all). The route logs
+       * it, reports it through `reportFailure(..., 'stripe.webhook.orderMissing', ...)`, records the
+       * row as `ignored` and answers `OK`. §17.1h's *"invalid metadata"*: a signature proves Stripe
+       * sent it, not that the order lives here — a deleted unpaid order, another application on the
+       * same account, an older deploy, or exactly this test. A 500 would make Stripe retry it for
+       * three days, and a retry cannot recreate the order. Run against a deployment with a Sentry
+       * DSN, this test raises that alert on purpose — see `UNCLAIMED_ORDER_ID`.
        */
       expect(status).toBe(200)
       expect(text).toBe('OK')

@@ -18,10 +18,17 @@
  * The **D-10** guard applies: it creates and deletes products, variants, orders and order lines.
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload, TypedUser } from 'payload'
 
 import config from '../src/payload.config'
 
+import {
+  NEVER_PAID_STATUSES,
+  sweepRetention,
+  sweepUnpaidOrders,
+  UNPAID_ORDER_RETENTION_DAYS,
+} from '../src/lib/cart/sweep'
 import { applyStripeEvent } from '../src/lib/checkout/fulfil'
 import { type PaymentStatus } from '../src/lib/checkout/rules'
 import { developmentDatabase } from '../src/lib/env.core'
@@ -80,14 +87,20 @@ const cleanup = async () => {
       .delete({
         collection: 'email-messages',
         overrideAccess: true,
+        trash: true,
         where: { order: { in: orderIds } },
       })
       .catch(() => undefined)
   }
 
+  /*
+   * `trash: true` — permanently delete, **trashed rows included**. With `trash: false` Payload's
+   * delete filters to non-trashed rows and throws NotFound on a trashed one, which the `catch`
+   * swallowed: a section-M fixture soft-deleted with raw SQL outlived every failing run.
+   */
   for (const doc of [...created].reverse()) {
     await payload
-      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
+      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: true })
       .catch(() => undefined)
   }
 }
@@ -1423,6 +1436,297 @@ try {
     await payload
       .delete({ collection: 'promotions', id: promotion.id, overrideAccess: true })
       .catch(() => undefined)
+  }
+
+  /* ============================================ M — the retention sweep, decided by the owner 2026-09-11 */
+  {
+    /*
+     * **"Unpaid orders and the customer data on them are deleted after 30 days."**
+     *
+     * A retention promise is only as true as the code that keeps it, and every way of getting this
+     * wrong is expensive in one direction or the other: sweeping a paid or held order destroys a
+     * financial record, and *not* sweeping an unpaid one leaves a name, an email and an address in the
+     * database after the shop said they were gone. So each half is measured against real rows.
+     *
+     * ### This section never touches a row it did not make — the retention review
+     *
+     * It used to run the real sweep at the real clock over the whole development database, so its
+     * batch checks depended on whatever else was there, and every run permanently deleted unrelated
+     * rows — the seeded demo order `N1-2609-DEMO06` among them, thirty days after a seed. Now every
+     * fixture is dated before 2000 and every sweep is given {@link SWEEP_NOW}, a clock in the year
+     * 2000: its cutoff is thirty days before that, so a row written by any real process (Payload or
+     * `now()`, both of which are this century) can never qualify. Checks are made by fixture id.
+     */
+    const DAY = 24 * 60 * 60 * 1000
+
+    /** The clock every sweep in this section runs at. Its cutoff is 2000-01-31. */
+    const SWEEP_NOW = new Date('2000-03-01T00:00:00.000Z')
+
+    const daysBefore = (days: number) => new Date(SWEEP_NOW.getTime() - days * DAY).toISOString()
+
+    const LONG_AGO = '1999-01-01T00:00:00.000Z'
+
+    /**
+     * **`updatedAt` cannot be backdated through the Local API.** Payload stamps it on every update —
+     * `collections/operations/utilities/update.js`, *"Ensure updatedAt date is always updated"* — so a
+     * fixture aged with `payload.update` is a fixture aged to *now*, and every check below would pass
+     * against a sweep that does nothing. Raw SQL is the only way to put a row in the past.
+     *
+     * It is also how the trashed fixture is made (moving one to the trash through Payload is an
+     * update, which would stamp `updatedAt`), and how a hold is set — `fulfilmentHold` is written only
+     * by `fulfil.ts`'s raw SQL, and `NULL` is not a value the Local API would write for it.
+     */
+    const age = async (
+      id: number,
+      when: string,
+      {
+        hold = 'none',
+        trashed = false,
+      }: { hold?: 'none' | 'paymentMismatch' | null; trashed?: boolean } = {},
+    ) => {
+      const holdValue =
+        hold === null
+          ? sql`NULL`
+          : hold === 'paymentMismatch'
+            ? sql`'paymentMismatch'`
+            : sql`'none'`
+
+      await payload.db.drizzle.execute(
+        sql`UPDATE "orders"
+            SET "created_at" = ${when},
+                "updated_at" = ${when},
+                "deleted_at" = ${trashed ? when : null},
+                "fulfilment_hold" = ${holdValue}
+            WHERE "id" = ${id}`,
+      )
+    }
+
+    /* `trash: true` on the read as well, or a soft-deleted row would read as absent and prove nothing. */
+    const stillThere = async (collection: 'order-items' | 'orders', id: number) =>
+      (
+        await payload.find({
+          collection,
+          depth: 0,
+          limit: 1,
+          overrideAccess: true,
+          select: {},
+          trash: true,
+          where: { id: { equals: id } },
+        })
+      ).totalDocs === 1
+
+    /*
+     * **A run that died before its `finally`** — killed, or timed out — leaves its section-M fixtures
+     * behind with the same pre-2000 dates as this run's, and they would take the "oldest" slots below.
+     * They are this harness's rows and nobody else's: `N1-ORD-M…`, `orders@example.test`, and dated
+     * before 2001, which nothing real can be. Removed first, trashed ones included.
+     */
+    await payload.delete({
+      collection: 'orders',
+      overrideAccess: true,
+      trash: true,
+      where: {
+        and: [
+          { orderNumber: { like: 'N1-ORD-M' } },
+          { email: { equals: 'orders@example.test' } },
+          { updatedAt: { less_than: '2001-01-01T00:00:00.000Z' } },
+        ],
+      },
+    })
+
+    check(
+      'M: the never-paid set is every status except paid and refunded',
+      NEVER_PAID_STATUSES.length === 5 &&
+        PAYMENTS.filter((status) => status !== 'paid' && status !== 'refunded').every((status) =>
+          (NEVER_PAID_STATUSES as string[]).includes(status),
+        ) &&
+        !(NEVER_PAID_STATUSES as string[]).includes('paid') &&
+        !(NEVER_PAID_STATUSES as string[]).includes('refunded'),
+      NEVER_PAID_STATUSES.join(','),
+    )
+
+    check(
+      'M: …and the window is the thirty days the owner decided',
+      UNPAID_ORDER_RETENTION_DAYS === 30,
+      String(UNPAID_ORDER_RETENTION_DAYS),
+    )
+
+    const abandoned = await makeOrder('M1', 'checkout_started')
+
+    const line = await payload.create({
+      collection: 'order-items',
+      data: {
+        lineTotalMinor: 5_000,
+        order: abandoned.id,
+        productName: 'Alpine Shell',
+        quantity: 1,
+        sku: `ORD-${suffix}-m`,
+        unitPriceMinor: 5_000,
+        variantLabel: 'Bone / M',
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'order-items', id: line.id })
+
+    const paid = await makeOrder('M2', 'paid')
+    const refunded = await makeOrder('M3', 'paid')
+
+    await payload.update({
+      collection: 'orders',
+      data: { paymentStatus: 'refunded' },
+      id: refunded.id,
+      overrideAccess: true,
+    })
+
+    const inside = await makeOrder('M4', 'pending_payment')
+    const trashed = await makeOrder('M5', 'payment_failed')
+
+    /* The bounded run below takes these three first — the sweep is oldest-first. */
+    const oldest = [
+      await makeOrder('M6a', 'draft'),
+      await makeOrder('M6b', 'cancelled'),
+      await makeOrder('M6c', 'pending_payment'),
+    ]
+
+    const held = await makeOrder('M7', 'pending_payment')
+    const emptyHold = await makeOrder('M8', 'checkout_started')
+    const awaiting = await makeOrder('M9', 'pending_payment')
+
+    const awaitingSession = `cs_orders_m9_${suffix}`
+
+    await payload.db.drizzle.execute(
+      sql`UPDATE "orders" SET "stripe_checkout_session_id" = ${awaitingSession} WHERE "id" = ${awaiting.id}`,
+    )
+
+    await age(abandoned.id, LONG_AGO)
+    await age(paid.id, LONG_AGO)
+    await age(refunded.id, LONG_AGO)
+    await age(inside.id, daysBefore(UNPAID_ORDER_RETENTION_DAYS - 1))
+    await age(trashed.id, LONG_AGO, { trashed: true })
+    await age(oldest[0].id, '1997-06-01T00:00:00.000Z')
+    await age(oldest[1].id, '1997-06-02T00:00:00.000Z')
+    await age(oldest[2].id, '1997-06-03T00:00:00.000Z')
+    await age(held.id, LONG_AGO, { hold: 'paymentMismatch' })
+    await age(emptyHold.id, LONG_AGO, { hold: null })
+    await age(awaiting.id, LONG_AGO)
+
+    /*
+     * **A webhook claim restarts the clock.** A delayed bank payment's `completed` event moves the
+     * order to `pending_payment` with a raw-SQL claim. Before the retention review that claim left
+     * `updated_at` alone, so the order still looked untouched since 1999 and was swept while its money
+     * was clearing.
+     */
+    const claimed = await applyStripeEvent(payload, {
+      eventType: 'checkout.session.completed',
+      orderId: awaiting.id,
+      paymentIntentId: null,
+      session: {
+        amountTotal: 5_000,
+        currency: 'usd',
+        id: awaitingSession,
+        paymentStatus: 'unpaid',
+      },
+    })
+
+    const claimedAt = new Date((await orderNow(awaiting.id)).updatedAt).getTime()
+
+    check(
+      'M: **a raw-SQL webhook claim bumps `updatedAt`** — the retention clock is the last activity',
+      claimed.outcome === 'awaitingPayment' && claimedAt > Date.now() - 10 * 60_000,
+      `${claimed.outcome}, updatedAt ${new Date(claimedAt).toISOString()}`,
+    )
+
+    /* ---- the bound, before the full run clears the rest */
+    const bounded = await sweepUnpaidOrders(payload, SWEEP_NOW, 2)
+
+    const [first, second, third] = await Promise.all(
+      oldest.map((order) => stillThere('orders', order.id)),
+    )
+
+    check(
+      'M: **the batch bound is respected** — two deleted, `more` says a backlog remains',
+      bounded.deleted === 2 && bounded.more,
+      `deleted=${bounded.deleted} more=${bounded.more}`,
+    )
+
+    check(
+      'M: …and it took the two oldest, leaving the third for tomorrow',
+      !first && !second && third,
+      `${first}/${second}/${third}`,
+    )
+
+    /* ---- the full run */
+    const swept = await sweepUnpaidOrders(payload, SWEEP_NOW, 50)
+
+    check(
+      'M: a run that does not fill its batch does not claim a backlog',
+      !swept.more,
+      `deleted=${swept.deleted} more=${swept.more}`,
+    )
+
+    check(
+      'M: **an unpaid order past the window is deleted**',
+      !(await stillThere('orders', abandoned.id)),
+    )
+
+    check(
+      'M: …**and its lines go with it** — asserted by line id, because an orphan would read as absent by order',
+      !(await stillThere('order-items', line.id)),
+    )
+
+    check(
+      'M: **a paid order of exactly the same age is untouched** — it is a financial record',
+      await stillThere('orders', paid.id),
+    )
+
+    check('M: …and a refunded one likewise', await stillThere('orders', refunded.id))
+
+    check(
+      'M: **an unpaid order inside the window is untouched**',
+      await stillThere('orders', inside.id),
+    )
+
+    check(
+      'M: **a soft-deleted unpaid order is deleted too** — or the trash is a way to keep data forever',
+      !(await stillThere('orders', trashed.id)),
+      'trash: true means permanently delete, trashed rows included',
+    )
+
+    check(
+      'M: …and the third of the oldest three went on this run',
+      !(await stillThere('orders', oldest[2].id)),
+    )
+
+    check(
+      'M: **an unpaid order held for a payment mismatch is kept, however old** — the money may have been taken',
+      await stillThere('orders', held.id),
+    )
+
+    check(
+      'M: …while one whose hold column is empty (NULL) is deleted — NULL means no hold, not an exemption',
+      !(await stillThere('orders', emptyHold.id)),
+    )
+
+    check(
+      'M: **an order a webhook claimed since is kept** — its clock restarted at the claim',
+      await stillThere('orders', awaiting.id),
+    )
+
+    /* ---- the entry point the cron actually calls */
+    const both = await sweepRetention(payload, SWEEP_NOW)
+
+    check(
+      'M: **the cron entry point runs both rules**, neither fails, and nothing of this section’s is left to take',
+      !both.carts.failed &&
+        !both.orders.failed &&
+        (await stillThere('orders', paid.id)) &&
+        (await stillThere('orders', refunded.id)) &&
+        (await stillThere('orders', inside.id)) &&
+        (await stillThere('orders', held.id)) &&
+        (await stillThere('orders', awaiting.id)),
+      `carts deleted=${both.carts.deleted} orders deleted=${both.orders.deleted}`,
+    )
   }
 } finally {
   await cleanup()

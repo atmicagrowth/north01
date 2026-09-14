@@ -63,7 +63,7 @@ setting `DATABASE_PUSH_TARGET` to production.
 |---|---|---|---|
 | `verify:access` | Phase 7 access matrix: cross-customer reads, role escalation, ownership, disabled accounts, password policy, the Turnstile gate — through the Local API with `overrideAccess: false` | yes, D-10 | — |
 | `verify:media` | §8.1b upload rules (mime allowlist, magic bytes, disguised executables, dimension cap), §8.1c URL grammar, §8.1d layout geometry | yes, D-10 | Cloudinary optional (live round trip) |
-| `verify:shell` | Navigation route map, link validation and every nav edge case, against real documents in three publication states | yes, D-10 | — |
+| `verify:shell` | Navigation route map, link validation and every nav edge case, against real documents in three publication states; the legal row follows `hasPublishedText` (section G saves an emptied `privacyPolicy` and restores the original) | yes, D-10 | — |
 | `verify:home` | Homepage block resolution: drafts, scheduled and variant-less products dropped, rails, price formatting | yes, D-10 | — |
 | `verify:catalog` | Filter edge cases and card states; draft, scheduled and withdrawn products never listed; Postgres and Algolia agree | yes, D-10 | Algolia optional |
 | `verify:search` | Search rules and the overlay state machine | yes, D-10 | Algolia optional (skipped-and-passing without) |
@@ -71,16 +71,16 @@ setting `DATABASE_PUSH_TARGET` to production.
 | `verify:cart` | All seven §14.1b edge cases, merges and totals | yes, D-10 | — |
 | `verify:promotions` | §15.1a's eight checks and §15.1c's eight edge cases, the unique code index, per-customer counts | yes, D-10 | — |
 | `verify:shipping` | Shipping and tax provider boundaries (§16) | **no database** | — |
-| `verify:checkout` | Payment state machine, preflight, both idempotency barriers; the Stripe signature checked offline with a fabricated secret | yes, D-10 | — |
-| `verify:webhook` | Webhook effects on real rows: idempotency, the transaction, the inventory race, via `applyStripeEvent` | yes, D-10 | — |
+| `verify:checkout` | Payment state machine, preflight, both idempotency barriers; the Stripe signature checked offline with a fabricated secret; G2: the session claim sets `updated_at` and one `preparedAt` cannot claim twice | yes, D-10 | — |
+| `verify:webhook` | Webhook effects on real rows: idempotency, the transaction, the inventory race, via `applyStripeEvent`; `orderMissing` versus `noOrder` (G); every claim that changes an order sets `updated_at` (T) | yes, D-10 | — |
 | `verify:email` | Idempotent sends (including two concurrent enqueues), retry ceiling, the dev allowlist, failure recording — with a fake transport | yes, D-10 | — (see [`EMAIL.md`](EMAIL.md)) |
 | `verify:account` | Cross-account access prevention; wishlist and recently-viewed merge | yes, D-10 | — |
 | `verify:reviews` | Unauthorised submissions, duplicates, §21.1c abuse cases, rendering rules | yes, D-10 | — |
 | `verify:lookbook` | Shop the look never guesses a size or a missing variant (§22) | yes, D-10 | — |
 | `verify:editorial` | Unpublished content, missing hero media, empty or deleted related products (§23) | yes, D-10 | — |
-| `verify:orders` | Legal and illegal status transitions; order lines immutable after product edits — as refused writes | yes, D-10 | — |
-| `verify:seo` | §24.1b's structured-data prohibitions, canonicals, sitemap | **no database**; CI | — |
-| `verify:analytics` | GA4 reshaping (minor units, indices) and Sentry redaction — 115 checks | **no database**; CI | — (see [`ANALYTICS.md`](ANALYTICS.md)) |
+| `verify:orders` | Legal and illegal status transitions; order lines immutable after product edits — as refused writes. Section M, the retention sweep: creates its own orders, ages them to 1997–2000 with raw SQL, sweeps at the fixed clock `SWEEP_NOW` (2000-03-01) so no real row can qualify, and checks the window, the batch bound, trashed rows, paid/refunded untouched, held orders kept and a webhook claim restarting the clock. It **permanently deletes** its fixtures, and removes leftovers of an aborted run first | yes, D-10 | — |
+| `verify:seo` | §24.1b's structured-data prohibitions, canonicals, the sitemap — legal pages listed only when their document has text (`legalSitemapRoutes`) | **no database**; CI | — |
+| `verify:analytics` | GA4 reshaping (minor units, indices), Sentry redaction, and (section J) the vendor privacy rules: private paths, Speed Insights `beforeSend`, referrers, URL redaction by value, PostHog property scrubbing — 125 checks | **no database**; CI | — (see [`ANALYTICS.md`](ANALYTICS.md)) |
 | `verify:security` | Every `verifyTurnstile` branch, the redirect validator, upload rules, secret patterns | **no database**; CI | — |
 | `verify:admin` | §28.1d: no arbitrary status transitions, invalid refunds, negative stock, duplicate SKUs or malformed publishes — refused by access, validators, hooks or constraints | yes, D-10 | — |
 

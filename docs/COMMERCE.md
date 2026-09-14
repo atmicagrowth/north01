@@ -89,11 +89,29 @@ is the only way in.
 
 A failed merge is logged and **never fails the sign-in**.
 
-**Expiry and the sweep.** `carts.expiresAt` = creation + 30 days. `GET /api/carts/sweep` (Vercel
-Cron, daily, `CRON_SECRET`, see DEPLOYMENT.md §7) runs `lib/cart/sweep.ts`: it deletes up to 200
-`active` bags past expiry per run (`Carts.beforeDelete` removes their lines first). `converted` bags
-are order history and are never touched. An order that pointed at a swept bag keeps its snapshot;
-the relationship clears.
+**Expiry and the sweep.** `carts.expiresAt` = creation + 30 days, never extended. `GET
+/api/carts/sweep` (Vercel Cron, daily at 03:30 UTC, `CRON_SECRET` — without it every request is
+refused with 401, see DEPLOYMENT.md §7) runs `sweepRetention` in `lib/cart/sweep.ts`, two steps that
+fail independently:
+
+- **Bags** (`sweepExpiredCarts`): up to 200 `active` bags past expiry per run (`Carts.beforeDelete`
+  removes their lines first). `converted` bags are order history and are never touched. An order that
+  pointed at a swept bag keeps its snapshot; the relationship clears.
+- **Unpaid orders** (`sweepUnpaidOrders`): up to 200 per run matching `unpaidOrderRetentionWhere` —
+  a never-paid status (`NEVER_PAID_STATUSES`: `draft`, `checkout_started`, `pending_payment`,
+  `payment_failed`, `cancelled`), `updatedAt` more than `UNPAID_ORDER_RETENTION_DAYS` = 30 days ago,
+  and **no fulfilment hold** (`none` or null). `paid` and `refunded` cannot match, and an unpaid order
+  held `paymentMismatch` is kept however old. The delete runs in its own transaction: `SELECT … FOR
+  UPDATE` on the selected ids, then a permanent delete (`trash: true`, trashed rows included) whose
+  `where` repeats the whole rule, so an order paid, held or touched in between survives. Lines go
+  with the order (`Orders.beforeDelete`).
+
+`updatedAt` is the order's last write. Every raw `UPDATE "orders"` in `pending-order.ts` and
+`fulfil.ts` sets `updated_at = now()` (§7.2, §8), so a checkout attempt, a recorded session and every
+webhook claim that moves the order restart the clock; a claim matching no row does not. The route
+answers `{"carts": …, "orders": …}`, each `{ deleted, more, failed }`; a failing step is reported to
+Sentry as `retention.carts` / `retention.orders`. Why the window and clock are what they are:
+[`SECURITY.md`](SECURITY.md) §4.
 
 ## 4. Promotions
 
@@ -208,7 +226,9 @@ A failed session creation (§7.3) also shows the `stripeUnconfigured` sentence (
 - **One order per cart**, reused across attempts. The most recent order on the cart in
   `REUSABLE_ORDER_STATUSES` — `draft`, `checkout_started`, `pending_payment`, `payment_failed` — is
   reused. `cancelled` is not: an expiry makes the fulfilment side terminal, so the next attempt gets a
-  new order (Phase 36, R1-03, R1-06).
+  new order (Phase 36, R1-03, R1-06). The reuse claim sets `updated_at`, so reusing an order restarts
+  its retention clock; an order in any of these statuses left alone for 30 days is deleted by the
+  daily sweep (§3).
 - **The prior session is retired first** (`retirePriorSession` → `decidePriorSession`, R1-01). This
   stops an older, cheaper session from paying for a newer, larger bag:
 
@@ -320,6 +340,14 @@ When a claim matches no row, `classifyUnclaimedSessionEvent` decides what that m
 | `alreadyFinal` | This order's own session, already moved on — a redelivery, or the second event for one payment | `processed` |
 | `superseded` | An expiry or failure for a session the order has since replaced | `ignored` |
 | `mismatch` | A session reporting money that is not the order's current session at its current total and currency | `ignored`, `error: MISMATCH: …`, logged, reported `stripe.webhook.mismatch`, **200** (a retry cannot fix it), **nothing applied** — except that the order named in the metadata gets `fulfilmentHold: paymentMismatch`, so staff see the captured money in the Orders list (sweep 1). No automatic refund: a person decides |
+
+Two outcomes come before any claim, from the lookup itself (row wording in `eventRowRecordFor`,
+`lib/checkout/events.ts`):
+
+| Outcome | Meaning | Row |
+|---|---|---|
+| `orderMissing` | The metadata's order id parses but names no order — for any handled event type — or the order was deleted between the lookup and a claim (a 404 there). In normal operation that means the retention sweep deleted an unpaid order (§3) | `ignored`, `error: ORDER MISSING: the event names order <id>, which does not exist here. …`, logged, reported `stripe.webhook.orderMissing`, **200** (a retry cannot recreate the order), **nothing applied**. Check Stripe for money the event moved |
+| `noOrder` | No order reference, and no order holds the event's payment intent | `ignored`, `error: No order reference and no known payment intent in the event.`, **200**, not alerted |
 
 ### 8.3 Finalisation — `finalisePaidOrder`, one transaction
 
@@ -447,8 +475,8 @@ refuse to run anywhere but the development database `DATABASE_PUSH_TARGET` names
 | `scripts/verify-promotions.ts` | §15.1a checks and §15.1c edge cases; section G: the normalised unique index and per-customer counting |
 | `scripts/verify-shipping.ts` | §16 rate shape, validation, edge cases and the tax boundary (mostly pure) |
 | `scripts/verify-checkout.ts` | State machine, preflight vocabulary, stock plan; section F: **real offline signature verification** with `generateTestHeaderString` |
-| `scripts/verify-webhook.ts` | `applyStripeEvent` against real orders, variants and stock: both barriers, the transaction, the inventory race, `stripe-events` bookkeeping; sections M–S vary one session fact at a time |
-| `scripts/verify-orders.ts` | Fulfilment transitions and line immutability, measured as rejected writes against the database |
+| `scripts/verify-webhook.ts` | `applyStripeEvent` against real orders, variants and stock: both barriers, the transaction, the inventory race, `stripe-events` bookkeeping; sections M–S vary one session fact at a time; G separates `orderMissing` from `noOrder`; T proves every claim that changes an order sets `updated_at`, and a superseded claim does not |
+| `scripts/verify-orders.ts` | Fulfilment transitions and line immutability, measured as rejected writes against the database. Section **M**, the retention sweep: its own fixtures only, aged with raw SQL to 1997–2000 and swept at a fixed clock (`SWEEP_NOW` = 2000-03-01) — the 30-day window, the batch bound, trashed rows, paid and refunded never taken, a `paymentMismatch` hold kept, a null hold taken, a webhook claim restarting the clock — and **permanently deletes** those fixtures, clearing leftovers of an aborted run first |
 
 **Not verified anywhere:** a live `stripe.checkout.sessions.create`, a live Stripe Tax calculation, and
 a real payment (DEV-62, `TODO.md` §4). The first test in a keyed environment is one test-mode purchase

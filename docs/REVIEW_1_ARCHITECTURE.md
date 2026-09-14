@@ -33,7 +33,7 @@ the development database (`pnpm verify:*`, see `docs/TESTING.md`), the unit suit
 | R1-14 | M | Fixed (Phase 33) | CSRF allowlist covers every host the deployment answers on |
 | R1-15 | M | Fixed (Phase 34) | Payload's REST auth routes refuse non-local calls; forgot-password has Turnstile and a cooldown |
 | R1-16 | M | Fixed (Phase 31 hotfix) | Reset tokens never reach analytics |
-| R1-17 | M | Partly — owner | Credentials fixed. Editors can still update orders' fulfilment fields and manage promotions; whether that should be admin-only is the owner's staffing decision (TODO.md §10) |
+| R1-17 | M | Fixed (Phase 34); decided (Phase 37) | Credentials fixed: customer email and password changes, and orders' address snapshots, stay admin-only, as does deleting an order or a promotion. Editors updating orders' fulfilment and tracking and creating and editing discount codes is intended — the owner decided it on 2026-09-11, recorded as DEV-85 in the notes |
 | R1-18 | M | Fixed (Phase 34) | Payload's internal collections are staff-only |
 | R1-19 | M | Fixed (Phase 35) | A local production build resolves to `local` |
 | R1-20 | M | Fixed (Phase 31) | Degraded search says so, with no "No products" |
@@ -43,7 +43,7 @@ the development database (`pnpm verify:*`, see `docs/TESTING.md`), the unit suit
 | R1-24 | L | Fixed (Phase 34) | Length bounds on every free-text field |
 | R1-25 | L | Open | No database constraint enforces one active bag per customer; the read path picks the newest. An advisory lock is recorded as owed |
 | R1-26 | L | Open | Two order-number generators; the live one's collision space (32⁶ per month) makes a retry academic. Recorded |
-| R1-27 | L | Partly — owner | Expired bags swept daily (Phase 34); unpaid orders' retention is the owner's decision (SECURITY.md §4) |
+| R1-27 | L | Fixed (Phase 34; Phase 37) | Expired bags swept daily (Phase 34). Unpaid orders: the owner decided 30 days on 2026-09-11, and the same daily sweep deletes a never-paid order 30 days after its last change, except one under a fulfilment hold (`lib/cart/sweep.ts`, SECURITY.md §4). Both need `CRON_SECRET` in production to run |
 | R1-28 | L | Open | Sign-in timing can still hint at an account's existence; REST routes are closed and Turnstile guards the forms |
 | R1-29 | L | Fixed | A failed image shows the reserved placeholder, not a broken icon |
 | R1-30 | L | Fixed | Analytics imports and `gtag` calls cannot throw into the page |

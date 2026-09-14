@@ -196,14 +196,35 @@ export function redactString(value: string): string {
  *
  * A string that is not a URL is scrubbed as a string. That is the honest fallback: `new URL` throwing
  * is not a reason to pass something through untouched.
+ *
+ * ### Every parameter value is also scrubbed by value, decoded
+ *
+ * The first version scrubbed the *serialised* URL by value, and a serialised query is
+ * percent-encoded: `?q=jane%40example.com` does not match the email pattern, because `@` is `%40`.
+ * `search-panel.tsx` builds exactly that URL with `encodeURIComponent`, so a search for an email
+ * address reached GA4 and PostHog intact (Phase 37 review). Each value is now decoded by
+ * `URLSearchParams`, scrubbed as a string, and written back only when scrubbing changed it — so a
+ * URL with nothing sensitive in it keeps its exact spelling.
  */
 export function redactUrl(value: string): string {
   try {
     const url = new URL(value)
 
-    for (const key of [...url.searchParams.keys()]) {
+    for (const key of new Set(url.searchParams.keys())) {
       if (SENSITIVE_PARAM.test(key)) {
         url.searchParams.set(key, REDACTED)
+        continue
+      }
+
+      const values = url.searchParams.getAll(key)
+      const scrubbed = values.map(redactString)
+
+      if (scrubbed.some((entry, index) => entry !== values[index])) {
+        url.searchParams.delete(key)
+
+        for (const entry of scrubbed) {
+          url.searchParams.append(key, entry)
+        }
       }
     }
 

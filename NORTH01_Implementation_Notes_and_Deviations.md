@@ -8994,7 +8994,11 @@ could break Stripe, Turnstile or the admin. `docs/SECURITY.md` §6 is the step t
 - **Retention periods** for unpaid orders and the email outbox, erasure of orders, a newsletter
   unsubscribe, and editors' read access to the subscriber list — legal and business decisions, listed
   in `docs/SECURITY.md` §4 and TODO.md §10 rather than guessed.
+  *Unpaid orders decided 2026-09-11 (§1.43): deleted thirty days after the last activity. The outbox,
+  erasure of orders and the newsletter unsubscribe remain open.*
 - **Privacy policy and terms** (G-19, DOC-08) — legal text; TODO.md §9. The footer row stays empty.
+  *Superseded 2026-09-11 (§1.43): the owner supplied a contact address and asked for the text; the
+  legal pages exist and the footer links them once their text is published.*
 - **Error objects are logged whole**; a Postgres or Stripe error can quote an email. Recorded as a
   residual in `docs/SECURITY.md` §5 rather than replacing Payload's logger configuration late.
 - The Stripe line-item description and return URLs still carry the internal order id; analytics no
@@ -9377,7 +9381,7 @@ plan asks for it to work.
 | **37.1e CMS** — products, collections, edits, homepage, lookbook, journal, FAQ, navigation editable | met | `docs/CMS.md`; `verify:access`, `verify:admin`, `verify:editorial`, `verify:lookbook` |
 | **37.1f UX** — desktop, mobile, tablet, search, filters, drawer, wishlist, account, shop the look, empty/error/loading states | met locally; search **owner** in production | E2E (incl. the mobile project); Phase 35 screenshots at three widths; production search needs its index (R3-01) |
 | **37.1g Security** — no secrets in Git, none exposed, online-only audit, ownership, admin auth, Stripe signatures, public forms, uploads | met | `scan:secrets`; `NEXT_PUBLIC_` audit (SECURITY.md); a source search for store locator / pickup / POS / in-store finds only two comments; `verify:access`, `verify:security`, `verify:media` |
-| 37.1g — online returns and support complete and remote-only | **owner** | Returns are arranged with the team (G-20) and no support address exists yet (G-08); the copy no longer promises otherwise (TODO.md §12) |
+| 37.1g — online returns and support complete and remote-only | **owner** | Returns are arranged with the team (G-20) and no support address exists yet (G-08); the copy no longer promises otherwise (TODO.md §12). *Updated 2026-09-11 (§1.43): the support address is admin@micagrowth.com (G-08 closed); returns are arranged by email, and an online return request is still not built (G-20).* |
 | **37.1h Deployment** — production deploys; variables documented; DB connects; webhook route reachable | met | Vercel production deploys from `main`; `docs/DEPLOYMENT.md` §9, `docs/ENVIRONMENT.md`; `pnpm smoke` (the webhook refuses an unsigned body) |
 | 37.1h — Vercel Preview works | **owner** | Preview has no variables (R3-03) |
 | 37.1h — Sentry receives an intentional test error in non-production | **owner** | No DSN outside production; set one on Preview or locally and throw from `/design-system` |
@@ -9386,7 +9390,152 @@ plan asks for it to work.
 **Where that leaves the project.** Every gate that code and a development database can satisfy is
 met. The remaining gates all depend on accounts only the owner holds — Stripe, Resend, Algolia's
 production index, a Preview environment, and the owner's analytics properties — plus two content
-decisions (a support channel, the legal text). TODO.md is the complete list, in order.
+decisions (a support channel, the legal text) — *both supplied by the owner on 2026-09-11 (§1.43)*. TODO.md is the complete list, in order.
+
+## 1.43 Owner follow-up — contact address, legal pages and data retention
+
+After the plan's phases were complete (§1.42), the owner answered the questions TODO.md had put to
+them. This section is what those answers changed. One migration (`phase_37_legal_pages`, two nullable
+`jsonb` columns on `site_settings`); no dependency. The owner's decisions, 2026-09-11:
+
+1. **A contact address:** `admin@micagrowth.com`.
+2. **A privacy notice and terms of sale:** "make the text".
+3. **Unpaid orders are kept for thirty days.**
+4. **Editors may change orders and discount codes** — recorded as **DEV-85**.
+
+### 1.43.1 The contact address
+
+`site-settings.contactEmail` is seeded as `admin@micagrowth.com`, and the returns policy and both FAQ
+answers about returns and cancellations name it: returns are arranged by email with the team. Order
+emails now carry it as their reply-to (`usableReplyTo` accepts it; it refused the old reserved
+placeholder). **G-08 is closed** without a contact form. **G-20 stays open**: there is still no online
+return request — email is the channel, and no copy promises otherwise.
+
+### 1.43.2 The privacy notice and terms of sale
+
+- **The text** is `scripts/seed/legal.ts`, written from what the code actually does — the cookies and
+  device storage it uses, the processors it calls, the retention it enforces — and re-verified sentence
+  by sentence against the code after the analytics and retention changes below. It is a plain-English
+  **starting draft, not legal advice**; the owner is accountable for it. The terms' last paragraph says
+  the company's registered name, address and governing law are still to be confirmed (TODO.md §9).
+- **Where it lives:** `site-settings.privacyPolicy` and `termsOfSale` (Site Settings → Policies), so the
+  owner edits it without a developer. `/legal/privacy` and `/legal/terms` render it.
+- **Never a dead link.** A document counts as published only if it has text (`hasPublishedText`, so an
+  emptied admin field counts as empty). Until then the page returns 404 (noindex), and the footer's
+  legal row, the help pages' Support nav and the sitemap all leave it out. Production's fields are empty
+  today, so nothing new is visible there until the text is entered. The footer row, empty since Phase 28
+  (§1.39.6), fills itself in once the text exists.
+- **Checkout states acceptance.** The terms say placing an order means accepting them, so the checkout
+  shows one sentence above *Continue to payment* linking whichever of the two documents is published.
+- **Still not built:** a cookie-consent banner (G-17). The notice describes measurement honestly;
+  selling into the EU or California generally needs consent before those cookies are set.
+
+### 1.43.3 Unpaid orders are deleted after thirty days
+
+`sweepUnpaidOrders` (`lib/cart/sweep.ts`) runs from the existing daily cron, `GET /api/carts/sweep`,
+beside the expired-bag sweep — Hobby allows two cron entries and the email drain is the other. Once
+`CRON_SECRET` is set in production it permanently deletes, in batches of 200, every order that meets
+all of `unpaidOrderRetentionWhere`:
+
+- **A never-paid status** — `cancelled`, `checkout_started`, `draft`, `payment_failed` or
+  `pending_payment`. The set is an exhaustive `Record` keyed on the payment statuses minus `paid` and
+  `refunded`, so adding either is a compile error and a new status cannot be forgotten.
+- **Thirty days since the last change** (`updatedAt`), not since creation, because preflight reuses
+  orders: an old row can carry a live Checkout Session.
+- **No fulfilment hold.** A `paymentMismatch` hold means Stripe may have taken money the status does
+  not show. Deleting that order would destroy the only in-app record of it, so held orders are never
+  swept. Nobody can clear a hold in the admin, so a held order stays until an admin deletes it
+  permanently after resolving the payment in Stripe.
+
+The review found the first version unsafe in three ways, all fixed:
+
+1. It would have deleted held orders.
+2. Its thirty-day clock did not move when payments changed an order. The webhook and session claims
+   are raw SQL, and none of them set `updated_at`. Every raw-SQL `UPDATE "orders"` — seven of them —
+   now sets `"updated_at" = now()`. The sweep-1 concurrency guard (`claimOrderForSession` requires
+   `updated_at = preparedAt`) still refuses only a superseded attempt; `verify:checkout` G2 proves it.
+3. It deleted by id alone. The delete now re-applies the whole predicate inside a transaction after
+   `SELECT … FOR UPDATE`, so an order paid or held between the read and the delete survives.
+
+A Stripe event naming an order that no longer exists is no longer filed as *"No order reference"*.
+It is a new outcome, `orderMissing`: recorded `ignored` with an `ORDER MISSING` error, reported to
+Sentry, and answered 200, because a retry cannot recreate the order.
+
+`trash: true` on the delete is correct and is not a soft delete: in Payload 3.88 it permanently
+deletes both normal and trashed rows (docs/DATABASE.md §8).
+
+### 1.43.4 Analytics now keeps the promises the notice makes
+
+- **GA4:** configured with Google signals and ad personalisation off. Page views carry a redacted
+  `page_referrer` as well as the redacted page URL.
+- **PostHog:** its options are pinned. Anything it would capture that is a URL is scrubbed, including
+  the session entry URL and referrer.
+- **Vercel Speed Insights:** now drops `/reset-password` and strips query strings.
+- **One private-path list** (`lib/analytics/private-paths.ts`) serves all three.
+- **Limits the code cannot remove,** stated in the notice, SECURITY.md and TODO.md §6:
+  - PostHog stores the visitor's IP unless the owner turns on *Discard client IP data*. The client's
+    `ip` option does nothing.
+  - GA4's advertising features also depend on dashboard settings.
+- `verify:analytics` has 125 checks (was 115).
+
+### 1.43.5 How it was verified while the development database was locked
+
+The Neon development branch rejects its password (28P01), as it did on 2026-09-10. Rather than commit
+unverified, everything database-backed ran against a **throwaway local Postgres**: `embedded-postgres`
+18 beta, installed in the session's scratch folder, not a project dependency. `.env` and every shared
+database were left untouched, and each command carried `DATABASE_URL`/`DATABASE_PUSH_TARGET` overrides.
+
+The fresh database took all 17 committed migrations from empty, which is the production deploy path.
+`seed`, `generate:media`, `import:media` and `reindex` rebuilt the demo shop, then the build, every
+harness, the E2E suite and a browser check ran against it. **One side effect:** the local Algolia index
+(`north01_products_local`) now matches that database, so run `pnpm reindex` once the Neon branch is
+back.
+
+### 1.43.6 The review
+
+An adversarial review read the uncommitted change across five dimensions:
+
+- retention safety
+- the legal text's factual accuracy
+- the legal pages' plumbing
+- copy and docs consistency
+- whether the tests can fail
+
+Each finding went to two or three independent refuters. **54 were confirmed, 2 rejected.**
+
+- **High:** the held-order deletion, and the notice's IP claim while PostHog stores IPs.
+- **Medium — false or overstated text:**
+  - account deletion (a trash delete keeps everything)
+  - tax being "shown before you pay" (it is included in the total on Stripe's page, not itemised)
+  - "worldwide" delivery (checkout offers eight countries)
+  - free delivery (Standard only)
+  - "without identifying you" (device identifiers, and the order number on purchase)
+  - footer links to legal pages that would say *"not published yet"* in production
+- **Low:** the rest.
+
+Four parallel packages with non-overlapping files fixed them. Independent rechecks found every code
+package resolved; a second round closed the documentation and test follow-ups they raised.
+
+### 1.43.7 What was verified
+
+Everything below ran on the combined final tree, against the local Postgres of §1.43.5 after a fresh
+re-seed of the rewritten text.
+
+| Check | Result |
+|---|---|
+| `pnpm typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
+| Migrations | all 17 apply to an empty database; `generate:types` then `migrate:create --skip-empty` write nothing further |
+| `pnpm test:run` | **1,048 tests** in 34 files (964 before this work). Under a full parallel run, two checkout-form tests took past the 5-second default while typing a whole address; the component project's `testTimeout` is now 15 seconds, and `vitest.config.ts` says why |
+| All 22 `verify:*` harnesses | pass. Notably `verify:orders` 102 (section M, retention), `verify:webhook` 84 (section T, the `updated_at` bump), `verify:checkout` 73, `verify:shell` 111, `verify:analytics` 125, `verify:admin` 87, `verify:security` 70 |
+| Playwright E2E, full suite, production build | **43 passed, 0 failed, 14 skipped** |
+| Browser | both legal pages render the text and mark themselves current; footer and sitemap list both; `/help/returns` names the address; the sweep answers 401 without the secret and `{carts, orders}` with it; no phone overflow; no page errors |
+| `pnpm scan:secrets` | clean, 487 tracked files |
+
+**Not verified:**
+
+- Anything that needs Stripe keys (unchanged from §1.42).
+- Production's empty-legal-field state on production itself. It is covered by `verify:shell`, which
+  saves an emptied field and checks the footer drops the link, and by the legal-page unit tests.
 
 # 2. Deviations
 
@@ -11537,6 +11686,23 @@ the product and the colour, and the size had no alternative. Notes §1.40.2 (P35
 *Affects Phases 13 and 35.*
 
 
+### DEV-85 — Editors may update orders and manage discount codes
+
+**Plan §7.1c says** editors manage catalogue and content, and the staff role help in `Users.ts`
+described orders and promotions as admin work.
+
+**We do:** editors keep the access the collections have always granted — updating an order's
+fulfilment status, carrier and tracking, and creating and editing discount codes. Everything that
+touches money or identity stays admin-only: customer credentials (§1.39), order ownership and the
+address snapshots, deletions, and promotion deletion.
+
+**Why:** the owner decided it on 2026-09-11, answering the question audit R1-17 raised and TODO.md §10
+recorded. A small team dispatching orders and running promotions should not need an admin for
+either. The role help text in `Users.ts` was corrected to say so.
+
+*Affects Phases 7, 18, 34 and 36.*
+
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -11597,4 +11763,10 @@ the product and the colour, and the size had no alternative. Notes §1.40.2 (P35
 | Phase 31 — error, empty and loading states | 2026-09-11 | Notes **§1.36**. **One migration** (`cart_items.price_seen_minor`, nullable, display only), no dependency. **Began with a live leak from Phase 30's deploy**: the GA4 ID was already in Vercel, so that build was the first to load `gtag`, whose `page_location` carried every opened password-reset link's token to Google — hotfixed (`95c040b`) and verified with every vendor request intercepted, with one source of page views and idle loading. **The storefront now survives a database outage**: measured with a second server on a wrong password, every route including `/help/faq` was a bare 500 because the root layout's customer and bag reads threw; they degrade to a signed-out shell, and a new `(frontend)/error.tsx` renders inside it with retry. A malformed URL is a branded 404, not a 21-byte 500. Turnstile explains itself when blocked (it was locking sign-in with "try again") and the footer newsletter loads it on first focus. The success page says what happened for each payment status; an unreadable order is not reported as a missing one; an expired session is a sign-in, not "your bag is empty" — which required keeping the bag cookie through sign-in. "Price changed" now exists. The degraded search no longer announces "No products" or offers controls that can change nothing. **The build caught one of the phase's own fixes**: a `try/catch` swallowed Next's dynamic-usage interrupt and would have made per-visitor routes static with a signed-out shell baked in — `unstable_rethrow` first. 829 tests; all 22 harnesses. |
 | Phase 32 — deployment to Vercel | 2026-09-11 | Notes **§1.37**. No dependency, no migration. **The dashboard settings were documented, not changed from the CLI** — production's environment is the owner's decision — in a new `docs/DEPLOYMENT.md` (plan §38's missing deployment document) and TODO.md §8: Production `SITE_URL` is the team alias, Preview has no variables so no preview can build, the production search index has never been built, no function region, no queued builds, no CI secrets. **What the repository could carry, it now does**: the six-step migration procedure (§32.1d) and rollback; `pnpm smoke <url>`, a read-only post-deployment smoke test whose first production run passed 9, warned 3 (the canonical and sitemap host, and search) and failed none; Node pinned to 22.x (Vercel was running 24.x, which no gate had exercised); a preview's `SITE_URL` resolves to its own branch alias instead of production, so preview reset links and Stripe returns stop pointing at the live shop; and DEV-67's scheduled drain, a daily Vercel Cron answering only a constant-time-compared `CRON_SECRET`. |
 | Phase 33 — Cloudflare, domain and DNS | 2026-09-11 | Notes **§1.38**. No dependency, no migration, no custom domain yet. **One part was not future work**: Payload's CSRF allowlist defaulted to `SITE_URL` alone, and production's `SITE_URL` is the team alias while customers use the public host — so every signed-in Server Action there ran as a guest (*"Sign in to save an address"* to a signed-in customer), and the UI sign-out cleared the cookie without revoking the session (audit R1-14). `csrf` is now every origin the deployment answers on, from platform-set values only (`lib/trusted-origins.ts`, unit-tested); reproduced and fixed on a non-canonical origin — the address saved, the old token dead after sign-out — and pushed at once. **The domain procedure is `docs/DEPLOYMENT.md` §11**: existing records inspected first (the team's unrelated domain untouched; HTTPS and HSTS on the Vercel host), apex and `www` with Vercel's edge redirect as the canonical-host rule, unproxied Cloudflare records with the Domains page as the source of truth, every service that names the host, and Resend's DKIM, MX, SPF and DMARC by shape — values not reproduced because they are region-specific, and email not called production-ready until Resend says Verified. |
+| Phase 34 — security, privacy and data minimisation | 2026-09-11 | Notes **§1.39**. No migration; `docs/SECURITY.md` written. Reset links had been logged in production; customer auth REST routes closed; Payload's internal collections staff-only; security headers and a report-only CSP. |
+| Phase 35 — final product quality pass | 2026-09-11 | Notes **§1.40**. One migration (`order_shipping_estimate`). Placeholder copy removed, breadcrumbs, sale price before a size, one-size auto-select; the E2E suite's first run, 43 passed. |
+| Phase 36 — the three review passes | 2026-09-11 | Notes **§1.41**. Two migrations (fulfilment hold; mismatch hold and tax calculation id). The payment path made safe (session, amount and currency verified; retries; oversold holds), Stripe Tax wired, three review reports and the §38 documents. |
+| Plan §37 — acceptance record | 2026-09-11 | Notes **§1.42**. Every gate code can meet is met; the rest are owner accounts and settings (TODO.md). |
+| Owner follow-up — contact address, legal pages, 30-day retention | 2026-09-13 | Notes **§1.43**, **DEV-85**. One migration (`phase_37_legal_pages`). Contact `admin@micagrowth.com`; privacy notice and terms (an unreviewed draft, shown only once published); unpaid orders deleted after 30 days of inactivity, never while held; analytics privacy hardening. Verified on a throwaway local Postgres because the Neon dev branch rejects its password. |
+
 > **Append this table, and the sections above it, at the end of every phase.**

@@ -58,6 +58,7 @@ import { ACCESSORY_PRODUCTS } from './seed/products-accessories'
 import { LOWER_PRODUCTS } from './seed/products-lower'
 import { TOPS_PRODUCTS } from './seed/products-tops'
 import { rich, upsert, type ProductSpec } from './seed/shared'
+import { PRIVACY_PARAGRAPHS, TERMS_PARAGRAPHS } from './seed/legal'
 
 /**
  * **The guard names the database, not the environment.** An `appEnv !== 'local'` check was the first
@@ -991,7 +992,7 @@ try {
       question: 'Can I return something?',
       topic: 'returns',
       answer:
-        'Anything unworn, with its tags on, can be returned within 30 days of delivery. Returns are arranged with our team rather than started online.',
+        'Anything unworn, with its tags on, can be returned within 30 days of delivery. Email admin@micagrowth.com to arrange one — returns are arranged with our team rather than started online.',
       sortOrder: 30,
     },
     {
@@ -1104,11 +1105,14 @@ try {
       siteName: 'NORTH / 01',
       tagline: 'Considered clothing for people who wear it out.',
       /*
-       * No contact address until the owner publishes a real one (Phase 36, DOC-02). This was
-       * `help@north01.example` — a reserved TLD that cannot receive mail, which the FAQ told
-       * customers to write to and every order email set as its reply-to.
+       * The owner's support address, supplied on 2026-09-11 (Phase 37, closing gap G-08). It is the
+       * reply-to on order emails (`lib/email/courier.ts` `usableReplyTo`) and the address the returns
+       * policy, the FAQ, the privacy notice and the terms tell customers to write to. It replaced
+       * `help@north01.example` — a reserved TLD that cannot receive mail, which Phase 36 cleared
+       * (DOC-02) because the FAQ told customers to write to it and every order email set it as its
+       * reply-to.
        */
-      contactEmail: null,
+      contactEmail: 'admin@micagrowth.com',
       defaultCurrency: 'USD',
       defaultLocale: 'en-US',
       freeShippingThresholdMinor: 15000,
@@ -1136,8 +1140,19 @@ try {
       ),
       returnsPolicy: rich(
         'Anything unworn, with its tags on, can be returned within 30 days of delivery.',
-        'Returns are arranged with our team rather than started online. Contact details for returns will be published here.',
+        'Returns are arranged with our team rather than started online — email admin@micagrowth.com and we will send you what to do.',
       ),
+      /*
+       * The privacy notice and terms of sale, closing gap G-19. On 2026-09-11 the owner supplied the
+       * contact address and the retention decision and asked for the text, which was drafted from
+       * the code (`seed/legal.ts`, revised 2026-09-13). It is an unreviewed starting draft, not legal
+       * advice: the owner is accountable for it, and somebody qualified should review it before live
+       * orders (TODO.md §9). It lives in `site-settings` so it can be corrected in the admin — and
+       * because this seed never runs against production, the live copy is pasted in by hand
+       * (TODO.md §12).
+       */
+      privacyPolicy: rich(...PRIVACY_PARAGRAPHS),
+      termsOfSale: rich(...TERMS_PARAGRAPHS),
       defaultSeoTitle: 'NORTH / 01',
       defaultSeoDescription: 'Considered clothing, made in small runs and built to be worn out.',
       announcement: {

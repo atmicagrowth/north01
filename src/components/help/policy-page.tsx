@@ -5,6 +5,11 @@ import { PageTitle } from '@/components/layout/page-title'
 import { Prose } from '@/components/editorial/prose'
 import { Section } from '@/components/layout/section'
 import { Link } from '@/components/ui/link'
+import {
+  hasPublishedText,
+  publishedLegalNav,
+  type LegalPublication,
+} from '@/lib/navigation/utility'
 
 /**
  * **A support page whose whole body is one rich-text field from `site-settings`.**
@@ -19,19 +24,39 @@ import { Link } from '@/components/ui/link'
  * second copy. This is that page. An editor who corrects the returns window in Settings corrects it
  * on the product page and here, in one edit.
  *
- * ### An unwritten policy says so
+ * ### An unwritten policy says so — or, for a legal document, is not a page at all
  *
- * `null` is a real state — nobody has written the policy yet, or the settings global could not be
- * read. Rendering a title over nothing would tell a customer the page is broken; saying the policy
- * is not published yet, and offering somewhere to go instead, is the honest answer and the one
- * §0.1.17 asks for.
+ * `null` is a real state — nobody has written the policy yet, an editor emptied the field, or the
+ * settings global could not be read. Rendering a title over nothing would tell a customer the page is
+ * broken; saying the policy is not published yet, and offering somewhere to go instead, is the honest
+ * answer and the one §0.1.17 asks for. *Written* means **has text** (`hasPublishedText`): an emptied
+ * Lexical field is a truthy object holding one blank paragraph, and branching on truthiness rendered
+ * exactly the title-over-nothing this section exists to prevent.
  *
- * ### The help pages link to each other
+ * That message is for Shipping and Returns. `/legal/privacy` and `/legal/terms` call `notFound()`
+ * before they reach this component, because a legal page that says it has no text is still a legal
+ * page a footer can link to and a crawler can index — see `publishedLegalNav`.
+ *
+ * ### The support pages link to each other, and the published legal pages are among them
  *
  * `HelpNav` sits under the title here and on `/help/faq`, so a customer reading the returns window
  * reaches the shipping one without going back to the footer. The current page is marked by matching
- * `title` against the nav's labels — the two routes pass exactly `"Shipping"` and `"Returns"`, and
- * a title that matches neither simply marks nothing.
+ * `title` against the nav's labels, and a title matching none of them marks nothing at all.
+ *
+ * That last property is why Phase 37 put `/legal/privacy` and `/legal/terms` **in** the list rather
+ * than leaving them out of it. `PolicyPage` renders this nav for every page built on it, so a legal
+ * page taking the three-entry version would have shown a row in which nothing was current — the
+ * reader's own position missing from the only orientation the page offers, on the one page where
+ * knowing which document you are reading matters most.
+ *
+ * The two legal entries are **`publishedLegalNav`**, not a second copy of the hrefs: a document with
+ * no text is absent here exactly as it is absent from the footer, so this row never offers a page that
+ * answers 404. The caller passes `legal` — `getLegalPublication()` for the links, and a legal page
+ * marks its own document published, since it has just rendered it.
+ *
+ * The nav is labelled *Support* rather than *Help* because a privacy notice is not help. Every href
+ * is a route that exists — `PAGE_ROUTE_PATTERNS`, and `verify:shell` resolves `legalNav` against the
+ * route tree on every run.
  */
 const HELP_LINKS = [
   { href: '/help/faq', label: 'FAQ' },
@@ -39,11 +64,20 @@ const HELP_LINKS = [
   { href: '/help/returns', label: 'Returns' },
 ] as const
 
-export function HelpNav({ current }: { current?: string }) {
+export function HelpNav({
+  current,
+  legal,
+}: {
+  current?: string
+  /** Which legal documents have text. Only those are linked. */
+  legal: LegalPublication
+}) {
+  const links = [...HELP_LINKS, ...publishedLegalNav(legal)]
+
   return (
-    <nav aria-label="Help" className="mt-m">
+    <nav aria-label="Support" className="mt-m">
       <ul className="flex flex-wrap gap-x-m gap-y-s">
-        {HELP_LINKS.map((link) => (
+        {links.map((link) => (
           <li key={link.href}>
             <Link
               aria-current={link.label === current ? 'page' : undefined}
@@ -68,11 +102,14 @@ export function HelpNav({ current }: { current?: string }) {
 export function PolicyPage({
   body,
   eyebrow = 'Help',
+  legal,
   title,
 }: {
   /** A Lexical document from `site-settings`, or `null`. */
   body: unknown
   eyebrow?: string
+  /** Passed to `HelpNav`: which legal documents have text. */
+  legal: LegalPublication
   title: ReactNode
 }) {
   return (
@@ -82,9 +119,9 @@ export function PolicyPage({
           {title}
         </PageTitle>
 
-        <HelpNav current={typeof title === 'string' ? title : undefined} />
+        <HelpNav current={typeof title === 'string' ? title : undefined} legal={legal} />
 
-        {body ? (
+        {hasPublishedText(body) ? (
           <div className="mt-l">
             <Prose tone="body" value={body} />
           </div>

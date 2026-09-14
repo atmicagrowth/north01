@@ -16,6 +16,7 @@ import { CART_COPY } from '@/lib/cart/rules'
 import { getCart, hasSignedOutBag } from '@/lib/cart/cart'
 import { isStripeConfigured } from '@/lib/checkout/stripe'
 import { getCatalogSettings } from '@/lib/catalog/catalog'
+import { getLegalPublication } from '@/lib/help/read'
 import { shippingProvider } from '@/lib/shipping/provider'
 import { privateMetadata } from '@/lib/seo/metadata'
 
@@ -39,6 +40,15 @@ export const metadata: Metadata = privateMetadata('Checkout')
  *
  * **`noindex`, from Phase 24.** §24.1c excludes checkout by name; it is application state, not a
  * document.
+ *
+ * ### The terms are shown where they are accepted
+ *
+ * The terms of sale say *"Placing an order means you accept them"*, so the page that leads to payment
+ * has to put them in front of the customer rather than leave them in the footer. `CheckoutForm` says
+ * so beside its payment button and links the Terms of sale and the Privacy notice — each only while
+ * its `site-settings` field has text, from `getLegalPublication`, because a link to an unpublished
+ * legal document is a link to a 404. With neither published the sentence is not rendered at all: an
+ * acceptance line pointing at nothing would claim an agreement the customer could not read.
  */
 export default async function CheckoutPage() {
   const customer = await getCustomer()
@@ -53,7 +63,7 @@ export default async function CheckoutPage() {
     redirect('/cart')
   }
 
-  const settings = await getCatalogSettings()
+  const [settings, legal] = await Promise.all([getCatalogSettings(), getLegalPublication()])
 
   /*
    * Quoted without a destination — nobody has typed one. The prices are right and the eligibility is
@@ -130,6 +140,7 @@ export default async function CheckoutPage() {
                 <CheckoutForm
                   currency={cart.currency}
                   defaultEmail={customer?.email ?? ''}
+                  legal={legal}
                   locale={cart.locale}
                   rates={quote.rates.filter((rate) => rate.eligible)}
                 />

@@ -151,7 +151,7 @@ export const Users: CollectionConfig = {
       admin: {
         position: 'sidebar',
         description:
-          'Editors manage catalogue and content. Admins additionally manage staff, orders, promotions and deletions.',
+          "Editors manage the catalogue and content, update orders' fulfilment and tracking, and create and edit discount codes. Admins can also manage staff, change a customer's sign-in email or password, correct order addresses, edit the Commerce settings, and delete records — the only deletions editors can make are a customer's saved addresses and wishlist items.",
       },
     },
   ],

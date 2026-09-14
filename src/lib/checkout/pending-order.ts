@@ -150,9 +150,16 @@ export async function upsertPendingOrder(
        * the Stripe call above — the old session completing, say — makes this match nothing, and the
        * customer is asked to try again rather than having a paid order re-priced.
        */
+      /*
+       * `updated_at` is set here as in every raw claim on an order (the retention sweep's clock — see
+       * `lib/cart/sweep.ts`). The Local API update below stamps it again in the same transaction, and
+       * that later stamp is the `preparedAt` returned.
+       */
       const claim = await tx.execute(
         sql`UPDATE "orders"
-            SET "payment_status" = 'checkout_started', "stripe_checkout_session_id" = NULL
+            SET "payment_status" = 'checkout_started',
+                "stripe_checkout_session_id" = NULL,
+                "updated_at" = now()
             WHERE "id" = ${seen.id}
               AND "payment_status" = ${seen.paymentStatus}
               AND "stripe_checkout_session_id" IS NOT DISTINCT FROM ${seenSessionId}`,
@@ -279,6 +286,23 @@ export async function upsertPendingOrder(
  * the same bag rewrote the order in between, this one loses, and the caller must expire the session
  * it created. Two attempts can therefore never both leave a payable session behind.
  *
+ * ### `updated_at` is bumped by every raw write to an order, and what that can refuse
+ *
+ * The retention review made every raw `UPDATE "orders"` set `"updated_at" = now()`, this one
+ * included, because `updated_at` is the unpaid-order sweep's clock (`lib/cart/sweep.ts`). That makes
+ * this guard stricter only where it should be. Between preflight and this claim the order is
+ * `checkout_started` with **no** session, so:
+ *
+ * - every `fulfil.ts` transition and payment claim requires the event's session id and matches no
+ *   row — a zero-row `UPDATE` changes nothing, `updated_at` included;
+ * - a refund claim requires `paid` or `refunded` and matches no row;
+ * - a later attempt's preflight rewrites the order — superseded, which is what this guard is for;
+ * - **the one write that is not a supersession** is a `paymentMismatch` hold, set when a signed
+ *   payment for some *other* session of this order lands in those few seconds. This claim then
+ *   refuses, the new session is expired unpaid, and the customer is asked to try again (the retry's
+ *   preflight succeeds). Refusing to open a fresh payable session on an order whose money is in
+ *   doubt is the safe direction, and a legitimate attempt costs one retry at most.
+ *
  * Returns whether the session now belongs to the order.
  */
 export async function claimOrderForSession(
@@ -288,7 +312,8 @@ export async function claimOrderForSession(
   const claim = await payload.db.drizzle.execute(
     sql`UPDATE "orders"
         SET "payment_status" = 'pending_payment',
-            "stripe_checkout_session_id" = ${input.sessionId}
+            "stripe_checkout_session_id" = ${input.sessionId},
+            "updated_at" = now()
         WHERE "id" = ${input.orderId}
           AND "payment_status" = 'checkout_started'
           AND "stripe_checkout_session_id" IS NULL

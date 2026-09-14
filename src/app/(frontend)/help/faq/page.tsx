@@ -12,7 +12,7 @@ import { PageTitle } from '@/components/layout/page-title'
 import { Prose } from '@/components/editorial/prose'
 import { Section, SectionHeading } from '@/components/layout/section'
 import { Link } from '@/components/ui/link'
-import { getFaqGroups } from '@/lib/help/read'
+import { getFaqGroups, getLegalPublication } from '@/lib/help/read'
 import { pageMetadata } from '@/lib/seo/site'
 
 /**
@@ -49,7 +49,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function FaqPage() {
-  const groups = await getFaqGroups()
+  const [groups, legal] = await Promise.all([getFaqGroups(), getLegalPublication()])
 
   return (
     <Section spacing="tight">
@@ -58,7 +58,7 @@ export default async function FaqPage() {
           Frequently asked questions
         </PageTitle>
 
-        <HelpNav current="FAQ" />
+        <HelpNav current="FAQ" legal={legal} />
 
         {groups.length === 0 ? (
           <div className="mt-l flex flex-col items-start gap-s">
