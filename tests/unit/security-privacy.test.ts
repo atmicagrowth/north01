@@ -4,6 +4,7 @@ import { ADDRESS_MAX_LENGTH, addressFits } from '@/lib/address-limits'
 import {
   RESET_COOLDOWN_MS,
   RESET_TOKEN_LIFETIME_MS,
+  reissuableBefore,
   resetIssuedRecently,
 } from '@/lib/auth/reset-cooldown'
 import { maskEmail } from '@/lib/observability/redact'
@@ -34,6 +35,46 @@ describe('resetIssuedRecently — one reset email per address per cooldown', () 
 
   it('allows one when the previous token has already expired', () => {
     expect(resetIssuedRecently(new Date(now - 1000).toISOString(), now)).toBe(false)
+  })
+})
+
+/**
+ * Sweep 1, finding S05 — the cooldown is claimed by one SQL `UPDATE` comparing the stored expiry with
+ * `reissuableBefore(now)`. That comparison must be the rule above and not a neighbour of it, or the
+ * database would enforce a different cooldown from the one this file pins.
+ */
+describe('reissuableBefore — the cooldown as the bound the claim statement compares against', () => {
+  const now = Date.parse('2026-09-14T12:00:00.000Z')
+
+  it('is the lifetime minus the cooldown, from now', () => {
+    expect(reissuableBefore(now).getTime()).toBe(now + RESET_TOKEN_LIFETIME_MS - RESET_COOLDOWN_MS)
+  })
+
+  it('claims exactly when resetIssuedRecently says no — at every offset either side of the edge', () => {
+    const issuedAgo = [
+      -120_000,
+      0,
+      1,
+      60_000,
+      RESET_COOLDOWN_MS - 1,
+      RESET_COOLDOWN_MS,
+      RESET_COOLDOWN_MS + 1,
+      RESET_TOKEN_LIFETIME_MS + 1,
+    ]
+
+    for (const offset of issuedAgo) {
+      const expiration = new Date(now - offset + RESET_TOKEN_LIFETIME_MS)
+      const claimable = expiration.getTime() <= reissuableBefore(now).getTime()
+
+      expect(claimable).toBe(!resetIssuedRecently(expiration.toISOString(), now))
+    }
+  })
+
+  it('puts a freshly issued link past the bound, so a simultaneous second claim cannot match', () => {
+    const issuedByWinner = now + RESET_TOKEN_LIFETIME_MS
+    const loserNow = now + 50
+
+    expect(issuedByWinner > reissuableBefore(loserNow).getTime()).toBe(true)
   })
 })
 

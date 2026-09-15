@@ -22,7 +22,10 @@ import type {
  * 2. **It runs inside the caller's transaction.** `req` carries the transaction ID that the Postgres
  *    adapter uses to route the query. Passing it means a variant save and the product update it
  *    causes commit or roll back together; omitting it would open a second connection that cannot see
- *    the uncommitted variant, and would happily cache the state from *before* the save.
+ *    the uncommitted variant, and would happily cache the state from *before* the save. The one
+ *    caller that omits it on purpose is `refreshDerivedStock` in `lib/checkout/fulfil.ts` (sweep 1,
+ *    S01), which runs after the payment transaction has **committed** its raw-SQL stock decrement, so
+ *    there is nothing uncommitted left to miss.
  *
  * 3. **It cannot recurse, and it must not try to prove that with a `context` flag.** Updating a
  *    product fires the *product's* hooks, and products have no `afterChange` — so there is no cycle.
@@ -152,9 +155,16 @@ export const recalculateProductDerived = async ({
       req,
     })
   } catch (error) {
+    /*
+     * The second sentence is true only inside a transaction. Called without one (after a payment has
+     * committed — see point 2) nothing was rolled back, and saying otherwise would send whoever reads
+     * the log looking for a payment that did in fact happen.
+     */
     payload.logger.error({
       err: error,
-      msg: `Could not refresh derived price/stock for product ${String(productId)}. Payload has already rolled the enclosing transaction back, so the write that triggered this did not happen either.`,
+      msg: req?.transactionID
+        ? `Could not refresh derived price/stock for product ${String(productId)}. Payload has already rolled the enclosing transaction back, so the write that triggered this did not happen either.`
+        : `Could not refresh derived price/stock for product ${String(productId)}. Nothing was rolled back; the cached figure stays as it was until the product or one of its variants is next saved.`,
     })
 
     throw error

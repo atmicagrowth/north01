@@ -149,9 +149,15 @@ export const PREFLIGHT_COPY: Record<PreflightFailure, string> = {
   /*
    * Phase 36 (R1-01): the previous Stripe checkout for this bag was completed — paid, or a bank
    * payment still clearing. Rewriting the order now would re-price something already bought.
+   *
+   * Sweep 1 (S07): this said "Check your email before trying again". The only order email a payment
+   * produces is the confirmation, queued when the webhook marks the order paid; a payment still
+   * clearing has none yet, and one that fails or expires sends nothing at all (`EMAIL_KINDS`). So it
+   * says what will happen instead: the confirmation once paid, and the bag free to check out again
+   * once a failed payment has been reported (`decidePriorSession` proceeds on `payment_failed`).
    */
   alreadyPaid:
-    'This bag has already been paid for, or its payment is still being processed. Check your email before trying again.',
+    'This bag has already been paid for, or its payment is still being processed — a bank payment can take a few days. We email your order confirmation once a payment is confirmed. If it does not go through, no email is sent, and you can check out this bag again.',
   /* Phase 36 (R1-03): anything unexpected, instead of an error page on the last click. */
   checkoutFailed:
     'Something went wrong before you were sent to payment, and nothing was charged. Please try again in a moment.',

@@ -134,6 +134,13 @@ export async function findPromotionByCode(
  * trying to finish paying with. That order belongs to their *active* cart — one order per cart,
  * `checkout/preflight.ts` — so pending orders whose cart is still active are not counted. A pending
  * order on any other cart is a different checkout that can still be paid, and is.
+ *
+ * **"Active" means what `resolveCart` means by it: `status: active` and not yet expired** — sweep 1,
+ * S20. A bag keeps `status: active` after its `expiresAt` until the daily sweep deletes it, but no
+ * request can reach it any more (`lib/cart/cart.ts` refuses an expired bag and makes a new one), so it
+ * is not the bag being paid for now. Without the expiry clause, a pending order on such a bag — a
+ * delayed bank payment still clearing — was excluded as if it were the current attempt, and the same
+ * code validated at zero uses on the customer's next bag. Now it counts.
  */
 export async function countCustomerUses(
   payload: Payload,
@@ -151,7 +158,11 @@ export async function countCustomerUses(
     overrideAccess: true,
     pagination: false,
     where: {
-      and: [{ customer: { equals: customerId } }, { status: { equals: 'active' } }],
+      and: [
+        { customer: { equals: customerId } },
+        { status: { equals: 'active' } },
+        { expiresAt: { greater_than: new Date().toISOString() } },
+      ],
     },
   })
 

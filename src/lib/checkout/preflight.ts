@@ -81,6 +81,12 @@ export type PreflightResult =
       customerId: null | number
       ok: true
       orderId: number
+      /**
+       * The customer-facing order number (`N1-YYMM-XXXXXX`), the reference the confirmation email, the
+       * success page and the account show. `session.ts` prints it on Stripe's page (sweep 1, S15);
+       * `orderId`, the database id, stays internal.
+       */
+      orderNumber: string
       /** The order's `updated_at` after this attempt wrote it — `claimOrderForSession` needs it. */
       preparedAt: string
       rate: ShippingRate
@@ -264,6 +270,7 @@ export async function runPreflight(
     customerId,
     ok: true,
     orderId: upserted.orderId,
+    orderNumber: upserted.orderNumber,
     preparedAt: upserted.preparedAt,
     rate: validated.rate,
     tax,

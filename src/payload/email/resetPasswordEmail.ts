@@ -48,7 +48,8 @@ function siteOrigin(req: PayloadRequest | undefined): string {
  * destination and the query parameter, which the reset page reads.
  *
  * The token is in the URL because that is what Payload issues and what `resetPassword` verifies.
- * It is single-use — the operation clears `resetPasswordToken` on success — and it expires in an
+ * It is single-use — `resetPassword` sets `resetPasswordExpiration` to the moment of use, and the
+ * reset lock in `Customers.ts` makes a concurrent second use re-read that spent expiry — and it expires in an
  * hour (`Customers.auth.forgotPassword.expiration`), which is what makes §7.1e's *expired reset
  * link* and *reused reset link* two defined behaviours rather than one accident.
  */

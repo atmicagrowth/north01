@@ -2,11 +2,13 @@ import 'server-only'
 
 import { randomBytes } from 'node:crypto'
 
+import { sql } from '@payloadcms/db-postgres'
 import { cookies } from 'next/headers'
 import { cache } from 'react'
 import type { Payload } from 'payload'
 
 import { getCatalogSettings, type CatalogSettings } from '@/lib/catalog/catalog'
+import { cartCheckoutLock } from '@/lib/checkout/pending-order'
 import { resolvePromotion, type ResolvedPromotion } from '@/lib/promotions/promotions'
 import { shippingProvider } from '@/lib/shipping/provider'
 import type { ShippingQuote } from '@/lib/shipping/rules'
@@ -915,33 +917,19 @@ async function ownedLine(
 /**
  * **Reconcile the guest bag with the customer's bag, once, at sign-in.**
  *
- * Called from `login` and `register` after the session exists. Every decision is `mergeCartLines`';
- * this walks the result and writes it.
- *
- * ### Three shapes, and only one of them is a merge
- *
- * - **No guest bag** — nothing to do. (§14.1b's *"guest cart empty"*.)
- * - **No customer bag** — the guest cart is *claimed*: one `customer` write, no line copying, no ids
- *   changing. (*"Customer has no cart"*.) Copying would be the same rows with new ids and one more
- *   chance to lose one.
- * - **Both** — the real merge, then the guest cart is deleted so it cannot be presented again.
- *
- * ### The guest's discount code comes along when the customer's bag has none
- *
- * Phase 36 (R2-03). A code applied as a guest used to vanish with the deleted guest cart. It is now
- * copied to the customer's bag when that bag has no code of its own; if it has one, the customer's
- * code wins. Only the reference moves — `getCart` re-decides the promotion on the next read, so a
- * code this customer may not use (a first-order code on an account with orders, say) shows its
- * reason beside it like any other failing code. In the claim path the code is already on the row.
- *
- * The cookie is cleared either way at the end, because after this the bag is found by customer id
- * and a stale guest token in the jar is a second identity for the same shopper.
+ * Called from `login` and `register` after the session exists. This reads the cookie and writes it
+ * back; every database decision is {@link mergeGuestBag}'s, and every line decision is
+ * `mergeCartLines`'.
  *
  * ### It never throws into the sign-in
  *
  * A failed merge must not fail a login. The worst outcome of the `catch` is a shopper who signs in
  * and finds their guest additions missing from the bag — recoverable, visible, and enormously better
- * than being told their password is wrong because a cart row would not write.
+ * than being told their password is wrong because a cart row would not write. Since sweep 1 (S03) the
+ * merge is one transaction, so a failure part-way leaves both bags exactly as they were. The cookie is
+ * left as it was too, so a later sign-in on this device tries again from the same state — but only
+ * while the cookie still names the guest bag: signing out clears it (`forgetCartCookie`), and after
+ * that nothing can reach the guest lines again.
  */
 export async function mergeGuestCart(customerId: number): Promise<void> {
   const payload = await getPayloadClient()
@@ -954,69 +942,307 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
       return
     }
 
-    const now = new Date().toISOString()
+    const { cookie, outcome } = await mergeGuestBag(payload, customerId, token)
 
-    const { docs: guestCarts } = await payload.find({
-      collection: 'carts',
-      depth: 0,
-      limit: 1,
-      overrideAccess: true,
-      where: {
-        and: [
-          { token: { equals: token } },
-          { status: { equals: 'active' } },
-          { expiresAt: { greater_than: now } },
-        ],
-      },
-    })
-
-    const guestCart = guestCarts[0]
-
-    if (!guestCart || relatedId(guestCart.customer) !== null) {
-      /*
-       * A bag this customer already owns stays pointed at — see the note at the end of this function.
-       * Anyone else's bag, or none, is forgotten.
-       */
-      if (!guestCart || relatedId(guestCart.customer) !== customerId) {
-        await clearCookie()
-      }
-
-      return
-    }
-
-    const { docs: customerCarts } = await payload.find({
-      collection: 'carts',
-      depth: 0,
-      limit: 1,
-      overrideAccess: true,
-      sort: '-updatedAt',
-      where: {
-        and: [
-          { customer: { equals: customerId } },
-          { status: { equals: 'active' } },
-          { expiresAt: { greater_than: now } },
-        ],
-      },
-    })
-
-    const customerCart = customerCarts[0]
-
-    if (!customerCart) {
-      await payload.update({
-        collection: 'carts',
-        data: { customer: customerId },
-        id: guestCart.id,
-        overrideAccess: true,
+    if (outcome === 'deferred') {
+      payload.logger.info({
+        customerId,
+        msg: 'Cart merge deferred at sign-in: the guest bag has a checkout in flight, so it was left as it is.',
       })
-
-      /* The cookie already names this bag, which is now theirs; it stays — see the end of this function. */
-      return
     }
 
-    const [guestLines, customerLines] = await Promise.all([
-      readLines(payload, guestCart.id),
-      readLines(payload, customerCart.id),
-    ])
+    if (cookie === 'clear') {
+      await clearCookie()
+    } else if (cookie !== 'keep') {
+      await issueCookie(cookie.issue)
+    }
+  } catch (error) {
+    payload.logger.error({
+      err: error,
+      msg:
+        'Cart merge failed at sign-in. Nothing was merged: the customer keeps their own bag, and the ' +
+        'guest lines stay in the guest bag, which a later sign-in merges only if the bag cookie still ' +
+        'names it.',
+    })
+  }
+}
+
+/**
+ * What a merge did, and what the sign-in must do with the bag cookie because of it.
+ *
+ * - `none` — no guest bag the token can reach, or one that already belongs to somebody.
+ * - `claimed` — the customer had no bag, so the guest bag became theirs.
+ * - `merged` — the guest's lines are in the customer's bag and the guest bag is gone.
+ * - `deferred` — the guest bag has a checkout in flight and was left untouched (see below).
+ * - `gone` — the guest bag stopped being an active bag between the read and the lock: paid for in
+ *   another tab, or merged by a sign-in racing this one. Nothing was written.
+ */
+export type GuestBagMerge = {
+  cookie: 'clear' | 'keep' | { issue: string }
+  outcome: 'claimed' | 'deferred' | 'gone' | 'merged' | 'none'
+}
+
+/**
+ * **A `checkout_started` order counts as in flight for this long after it was last written.**
+ *
+ * Preflight writes the order at `checkout_started`, and the Stripe session made from it is recorded
+ * (`pending_payment`) seconds later. The session lives 31 minutes (`lib/checkout/session.ts`), so an
+ * order still at `checkout_started` an hour after its last write is an attempt that never reached
+ * Stripe — its session creation failed or its process died — and it can never take a payment: the
+ * payment claim in `fulfil.ts` requires the order's recorded session. Twice the lifetime, so a slow
+ * session creation is never mistaken for an abandoned one; bounded, so an abandoned one cannot hold a
+ * guest bag out of every merge until the retention sweep removes the order thirty days later.
+ */
+export const PREPARED_CHECKOUT_WINDOW_MS = 60 * 60 * 1000
+
+/**
+ * **Whether a guest bag has a checkout in flight** — sweep 1, S03. Pure, and exported so
+ * `verify:cart` can hold the rule to its boundaries as well as run it against the database.
+ *
+ * In flight means an order on the bag that may still take money:
+ *
+ * - **`pending_payment`**, at any age — a Checkout Session is open, or a delayed bank payment is
+ *   clearing (days, for some methods). Its end is always a webhook, and the order leaves this status.
+ * - **`checkout_started`, written within {@link PREPARED_CHECKOUT_WINDOW_MS}** — preflight has just
+ *   prepared it, and the session made from it is about to be recorded.
+ *
+ * `draft`, `payment_failed`, `cancelled` and an old `checkout_started` cannot be paid, and `paid` /
+ * `refunded` mean the bag is already `converted` — which the merge never reads as a guest bag anyway.
+ */
+export function guestBagHasLiveCheckout(
+  orders: readonly { paymentStatus: string; updatedAt: Date | string }[],
+  now: Date,
+): boolean {
+  return orders.some(
+    (order) =>
+      order.paymentStatus === 'pending_payment' ||
+      (order.paymentStatus === 'checkout_started' &&
+        now.getTime() - new Date(order.updatedAt).getTime() < PREPARED_CHECKOUT_WINDOW_MS),
+  )
+}
+
+type TxHandle = { execute: (query: unknown) => Promise<{ rows?: unknown[] }> }
+
+/**
+ * **The merge itself, against the database** — everything `mergeGuestCart` does except touch the
+ * cookie, so `verify:cart` can run it. Takes the token the cookie held, and says what the cookie
+ * should become.
+ *
+ * ### Four shapes, and only one of them is a merge
+ *
+ * - **No guest bag** — nothing to do. (§14.1b's *"guest cart empty"*.)
+ * - **No customer bag** — the guest cart is *claimed*: one `customer` write, no line copying, no ids
+ *   changing. (*"Customer has no cart"*.) Copying would be the same rows with new ids and one more
+ *   chance to lose one. Any order on the bag keeps pointing at it, so a checkout in flight is safe.
+ * - **A guest bag with a checkout in flight** — left exactly as it is. See below.
+ * - **Both** — the real merge, then the guest cart is deleted so it cannot be presented again.
+ *
+ * ### A checkout in flight keeps its bag — sweep 1, S03
+ *
+ * An order reaches its bag only through `orders.cart`, and three things depend on that link:
+ * preflight finds the order to reuse — and the previous Stripe session to expire — by the bag it is
+ * checking out (`checkout/pending-order.ts`); `fulfil.ts` converts the order's bag when it is paid;
+ * and a guest's confirmation page matches the order to the bag's token (`checkout/confirmation.ts`).
+ *
+ * The merge used to delete the guest bag unconditionally, which cleared that link
+ * (`ON DELETE SET NULL`) on an order whose customer was on Stripe's payment page in another tab. They
+ * could then pay it and be told *"We could not find that order"*, with the lines they had just bought
+ * still in their bag; or check out the account bag, whose preflight never found the orphaned order,
+ * never expired its session, and left **two payable sessions for the same goods** — exactly what
+ * R1-01's retire-the-previous-session step exists to prevent.
+ *
+ * So when {@link guestBagHasLiveCheckout} holds, nothing is merged, nothing is deleted, and the
+ * cookie keeps naming the guest bag: the confirmation page still opens and the checkout still resolves
+ * against its own bag. The shopper sees their account bag meanwhile, without the lines they are in the
+ * middle of paying for — which is the honest picture, and far better than showing goods a delayed
+ * payment may already be buying.
+ *
+ * **Nothing retries a deferred merge.** While the shopper stays signed in, `resolveCart` finds their
+ * own bag by customer id and never looks at the cookie — and the first add to the bag while signed in
+ * (`addToCart` re-issues it with `issueCookie`) replaces the cookie with the account bag's
+ * token. From then on the guest bag is forgotten exactly as if they had signed out, and a guest order
+ * still paying in another tab cannot show its confirmation page on this device (the payment itself,
+ * its confirmation email and the order are unaffected). A later sign-in merges the guest bag only if
+ * the cookie still names it and its checkout has ended by then — the case after a session that simply
+ * expired. Signing out clears the cookie (`logout` → `forgetCartCookie`), and after that no sign-in
+ * can find the guest bag: if its checkout was paid, the bag was converted and nothing is lost; if not,
+ * its lines stay in an ownerless bag until the retention sweep deletes it at expiry. (One path does
+ * pick it up: if the account bag is itself converted by a checkout while the cookie still names the
+ * guest bag, the next bag write finds no account bag, falls back to the cookie and claims the guest
+ * bag.)
+ *
+ * (Moving the order to the customer's bag instead was considered and refused: a bag can hold only
+ * one reusable order before preflight's newest-first pick stops finding the others, and a delayed
+ * payment still clearing would make preflight refuse the whole account bag, for days, as already
+ * paid.)
+ *
+ * ### One transaction, locked the way a checkout and a payment lock
+ *
+ * The decision and every write are made in one transaction that takes three locks, in this order:
+ *
+ * 1. **The bag's checkout lock** (`cartCheckoutLock`, the advisory lock `upsertPendingOrder` holds
+ *    from its order lookup to its commit). An order being prepared on the guest bag is therefore
+ *    either committed before the merge looks, or not started until the merge has committed — and a
+ *    preparation that starts after a merge deleted the bag fails on the missing bag, before any
+ *    session exists.
+ * 2. **The orders on the guest bag**, then 3. **the guest bag** (`FOR UPDATE`) — the order a payment
+ *    takes them in (`fulfil.ts` claims the order, then converts the bag), so the two queue instead of
+ *    deadlocking. Nothing that holds an order or a bag lock waits for the checkout lock afterwards
+ *    (preflight takes it first, the payment and the sweep never), so taking it first cannot deadlock.
+ *
+ * **The orders are read again once the bag's lock is granted, and the decision is made on that read**
+ * (sweep 1's recheck of S03). Step 2 locks only the orders that existed when it ran: an order inserted
+ * by a writer that does not take the checkout lock, and committed while the merge waited for the bag,
+ * was invisible to it. An insert referencing the bag waits for the bag's lock (its foreign-key check
+ * takes a key-share lock on the bag row), so once that lock is held every order on the bag is
+ * committed and in the second read. With all three held, no checkout can start on the bag, no order on
+ * it can be paid or have its session recorded, and nothing can convert it; so the bag that is deleted
+ * is the bag that was checked. A bag found paid for or merged by the time the lock is granted is left
+ * alone (`gone`).
+ *
+ * ### The guest's discount code comes along when the customer's bag has none
+ *
+ * Phase 36 (R2-03). A code applied as a guest used to vanish with the deleted guest cart. It is now
+ * copied to the customer's bag when that bag has no code of its own; if it has one, the customer's
+ * code wins. Only the reference moves — `getCart` re-decides the promotion on the next read, so a
+ * code this customer may not use (a first-order code on an account with orders, say) shows its
+ * reason beside it like any other failing code. In the claim path the code is already on the row.
+ *
+ * ### The cookie
+ *
+ * **It names the customer's bag after a merge, instead of being cleared** — plan §31.1f's "session
+ * expired", Phase 31. It was cleared at every sign-in, so when a session later ran out the device had
+ * nothing left to recognise the bag by, and checkout and the bag both said *"Your bag is empty"* to
+ * someone whose bag was intact. Keeping it lets `hasSignedOutBag` answer *sign in*.
+ *
+ * It exposes nothing: `resolveCart` refuses an owned bag to an anonymous request whatever the cookie
+ * says (Phase 14's second sweep), so the cookie can only ever lead to a sign-in prompt. An explicit
+ * sign-out still forgets it (`logout` → `forgetCartCookie`) — leaving a shared computer is a decision,
+ * and an expired session is not. After a claim, a deferral or `gone` it is left as it is; with no
+ * reachable guest bag it is cleared, unless the bag it names is already this customer's.
+ */
+export async function mergeGuestBag(
+  payload: Payload,
+  customerId: number,
+  token: string,
+): Promise<GuestBagMerge> {
+  const now = new Date()
+
+  const { docs: guestCarts } = await payload.find({
+    collection: 'carts',
+    depth: 0,
+    limit: 1,
+    overrideAccess: true,
+    where: {
+      and: [
+        { token: { equals: token } },
+        { status: { equals: 'active' } },
+        { expiresAt: { greater_than: now.toISOString() } },
+      ],
+    },
+  })
+
+  const guestCart = guestCarts[0]
+
+  if (!guestCart || relatedId(guestCart.customer) !== null) {
+    /* A bag this customer already owns stays pointed at; anyone else's bag, or none, is forgotten. */
+    return {
+      cookie: guestCart && relatedId(guestCart.customer) === customerId ? 'keep' : 'clear',
+      outcome: 'none',
+    }
+  }
+
+  const { docs: customerCarts } = await payload.find({
+    collection: 'carts',
+    depth: 0,
+    limit: 1,
+    overrideAccess: true,
+    sort: '-updatedAt',
+    where: {
+      and: [
+        { customer: { equals: customerId } },
+        { status: { equals: 'active' } },
+        { expiresAt: { greater_than: now.toISOString() } },
+      ],
+    },
+  })
+
+  const customerCart = customerCarts[0]
+
+  if (!customerCart) {
+    await payload.update({
+      collection: 'carts',
+      data: { customer: customerId },
+      id: guestCart.id,
+      overrideAccess: true,
+    })
+
+    /* The cookie already names this bag, which is now theirs. */
+    return { cookie: 'keep', outcome: 'claimed' }
+  }
+
+  const transactionID = await payload.db.beginTransaction()
+
+  if (transactionID === null) {
+    throw new Error('Could not begin a transaction to merge the guest bag.')
+  }
+
+  const req = { transactionID } as Parameters<typeof payload.find>[0]['req']
+
+  try {
+    const tx = (payload.db as unknown as { sessions?: Record<string, { db: TxHandle }> })
+      .sessions?.[String(transactionID)]?.db
+
+    if (!tx) {
+      throw new Error('The cart merge’s transaction session was not available.')
+    }
+
+    /* 1. No order is being prepared on the guest bag while this transaction decides. */
+    await tx.execute(cartCheckoutLock(guestCart.id))
+
+    /* 2. The orders that exist, so none of them can be paid or re-prepared while this decides. */
+    await tx.execute(
+      sql`SELECT "id" FROM "orders"
+          WHERE "cart_id" = ${guestCart.id}
+          ORDER BY "id"
+          FOR UPDATE`,
+    )
+
+    /* 3. The bag. */
+    const lockedBag = await tx.execute(
+      sql`SELECT "status" FROM "carts" WHERE "id" = ${guestCart.id} FOR UPDATE`,
+    )
+
+    const bagStatus = (lockedBag.rows?.[0] as { status?: unknown } | undefined)?.status
+
+    if (bagStatus !== 'active') {
+      await payload.db.commitTransaction(transactionID)
+
+      return { cookie: 'keep', outcome: 'gone' }
+    }
+
+    /*
+     * The decision's read, taken with every lock held — see "locked the way a checkout and a payment
+     * lock" above. Not step 2's rows: an order committed while this waited for the bag is only here.
+     */
+    const current = await tx.execute(
+      sql`SELECT "payment_status", "updated_at" FROM "orders" WHERE "cart_id" = ${guestCart.id}`,
+    )
+
+    const orders = (
+      (current.rows ?? []) as { payment_status: string; updated_at: Date | string }[]
+    ).map((row) => ({ paymentStatus: String(row.payment_status), updatedAt: row.updated_at }))
+
+    /* The clock is read now too: the locks may have been waited for. */
+    if (guestBagHasLiveCheckout(orders, new Date())) {
+      await payload.db.commitTransaction(transactionID)
+
+      return { cookie: 'keep', outcome: 'deferred' }
+    }
+
+    /* One after the other: both run on the transaction's single connection. */
+    const guestLines = await readLines(payload, guestCart.id, req)
+    const customerLines = await readLines(payload, customerCart.id, req)
 
     const availability = await readAvailability(payload, [
       ...guestLines.map((line) => line.variantId),
@@ -1043,6 +1269,7 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
             data: { quantity: line.quantity },
             id: current.id,
             overrideAccess: true,
+            req,
           })
         }
       } else {
@@ -1055,6 +1282,7 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
             variant: line.variantId,
           },
           overrideAccess: true,
+          req,
         })
       }
     }
@@ -1064,7 +1292,12 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
       const current = existing.get(gone.variantId)
 
       if (current) {
-        await payload.delete({ collection: 'cart-items', id: current.id, overrideAccess: true })
+        await payload.delete({
+          collection: 'cart-items',
+          id: current.id,
+          overrideAccess: true,
+          req,
+        })
       }
     }
 
@@ -1077,44 +1310,40 @@ export async function mergeGuestCart(customerId: number): Promise<void> {
         data: { promotion: guestPromotion },
         id: customerCart.id,
         overrideAccess: true,
+        req,
       })
     }
 
-    await payload.delete({ collection: 'carts', id: guestCart.id, overrideAccess: true })
+    await payload.delete({ collection: 'carts', id: guestCart.id, overrideAccess: true, req })
 
-    /*
-     * **The cookie now names the customer's bag, instead of being cleared** — plan §31.1f's "session
-     * expired", Phase 31. It was cleared at every sign-in, so when a session later ran out the device
-     * had nothing left to recognise the bag by, and checkout and the bag both said *"Your bag is
-     * empty"* to someone whose bag was intact. Keeping it lets `hasSignedOutBag` answer *sign in*.
-     *
-     * It exposes nothing: `resolveCart` refuses an owned bag to an anonymous request whatever the
-     * cookie says (Phase 14's second sweep), so the cookie can only ever lead to a sign-in prompt.
-     * An explicit sign-out still forgets it (`logout` → `forgetCartCookie`) — leaving a shared
-     * computer is a decision, and an expired session is not.
-     */
-    if (customerCart.token) {
-      await issueCookie(customerCart.token)
-    } else {
-      await clearCookie()
-    }
+    await payload.db.commitTransaction(transactionID)
   } catch (error) {
-    payload.logger.error({
-      err: error,
-      msg: 'Cart merge failed at sign-in. The customer keeps their own bag; guest lines may be lost.',
-    })
+    /* Payload may already have ended the transaction on a failed Local API call. */
+    await payload.db.rollbackTransaction(transactionID).catch(() => undefined)
+
+    throw error
+  }
+
+  return {
+    cookie: customerCart.token ? { issue: customerCart.token } : 'clear',
+    outcome: 'merged',
   }
 }
 
 type StoredLine = CartLineInput & { id: number }
 
-async function readLines(payload: Payload, cartId: number): Promise<StoredLine[]> {
+async function readLines(
+  payload: Payload,
+  cartId: number,
+  req?: Parameters<typeof payload.find>[0]['req'],
+): Promise<StoredLine[]> {
   const { docs } = await payload.find({
     collection: 'cart-items',
     depth: 0,
     limit: LINE_LIMIT,
     overrideAccess: true,
     pagination: false,
+    req,
     sort: 'createdAt',
     where: { cart: { equals: cartId } },
   })

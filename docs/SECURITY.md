@@ -77,9 +77,26 @@ intended** — the owner decided on 2026-09-11 that editors may do both (DEV-85)
 TODO.md §10 raised (audit R1-17).
 
 Customer sign-in, forgot-password and reset go through Server Actions (Turnstile, the password policy,
-the reset cooldown). Payload's own REST routes for those three refuse anything that is not the Local
-API (`Customers.ts` `beforeOperation`), and a review or an account can only be created through the
-action's guard (`verifiedPublicWrite` and the review rule). GraphQL is not exposed (DEV-04).
+the reset cooldown). Payload's own REST routes for those three, and `refresh-token`, refuse anything
+that is not the Local API (`Customers.ts` `beforeOperation`); of the auth routes a shopper can use,
+only `logout` and `me` stay open, so a customer session ends seven days after sign-in however often
+its token is used. (`unlock` is also reachable over REST, by staff only.) A review or an account can
+only be created through the action's guard (`verifiedPublicWrite` and the review rule). GraphQL is not
+exposed (DEV-04).
+
+The reset cooldown is claimed by one conditional `UPDATE` (`lib/auth/reset-cooldown.ts`), so any
+number of simultaneous requests for one address send one link. Revocation holds under concurrency
+(sweep 1, S02): every update, delete, reset and sign-out of a customer row takes that row's lock before
+reading it, a password reset clears every session in the same commit as the new hash, and a sign-in
+whose read was overtaken by any of those is refused and rolled back rather than allowed to write the
+old state back. The lock is decided by the collection's own access rule, evaluated before the
+operation's: unless the call is the Local API with `overrideAccess: true`, only rows that rule permits
+are locked, and a caller's `where` is validated first — so an anonymous or customer REST request
+cannot lock rows it may not write. Each locked write also stamps a revision marker
+(`customer-revision:<id>` in `payload_kv`, `lib/auth/customer-revision.ts`); a sign-in snapshots it
+before reading the account and compares it on its own transaction's connection, so a sign-in never
+needs a second pool connection. `pnpm verify:access` holds each race open deliberately, sends the REST
+shapes against a held row, and signs in with one free pool connection.
 
 ## 3. Where it goes outside the shop
 

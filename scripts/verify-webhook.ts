@@ -19,6 +19,12 @@
  * payment status the route reads from the Checkout Session. Every fixture order has a session id, and
  * `sessionOf` builds the matching facts — sections M to S then vary one fact at a time.
  *
+ * **Sweep 1, S01** added section U: after a sale, the products' cached stock figure is recomputed by
+ * `refreshDerivedStock`, which the route runs after its response — driven here with the same outcome.
+ * Its recheck moved the route's whole after-response sequence into `afterStripeEvent`, which the route
+ * calls and section U runs with stub couriers and tax clients: the refresh must happen through it, and
+ * the tax record and the refresh must each finish while the other is still stuck.
+ *
  * The **D-10** guard applies: it creates and deletes orders, variants, carts, promotions and events.
  */
 
@@ -80,6 +86,67 @@ const cleanup = async () => {
       .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: true })
       .catch(() => undefined)
   }
+}
+
+/**
+ * **What an aborted run left behind**, removed before this run starts.
+ *
+ * `cleanup` runs in `finally`, which a process that was killed — or hung on a lock and was stopped —
+ * never reaches, so its orders, products, variants, carts, promotions and queued emails stayed in the
+ * database; published fixture products then show up in anything that reads the catalogue. Every
+ * fixture here is named with a prefix nothing else in the repository uses (`N1-WH-`, `webhook-fixture-`,
+ * `WH-`, `wh-cart-`, `evt_wh_`, and `WH`/`WHC`/`WHRACE`/`WHLIMIT` followed by the run's digits), so
+ * those names are what is cleared, in the same order `cleanup` deletes.
+ */
+async function clearAbortedRuns(): Promise<void> {
+  const idsOf = async (query: ReturnType<typeof sql>) =>
+    ((await payload.db.drizzle.execute(query)).rows as { id: number | string }[]).map((row) =>
+      Number(row.id),
+    )
+
+  const orders = await idsOf(sql`SELECT "id" FROM "orders" WHERE "order_number" LIKE 'N1-WH-%'`)
+
+  if (orders.length > 0) {
+    await payload.delete({
+      collection: 'email-messages',
+      overrideAccess: true,
+      where: { order: { in: orders } },
+    })
+  }
+
+  const byIds = async (
+    collection:
+      'carts' | 'orders' | 'product-variants' | 'products' | 'promotions' | 'stripe-events',
+    ids: number[],
+  ) => {
+    if (ids.length > 0) {
+      await payload.delete({
+        collection,
+        overrideAccess: true,
+        trash: true,
+        where: { id: { in: ids } },
+      })
+    }
+  }
+
+  await byIds(
+    'stripe-events',
+    await idsOf(sql`SELECT "id" FROM "stripe_events" WHERE "event_id" LIKE 'evt_wh_%'`),
+  )
+  await byIds('orders', orders)
+  await byIds('carts', await idsOf(sql`SELECT "id" FROM "carts" WHERE "token" LIKE 'wh-cart-%'`))
+  await byIds(
+    'promotions',
+    await idsOf(sql`SELECT "id" FROM "promotions" WHERE "code" ~ '^WH(C|RACE|LIMIT)?[0-9]{6,}$'`),
+  )
+  await byIds(
+    'product-variants',
+    await idsOf(sql`SELECT "id" FROM "product_variants" WHERE "sku" LIKE 'WH-%'`),
+  )
+  await byIds(
+    'products',
+    await idsOf(sql`SELECT "id" FROM "products" WHERE "slug" LIKE 'webhook-fixture-%'`),
+  )
 }
 
 const suffix = Date.now().toString().slice(-9)
@@ -255,6 +322,23 @@ const sameShortfall = (
     )
   })
 
+/** The `data` of the order confirmation the payment transaction queued, or `null` when there is none. */
+const confirmationDataOf = async (orderId: number): Promise<null | Record<string, unknown>> => {
+  const { docs } = await payload.find({
+    collection: 'email-messages',
+    depth: 0,
+    limit: 1,
+    overrideAccess: true,
+    where: { and: [{ order: { equals: orderId } }, { kind: { equals: 'orderConfirmation' } }] },
+  })
+
+  const data = docs[0]?.data
+
+  return typeof data === 'object' && data !== null && !Array.isArray(data)
+    ? (data as Record<string, unknown>)
+    : null
+}
+
 const timesUsedOf = async (promotionId: number) =>
   (
     await payload.findByID({
@@ -283,6 +367,8 @@ async function makePromotion(code: string, usageLimit: null | number = null) {
 
   return promotion
 }
+
+await clearAbortedRuns()
 
 try {
   const { applyStripeEvent } = await import('../src/lib/checkout/fulfil')
@@ -354,6 +440,12 @@ try {
       overrideAccess: true,
       where: { and: [{ order: { equals: order.id } }, { kind: { equals: 'orderConfirmation' } }] },
     })
+
+    check(
+      'A: …and its data says the order is not held — the receipt promises the order is being got ready',
+      (await confirmationDataOf(order.id))?.onHold === false,
+      JSON.stringify((await confirmationDataOf(order.id))?.onHold),
+    )
 
     check(
       'A: …and a redelivery queues no second one',
@@ -446,6 +538,18 @@ try {
     check(
       'C: …and the customer still gets the receipt for what they paid — queued in the transaction',
       outcome.outcome === 'outOfStock' && outcome.confirmationEmailId !== null,
+    )
+
+    /*
+     * Sweep 1, S06: `queueOrderConfirmation` reads the order through the payment transaction's `req`,
+     * so it must see the hold `finalisePaidOrder` wrote by raw SQL earlier in that same transaction —
+     * before anything is committed. Queued before the hold, or through another connection, this is
+     * `false`, and the held customer's receipt says their order is being got ready to send.
+     */
+    check(
+      'C: **S06 the queued confirmation says the order is held** — `data.onHold` read inside the payment transaction',
+      (await confirmationDataOf(order.id))?.onHold === true,
+      JSON.stringify(await confirmationDataOf(order.id)),
     )
 
     check(
@@ -565,6 +669,12 @@ try {
       'C: …the order is paid and held',
       (await statusOf(order.id)).payment === 'paid' &&
         (await statusOf(order.id)).hold === 'stockShortfall',
+    )
+
+    check(
+      'C: **S06 …and its confirmation, queued after the rollback to the savepoint, says it is held**',
+      (await confirmationDataOf(order.id))?.onHold === true,
+      JSON.stringify((await confirmationDataOf(order.id))?.onHold),
     )
   }
 
@@ -1451,6 +1561,377 @@ try {
         (await stockOf(variant.id)) === 4,
       `${replay.outcome}/${replay.outcome === 'alreadyFinal' ? replay.status : ''} stock ${await stockOf(variant.id)}`,
     )
+  }
+
+  /* ====================================== U — sweep 1 S01, the catalogue's stock figure follows a sale */
+  {
+    /*
+     * The decrement is raw SQL, so no variant hook runs and `products.derived.inventoryTotal` — what
+     * the shop cards, the in-stock filter, the homepage tiles and the search record read — kept the
+     * pre-sale count forever. The route now runs `refreshDerivedStock` after its response; this
+     * drives it exactly as the route does, with the outcome `applyStripeEvent` returned.
+     *
+     * Asserted against the column, not Algolia: the index sync is skipped outside Next by design.
+     */
+    const { refreshDerivedStock } = await import('../src/lib/checkout/fulfil')
+
+    const derivedOf = async (productId: number) => {
+      const product = await payload.findByID({
+        collection: 'products',
+        depth: 0,
+        id: productId,
+        overrideAccess: true,
+      })
+
+      return Number(product.derived?.inventoryTotal ?? Number.NaN)
+    }
+
+    /* The truth the figure is meant to mirror — every active variant's stock, summed. */
+    const activeStockOf = async (productId: number) => {
+      const { docs } = await payload.find({
+        collection: 'product-variants',
+        depth: 0,
+        limit: 0,
+        overrideAccess: true,
+        pagination: false,
+        where: { and: [{ product: { equals: productId } }, { active: { equals: true } }] },
+      })
+
+      return docs.reduce((total, variant) => total + (variant.inventoryQuantity ?? 0), 0)
+    }
+
+    const holdall = await makeStock(3, 'u1')
+    const shell = await makeStock(4, 'u2')
+
+    const shellLarge = await payload.create({
+      collection: 'product-variants',
+      data: {
+        active: true,
+        color: 'Bone',
+        colorFamily: 'bone',
+        colorHex: '#e8e4dc',
+        inventoryQuantity: 6,
+        priceMinor: 5_000,
+        product: shell.product.id,
+        size: 'L',
+        sizeSortOrder: 40,
+        sku: `WH-${suffix}-u2l`,
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'product-variants', id: shellLarge.id })
+
+    const order = await makeOrder(
+      [
+        { productId: holdall.product.id, quantity: 3, variantId: holdall.variant.id },
+        { productId: shell.product.id, quantity: 1, variantId: shell.variant.id },
+      ],
+      'U',
+    )
+
+    check(
+      'U: the fixture starts in step — 3 and 10',
+      (await derivedOf(holdall.product.id)) === 3 && (await derivedOf(shell.product.id)) === 10,
+      `${await derivedOf(holdall.product.id)} / ${await derivedOf(shell.product.id)}`,
+    )
+
+    const outcome = await pay(order, `pi_wh_u_${suffix}`)
+
+    await refreshDerivedStock(payload, outcome)
+
+    check(
+      'U: **S01 buying the last three makes the product’s cached stock 0** — the card says sold out',
+      outcome.outcome === 'finalised' &&
+        (await derivedOf(holdall.product.id)) === 0 &&
+        (await activeStockOf(holdall.product.id)) === 0,
+      `${outcome.outcome}: derived ${await derivedOf(holdall.product.id)}, variants ${await activeStockOf(holdall.product.id)}`,
+    )
+
+    check(
+      'U: **…and every product in the order is refreshed to the sum of its active variants** — 3 + 6',
+      (await derivedOf(shell.product.id)) === 9 &&
+        (await derivedOf(shell.product.id)) === (await activeStockOf(shell.product.id)),
+      `derived ${await derivedOf(shell.product.id)}, variants ${await activeStockOf(shell.product.id)}`,
+    )
+
+    /* Stale on purpose, by raw SQL — the state every paid order left behind before S01. */
+    const staleHoldall = sql`UPDATE "products" SET "derived_inventory_total" = 99 WHERE "id" = ${holdall.product.id}`
+
+    await payload.db.drizzle.execute(staleHoldall)
+
+    await refreshDerivedStock(payload, {
+      orderId: order.id,
+      outcome: 'alreadyFinal',
+      status: 'paid',
+    })
+    await refreshDerivedStock(payload, {
+      confirmationEmailId: null,
+      orderId: order.id,
+      outcome: 'outOfStock',
+      rolledBack: false,
+      short: [],
+    })
+
+    check(
+      'U: only a `finalised` outcome refreshes — no other outcome moved stock, so none reads anything',
+      (await derivedOf(holdall.product.id)) === 99,
+      String(await derivedOf(holdall.product.id)),
+    )
+
+    await refreshDerivedStock(payload, outcome)
+    await refreshDerivedStock(payload, outcome)
+
+    check(
+      'U: …and it recomputes rather than subtracts — a stale figure is corrected, and running it twice changes nothing',
+      (await derivedOf(holdall.product.id)) === 0 && (await derivedOf(shell.product.id)) === 9,
+      `${await derivedOf(holdall.product.id)} / ${await derivedOf(shell.product.id)}`,
+    )
+
+    /*
+     * **A refresh that fails cannot touch the payment, and does not stop the others.** One product's
+     * update is made to throw; the order is already paid, the call returns normally, and the other
+     * product in the same order is still refreshed.
+     */
+    const broken = await makeStock(5, 'u3')
+    const healthy = await makeStock(5, 'u4')
+    const brokenOrder = await makeOrder(
+      [
+        { productId: broken.product.id, quantity: 2, variantId: broken.variant.id },
+        { productId: healthy.product.id, quantity: 2, variantId: healthy.variant.id },
+      ],
+      'U3',
+    )
+
+    const brokenOutcome = await pay(brokenOrder, `pi_wh_u3_${suffix}`)
+
+    const flaky = Object.create(payload) as Payload
+
+    flaky.update = ((args: { collection: string; id?: unknown }) =>
+      args.collection === 'products' && args.id === broken.product.id
+        ? Promise.reject(new Error('Injected: the product could not be written.'))
+        : payload.update(args as never)) as never
+
+    const threw = await refreshDerivedStock(flaky, brokenOutcome).then(
+      () => false,
+      () => true,
+    )
+
+    check(
+      'U: **a failed refresh never throws** — the route’s after-response work carries on',
+      !threw,
+    )
+
+    check(
+      'U: …the order stays paid, and the stock the sale took stays taken',
+      brokenOutcome.outcome === 'finalised' &&
+        (await statusOf(brokenOrder.id)).payment === 'paid' &&
+        (await stockOf(broken.variant.id)) === 3,
+      `${brokenOutcome.outcome} ${(await statusOf(brokenOrder.id)).payment} stock ${await stockOf(broken.variant.id)}`,
+    )
+
+    check(
+      'U: …the product that failed keeps its old figure, and the other product is still refreshed',
+      (await derivedOf(broken.product.id)) === 5 && (await derivedOf(healthy.product.id)) === 3,
+      `${await derivedOf(broken.product.id)} / ${await derivedOf(healthy.product.id)}`,
+    )
+
+    /*
+     * **The route's own after-response work — the recheck of S01.** Everything above calls
+     * `refreshDerivedStock` directly, so deleting the route's call to it passed every check. The route
+     * now hands its whole sequence to `afterStripeEvent`, run here with the dependencies the route
+     * would pass replaced: no courier (so nothing is sent and the shared email queue is not drained),
+     * and a tax client that records what it was asked.
+     */
+    const { afterStripeEvent } = await import('../src/lib/checkout/after-stripe-event')
+
+    type TaxCall = { calculation: string; reference: string }
+
+    const taxClientFor = (onCall: (params: TaxCall) => Promise<{ id: string }>) => () => ({
+      tax: { transactions: { createFromCalculation: onCall } },
+    })
+
+    const noCourier = () => Promise.resolve(null)
+
+    /** The pool's state for a failure's detail — total / idle / waiting clients. */
+    const poolNow = () => {
+      const pool = (
+        payload.db as unknown as {
+          pool?: { idleCount: number; totalCount: number; waitingCount: number }
+        }
+      ).pool
+
+      return pool ? `pool ${pool.totalCount}/${pool.idleCount}/${pool.waitingCount}` : 'pool ?'
+    }
+
+    /**
+     * Poll until `condition` holds, or give up — the steps run concurrently, so nothing to await.
+     *
+     * U5 and U6 hold one step back until the other has happened, so the ceiling only decides how long
+     * a broken (sequential) implementation takes to fail: a concurrent one gets there in milliseconds,
+     * and a sequential one never does, however long it is given. It is a minute rather than seconds
+     * because one run stalled for 15 s — the pool's connection timeout — and a check about ordering
+     * must not mistake a stall for one step waiting on the other.
+     */
+    const ORDERING_CEILING_MS = 60_000
+
+    const eventually = async (
+      condition: () => Promise<boolean> | boolean,
+      timeoutMs = ORDERING_CEILING_MS,
+    ) => {
+      const deadline = Date.now() + timeoutMs
+
+      while (Date.now() < deadline) {
+        if (await condition()) return true
+
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+
+      return false
+    }
+
+    /* ---- U4: the route's sequence refreshes the figure, and records the tax */
+    {
+      const sold = await makeStock(2, 'u5')
+      const routed = await makeOrder(
+        [{ productId: sold.product.id, quantity: 2, variantId: sold.variant.id }],
+        'U4',
+        { taxCalculationId: `taxcalc_wh_u4_${suffix}` },
+      )
+
+      const routedOutcome = await pay(routed, `pi_wh_u4_${suffix}`)
+      const taxCalls: TaxCall[] = []
+
+      const finished = await afterStripeEvent(payload, `evt_wh_u4_${suffix}`, routedOutcome, {
+        courier: noCourier,
+        taxClient: taxClientFor((params) => {
+          taxCalls.push(params)
+
+          return Promise.resolve({ id: `tax_wh_u4_${suffix}` })
+        }),
+      }).then(
+        () => true,
+        () => false,
+      )
+
+      check(
+        'U: **the route’s after-response work refreshes the cached stock** — `afterStripeEvent` sold out the product',
+        finished &&
+          routedOutcome.outcome === 'finalised' &&
+          (await derivedOf(sold.product.id)) === 0,
+        `${routedOutcome.outcome}: derived ${await derivedOf(sold.product.id)}`,
+      )
+
+      check(
+        'U: …and records the paid order’s tax transaction, referenced by its order number',
+        taxCalls.length === 1 &&
+          taxCalls[0]?.calculation === `taxcalc_wh_u4_${suffix}` &&
+          taxCalls[0]?.reference === routed.orderNumber,
+        JSON.stringify(taxCalls),
+      )
+    }
+
+    /* ---- U5: a tax record that never answers does not hold the refresh back */
+    {
+      const sold = await makeStock(3, 'u6')
+      const routed = await makeOrder(
+        [{ productId: sold.product.id, quantity: 3, variantId: sold.variant.id }],
+        'U5',
+        { taxCalculationId: `taxcalc_wh_u5_${suffix}` },
+      )
+
+      const routedOutcome = await pay(routed, `pi_wh_u5_${suffix}`)
+
+      const tax: { answered: boolean; release: (() => void) | null } = {
+        answered: false,
+        release: null,
+      }
+
+      const running = afterStripeEvent(payload, `evt_wh_u5_${suffix}`, routedOutcome, {
+        courier: noCourier,
+        taxClient: taxClientFor(
+          () =>
+            new Promise((resolve) => {
+              tax.release = () => {
+                tax.answered = true
+                resolve({ id: `tax_wh_u5_${suffix}` })
+              }
+            }),
+        ),
+      })
+
+      const refreshedWhileTaxStuck = await eventually(
+        async () => tax.release !== null && (await derivedOf(sold.product.id)) === 0,
+      )
+
+      check(
+        'U: **the refresh does not wait for the tax record** — the product sold out while Stripe Tax had not answered',
+        refreshedWhileTaxStuck && !tax.answered,
+        `derived ${await derivedOf(sold.product.id)}, tax ${tax.release === null ? 'not called' : tax.answered ? 'answered' : 'pending'}, ${poolNow()}`,
+      )
+
+      await eventually(() => tax.release !== null, 5_000)
+      tax.release?.()
+      await running
+    }
+
+    /* ---- U6: a refresh stuck on a slow index write does not hold the tax record back */
+    {
+      const sold = await makeStock(4, 'u7')
+      const routed = await makeOrder(
+        [{ productId: sold.product.id, quantity: 1, variantId: sold.variant.id }],
+        'U6',
+        { taxCalculationId: `taxcalc_wh_u6_${suffix}` },
+      )
+
+      const routedOutcome = await pay(routed, `pi_wh_u6_${suffix}`)
+
+      /* The product write — where the Algolia upsert happens under Next — hangs until released. */
+      let releaseProduct: () => void = () => undefined
+      const productGate = new Promise<void>((resolve) => {
+        releaseProduct = resolve
+      })
+
+      const slowIndex = Object.create(payload) as Payload
+
+      slowIndex.update = (async (args: { collection: string; id?: unknown }) => {
+        if (args.collection === 'products' && args.id === sold.product.id) {
+          await productGate
+        }
+
+        return payload.update(args as never)
+      }) as never
+
+      const tax = { called: false }
+
+      const running = afterStripeEvent(slowIndex, `evt_wh_u6_${suffix}`, routedOutcome, {
+        courier: noCourier,
+        taxClient: taxClientFor(() => {
+          tax.called = true
+
+          return Promise.resolve({ id: `tax_wh_u6_${suffix}` })
+        }),
+      })
+
+      const taxWhileRefreshStuck = await eventually(() => tax.called)
+      const stillStale = (await derivedOf(sold.product.id)) === 4
+      const poolAtDecision = poolNow()
+
+      releaseProduct()
+      await running
+
+      check(
+        'U: **the tax record does not wait for the refresh** — recorded while the product write was still stuck',
+        taxWhileRefreshStuck && stillStale,
+        `tax ${taxWhileRefreshStuck ? 'recorded while the write was stuck' : 'not recorded until the write was released'}, derived then ${stillStale ? 'still 4' : 'already moved'}, ${poolAtDecision}`,
+      )
+
+      check(
+        'U: …and the stuck refresh still lands once the write is released',
+        (await derivedOf(sold.product.id)) === 3,
+        String(await derivedOf(sold.product.id)),
+      )
+    }
   }
 } finally {
   await cleanup()

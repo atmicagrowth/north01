@@ -202,7 +202,13 @@ try {
           ],
         },
       ],
-      fitNotes: rich('Cut for a regular fit through the body. Between sizes, take the larger.'),
+      /*
+       * Sweep 1, S13: this said "Cut for a regular fit through the body", and the guide is shared by
+       * slim, relaxed and oversized pieces whose Details say otherwise. The fit is each product's own.
+       */
+      fitNotes: rich(
+        'How each piece fits — slim, regular, relaxed or oversized — is listed in its details. Between sizes, take the larger.',
+      ),
       modelNote: 'Model is 186 cm and wears a size M.',
     },
   })
@@ -246,7 +252,11 @@ try {
           ],
         },
       ],
-      fitNotes: rich('Measured flat, unstretched. Waist sizes run true.'),
+      /*
+       * Not "Measured flat, unstretched": these waists are the size on the label in centimetres — 81
+       * for a 32 — which is a body measurement, as the sizing FAQ says. Sweep 1, S13.
+       */
+      fitNotes: rich('Waist sizes run true. Between sizes, take the larger.'),
     },
   })
 
@@ -978,7 +988,15 @@ try {
     {
       question: 'When will my order ship?',
       topic: 'orders',
-      answer: 'Orders placed before 2pm ship the same working day.',
+      /*
+       * Sweep 1, S09: this promised same-working-day dispatch before 2pm, with no timezone, and nothing
+       * backs a cut-off — dispatch is a staff member marking the order shipped in the admin, and a held
+       * order waits for a person. What is true: the dispatch email carries the carrier and a tracking
+       * number (`planFulfillmentChange` requires both), and delivery estimates run from dispatch. How
+       * soon an order is dispatched is the owner's promise to make, not the seed's (TODO.md §12).
+       */
+      answer:
+        'When your order leaves us, we email you the carrier and a tracking number. The delivery estimate shown at checkout counts from then, not from the day you ordered.',
       sortOrder: 10,
     },
     {
@@ -998,14 +1016,24 @@ try {
     {
       question: 'How do I choose a size?',
       topic: 'sizing',
+      /*
+       * Sweep 1, S13: "every product page" was false for accessories, the sized cap and belt among
+       * them, which set no `sizeGuide`. The belt's own description says how it is sized.
+       */
       answer:
-        'Every product page has a size guide with real measurements. Between sizes, take the larger.',
+        'Every piece of clothing has a size guide on its product page, in centimetres. Accessories have none — a belt is sized to the trouser rather than the body, as its description says. Between sizes, take the larger.',
       sortOrder: 40,
     },
     {
       question: 'How should I wash wool?',
       topic: 'care',
-      answer: 'Cool hand wash or dry clean, and dry flat. Never hang wet knitwear.',
+      /*
+       * Sweep 1, S14: this told everyone to hand wash wool, and the Wool Overshirt, Unstructured Blazer
+       * and Pleated Trouser are labelled dry clean. The question is unchanged on purpose: FAQs are
+       * upserted by question, so rewording it would leave the old answer published beside the new.
+       */
+      answer:
+        'Knitted wool, such as merino and lambswool, can be hand washed cool and dried flat — never hang wet knitwear. Woven wool, such as melton, twill and suiting cloth, is dry clean only. The care notes on each product page come first.',
       sortOrder: 50,
     },
     {

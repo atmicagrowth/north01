@@ -11,15 +11,23 @@
  * customer and go looking for another's.
  *
  * Sections A–C are pure and need no database. D onwards is the real one, and the **D-10** guard
- * applies: they create and delete customers, orders and wishlist rows.
+ * applies: they create and delete customers, orders and wishlist rows. G is account recovery — the
+ * reset-link cooldown under simultaneous requests (sweep 1, finding S05).
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
 
 import { isCurrentAccountRoute, ACCOUNT_ROUTES } from '../src/lib/account/navigation'
 import { readCustomerOrder, readCustomerOrders } from '../src/lib/account/orders'
+import { CUSTOMER_REVISION_KEY_PREFIX } from '../src/lib/auth/customer-revision'
+import {
+  RESET_COOLDOWN_MS,
+  RESET_TOKEN_LIFETIME_MS,
+  requestPasswordReset,
+} from '../src/lib/auth/reset-cooldown'
 import { developmentDatabase } from '../src/lib/env.core'
 import {
   orderByRecency,
@@ -202,6 +210,17 @@ const cleanup = async () => {
   for (const doc of [...created].reverse()) {
     await payload
       .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
+      .catch(() => undefined)
+  }
+
+  // Every locked customer write stamps a revision marker that `Customers.ts` never deletes.
+  const markers = created
+    .filter((doc) => doc.collection === 'customers')
+    .map((doc) => sql`${`${CUSTOMER_REVISION_KEY_PREFIX}${doc.id}`}`)
+
+  if (markers.length > 0) {
+    await payload.db.drizzle
+      .execute(sql`DELETE FROM "payload_kv" WHERE "key" IN (${sql.join(markers, sql`, `)})`)
       .catch(() => undefined)
   }
 }
@@ -438,6 +457,131 @@ try {
     )
 
     check('F: **merging the same list twice adds nothing**', again.added === 0, String(again.added))
+  }
+
+  /* ============================================ G — one reset link per cooldown, however many ask at once */
+  {
+    /*
+     * **Sweep 1, finding S05.** The cooldown was a read, a decision and then a write, so requests
+     * arriving together all read the old expiry and all mailed a link. `requestPasswordReset` is the
+     * whole of what the forgot-password action does after Turnstile and validation, so this drives it
+     * directly — with Payload's mail hook replaced by a counter, which is the number that matters: how
+     * many emails a burst of requests makes the shop send.
+     */
+    const customer = await makeCustomer('g-reset')
+    const email = `verify-account-g-reset-${suffix}@example.test`
+    const mailer = payload.email as unknown as { sendEmail: (message: unknown) => Promise<unknown> }
+    const realSendEmail = mailer.sendEmail
+    let sent = 0
+    let failNextSend = false
+
+    mailer.sendEmail = () => {
+      if (failNextSend) {
+        failNextSend = false
+
+        return Promise.reject(new Error('verify-account: a simulated mail failure'))
+      }
+
+      sent += 1
+
+      return Promise.resolve()
+    }
+
+    const tokenState = async () => {
+      const { rows } = await payload.db.drizzle.execute(
+        sql`SELECT "reset_password_token" AS "token", "reset_password_expiration" AS "expiration"
+            FROM "customers" WHERE "id" = ${customer.id}`,
+      )
+
+      return rows[0] as { expiration: Date | null; token: null | string }
+    }
+
+    /* As though the last link had been issued `ago` milliseconds before now. */
+    const issuedAgo = (ago: number) =>
+      payload.db.drizzle.execute(
+        sql`UPDATE "customers"
+            SET "reset_password_expiration" = ${new Date(Date.now() - ago + RESET_TOKEN_LIFETIME_MS).toISOString()}::timestamptz
+            WHERE "id" = ${customer.id}`,
+      )
+
+    try {
+      const burst = await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          requestPasswordReset(payload, index % 2 === 0 ? email : `  ${email.toUpperCase()} `),
+        ),
+      )
+
+      check(
+        'G: **eight simultaneous reset requests for one address issue exactly one link**',
+        burst.filter((outcome) => outcome === 'issued').length === 1,
+        burst.join(','),
+      )
+      check('G: **…and send exactly one email**', sent === 1, `${sent} sent`)
+
+      const afterBurst = await tokenState()
+
+      check('G: the one link is live', typeof afterBurst.token === 'string')
+
+      const repeat = await requestPasswordReset(payload, email)
+
+      check(
+        'G: a request inside the cooldown sends nothing and leaves the live link alone',
+        repeat === 'suppressed' && sent === 1 && (await tokenState()).token === afterBurst.token,
+        `${repeat}, ${sent} sent`,
+      )
+
+      check(
+        'G: an address with no account is answered the same way, and sends nothing',
+        (await requestPasswordReset(payload, `verify-account-g-nobody-${suffix}@example.test`)) ===
+          'suppressed' && sent === 1,
+      )
+
+      await issuedAgo(RESET_COOLDOWN_MS - 5_000)
+
+      check(
+        'G: five seconds before the cooldown ends, still nothing',
+        (await requestPasswordReset(payload, email)) === 'suppressed' && sent === 1,
+      )
+
+      await issuedAgo(RESET_COOLDOWN_MS + 5_000)
+
+      const later = await Promise.all([
+        requestPasswordReset(payload, email),
+        requestPasswordReset(payload, email),
+      ])
+
+      check(
+        'G: once the cooldown has passed, one new link — again only one of two simultaneous requests',
+        later.filter((outcome) => outcome === 'issued').length === 1 && sent === 2,
+        `${later.join(',')}, ${sent} sent`,
+      )
+      check(
+        'G: …and it replaced the previous link',
+        (await tokenState()).token !== afterBurst.token,
+      )
+
+      await issuedAgo(RESET_COOLDOWN_MS + 5_000)
+      failNextSend = true
+
+      const failed = await requestPasswordReset(payload, email).then(
+        () => 'resolved',
+        () => 'threw',
+      )
+      const released = await tokenState()
+
+      check(
+        'G: **a request whose mail fails hands its claim back** — no token and no expiry left behind',
+        failed === 'threw' && released.token === null && released.expiration === null,
+        `${failed}, token ${String(released.token)}, expiration ${String(released.expiration)}`,
+      )
+      check(
+        'G: …so the retry the customer is told to make is not swallowed by the cooldown',
+        (await requestPasswordReset(payload, email)) === 'issued' && sent === 3,
+        `${sent} sent`,
+      )
+    } finally {
+      mailer.sendEmail = realSendEmail
+    }
   }
 } finally {
   await cleanup()

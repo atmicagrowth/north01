@@ -786,7 +786,9 @@ test.describe('§27.1d — the fifteen edge cases the plan enumerates', () => {
     await test.step('the zero state says what will appear here, and does not apologise', async () => {
       await expect(page.getByText('No orders yet.')).toBeVisible()
       await expect(
-        page.getByText('Anything you buy will appear here, with its status and what you paid.'),
+        page.getByText(
+          'Orders you place while signed in will appear here, with their status and what you paid.',
+        ),
       ).toBeVisible()
 
       await expect(page.getByRole('link', { name: 'Browse the shop' })).toBeVisible()

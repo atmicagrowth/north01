@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import sitemap from '@/app/sitemap'
-import { getLegalPublication, getSupportPolicies } from '@/lib/help/read'
+import { getFaqGroups, getLegalPublication, getSupportPolicies } from '@/lib/help/read'
 import { hasPublishedText, NO_LEGAL_DOCUMENTS, publishedLegalNav } from '@/lib/navigation/utility'
 import { getPayloadClient } from '@/lib/payload'
 import { legalSitemapRoutes } from '@/lib/seo/routes'
@@ -21,9 +21,11 @@ import { legalSitemapRoutes } from '@/lib/seo/routes'
  *    holding one empty paragraph, not `null`. That document is truthy and blank, and it must read as
  *    unpublished — `null` from `getSupportPolicies`, `false` from `getLegalPublication` — or a cleared
  *    privacy notice renders as a title over nothing with the footer still linking to it.
- * 3. **An unreachable global degrades rather than throwing.** Four nulls from one reader, neither
- *    document from the other: a legal link that 500s the footer because the CMS blinked is worse than
- *    a footer without it.
+ * 3. **Unreadable is not unpublished.** The link reader fails closed — neither document — because a
+ *    legal link that 500s the footer when the CMS blinked is worse than a footer without it. The page
+ *    readers do the opposite and **throw** (sweep 1, S18): turned into nulls or an empty list, a
+ *    database blip made `/help/returns` say with HTTP 200 that the shop had no returns policy, and
+ *    `/help/faq` that it had no answers.
  * 4. **The sitemap submits a legal page only when its document is published** — and the rest of the
  *    sitemap does not depend on it.
  *
@@ -210,15 +212,13 @@ describe('getSupportPolicies', () => {
     },
   )
 
-  it('degrades every document to null when the global cannot be read at all, and does not throw', async () => {
-    findGlobal.mockRejectedValue(new Error('the database is unreachable'))
+  it('throws when the global cannot be read at all, rather than reporting every document unpublished', async () => {
+    const outage = new Error('the database is unreachable')
 
-    await expect(getSupportPolicies()).resolves.toEqual({
-      privacy: null,
-      returns: null,
-      shipping: null,
-      terms: null,
-    })
+    findGlobal.mockRejectedValue(outage)
+
+    /* Sweep 1, S18: four nulls here rendered "This policy has not been published yet." with a 200. */
+    await expect(getSupportPolicies()).rejects.toBe(outage)
   })
 
   it('treats a global that came back empty the same way', async () => {
@@ -227,6 +227,34 @@ describe('getSupportPolicies', () => {
     const policies = await getSupportPolicies()
 
     expect(Object.values(policies).every((value) => value === null)).toBe(true)
+  })
+})
+
+describe('getFaqGroups', () => {
+  const faq = (id: number, topic: string, question: string) => ({
+    answer: document(`Answer ${id}.`),
+    id,
+    question,
+    topic,
+  })
+
+  it('groups published answers by topic, in the order a customer meets the topics', async () => {
+    find.mockResolvedValue({
+      docs: [faq(1, 'care', 'How should I wash wool?'), faq(2, 'orders', 'When will it ship?')],
+    })
+
+    const groups = await getFaqGroups()
+
+    expect(groups.map((group) => group.topic)).toEqual(['orders', 'care'])
+  })
+
+  it('throws when the FAQs cannot be read, rather than claiming none are published', async () => {
+    const outage = new Error('the database is unreachable')
+
+    find.mockRejectedValue(outage)
+
+    /* Sweep 1, S18: `docs: []` here rendered "There are no published answers here yet." with a 200. */
+    await expect(getFaqGroups()).rejects.toBe(outage)
   })
 })
 

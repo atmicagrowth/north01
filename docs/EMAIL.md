@@ -28,10 +28,10 @@ defined in [`ENVIRONMENT.md`](ENVIRONMENT.md); the Resend domain and DNS procedu
 
 | Kind | Subject (`subjectFor`) | Sent by | Dedupe key |
 |---|---|---|---|
-| `orderConfirmation` | `Order <number> confirmed` | Stripe webhook, once the order is paid | `order-confirmation:<orderId>` |
+| `orderConfirmation` | `Order <number> confirmed` | Stripe webhook, once the order is paid — including an order held on a stock shortfall, whose message says nothing has been sent yet (`onHold`) | `order-confirmation:<orderId>` |
 | `orderShipped` | `Order <number> is on its way` | Admin: fulfilment status changed to `shipped` | `order-shipped:<orderId>` |
-| `orderDelivered` | `Order <number> delivered` | Admin: fulfilment status changed to `delivered` | `order-delivered:<orderId>` |
-| `refund` | `Order <number> refunded` | Stripe webhook, `charge.refunded` | `refund:<orderId>:<amountMinor>` — a second partial refund is a second message |
+| `orderDelivered` | `Order <number> delivered` | Admin: fulfilment status changed to `delivered`. The body says *we* marked it delivered — there is no carrier integration | `order-delivered:<orderId>` |
+| `refund` | `Refund for order <number>` | Stripe webhook, `charge.refunded` — partial or full (`partial`, decided by `isFullRefund`) | `refund:<orderId>:<amountMinor>` — a second partial refund is a second message |
 | `welcome` | `Welcome to NORTH / 01` | `register` in `src/lib/auth/actions.ts`, after the account and session exist | `welcome:<customerId>` |
 | `passwordReset` | `Reset your NORTH / 01 password` | Payload `forgotPassword`, through `serviceEmailAdapter` | `password-reset:<sha-256 digest of the address>:<issued at>` — a new request is a new message |
 | `verification` | `Confirm your email address` | **nothing** — `Customers.auth.verify` is off (DEV-66) | `verification:<customerId>` |
@@ -39,6 +39,25 @@ defined in [`ENVIRONMENT.md`](ENVIRONMENT.md); the Resend domain and DNS procedu
 
 Features §24's *Order cancelled* and *back-in-stock* are not built (DEV-65). `EMAIL_KINDS` keys the
 template map exhaustively, so adding a kind without a template is a type error.
+
+**There is no message for a payment that fails or a checkout that expires.** A bank debit can stay
+`pending_payment` for days and then fail, and nothing is sent — so no customer-facing copy may promise
+an email "either way". `/checkout/success` promises the confirmation only (`confirmationCopy`).
+
+### What the order messages say, and why (sweep 1)
+
+- **Order confirmation.** Lists every line and the totals, since it is the receipt. When the order is
+  held on a stock shortfall (`fulfilmentHold: stockShortfall`, written in the same transaction before
+  the message is queued), the paragraph is `STOCK_SHORTFALL_COPY` — *nothing has been sent yet, we will
+  contact you* — instead of *getting the order ready to send*. Rows queued before `onHold` existed
+  render as not held.
+- **Delivered.** *We have marked your order as delivered.* A staff member sets `delivered` in the
+  admin; the message never says the carrier confirmed it.
+- **Refund.** `partial` is true when Stripe's cumulative `amount_refunded` is below the order total.
+  A partial refund reads *Partly refunded* with `PARTIAL_REFUND_COPY`; a full one says the whole
+  order was refunded. The figure is the **cumulative** amount, labelled *Refunded so far* or
+  *Refunded in total*, never as the size of this refund. Rows queued before `partial` existed render
+  as a full refund. The footnote gives five to ten business days, the same window as the refund FAQ.
 
 Preview templates locally: `pnpm email:preview` (React Email dev server on port 3030, `src/emails`).
 
@@ -88,8 +107,8 @@ between Resend accepting and the row being marked `sent` collapses at Resend.
 
 | Trigger | Queued | Delivered |
 |---|---|---|
-| Stripe webhook finalises a payment (`sendOrderEmails` in `src/app/(frontend)/api/stripe/webhook/route.ts`) | after the payment transaction commits | immediately, in the same request, when Resend is configured |
-| Stripe `charge.refunded` | same | immediately |
+| Stripe webhook finalises a payment (`finalisePaidOrder` in `src/lib/checkout/fulfil.ts`) | **inside** the payment transaction (`queueOnce`), so it commits with the payment or not at all | immediately after, in the same request (`webhook/route.ts`), when Resend is configured |
+| Stripe `charge.refunded` (`applyRefund`) | inside the refund transaction, the same way | immediately after |
 | Registration | after the account is created | immediately; a failure never blocks the redirect |
 | Password reset | inside `forgotPassword` | immediately; a failure is logged, never thrown |
 | Admin sets an order to `shipped` / `delivered` (`queueOrderEmails`) | **inside** the order's update transaction, with `req` | **later, by a drain** — §5 |
@@ -193,4 +212,6 @@ ever been delivered** outside the harness's fake transport.
 `pnpm verify:email` (`scripts/verify-email.ts`) drives the whole service against the development
 database with a fake transport that opens no socket. It covers the dedupe barrier, including the
 concurrent case, the retry ceiling, the allowlist in both environments, failure recording and a
-queued order confirmation drained end to end. It needs no Resend key. See [`TESTING.md`](TESTING.md).
+queued order confirmation drained end to end — plus, since sweep 1, what the order messages say: a
+held order's confirmation (A, L3), a partial refund against a full one (A, N), the refund subject and
+the delivered message (A). It needs no Resend key. See [`TESTING.md`](TESTING.md).

@@ -320,7 +320,12 @@ export function subjectFor(kind: EmailKind, context: { orderNumber?: null | stri
     case 'passwordReset':
       return 'Reset your NORTH / 01 password'
     case 'refund':
-      return `Order${reference} refunded`
+      /*
+       * Not "Order N refunded": the same kind announces a partial refund, which leaves the rest of
+       * the order being sent, and a subject read in a list must not say the whole order was cancelled.
+       * The message body says which it was.
+       */
+      return `Refund for order${reference}`
     case 'verification':
       return 'Confirm your email address'
     case 'welcome':

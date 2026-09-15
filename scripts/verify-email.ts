@@ -26,7 +26,7 @@ import type { Payload } from 'payload'
 import config from '../src/payload.config'
 
 import { renderEmail } from '../src/emails/messages'
-import { queueOrderConfirmation } from '../src/lib/email/orders'
+import { queueOrderConfirmation, queueRefundMessage } from '../src/lib/email/orders'
 import {
   dedupeKeyFor,
   EMAIL_KINDS,
@@ -141,6 +141,74 @@ const SAMPLE = {
   check(
     'A: **the reset link survives a client that strips anchors** — it is printed as text too',
     reset.text.includes('https://example.test/reset-password?token=abc'),
+  )
+
+  /*
+   * **Sweep 1 (S06, S08, S16, S17): every order message says what actually happened.** Rendered from
+   * the data shapes `orders.ts` builds, and re-checked against real rows in L3 and N below.
+   */
+  const held = await renderEmail('orderConfirmation', {
+    ...SAMPLE.orderConfirmation,
+    lines: [...SAMPLE.orderConfirmation.lines],
+    onHold: true,
+  })
+
+  check(
+    'A: **S06 a receipt for an order held on a stock shortfall does not promise it is being got ready**',
+    held.text.includes('sold out just before your payment reached us') &&
+      held.text.includes('We have your payment.') &&
+      !/getting the order ready|on its way/i.test(held.text) &&
+      held.text.includes('Field Jacket'),
+  )
+
+  check(
+    'A: …while an order that is not held still says it is being got ready',
+    receipt.text.includes('getting the order ready to send') && !receipt.text.includes('sold out'),
+  )
+
+  const partialRefund = await renderEmail('refund', {
+    amount: '$15.00',
+    orderNumber: 'N1-2609-ABC123',
+    partial: true,
+  })
+
+  check(
+    'A: **S08 a partial refund says part of the order was refunded, and labels the figure a running total**',
+    partialRefund.text.includes('Partly refunded.') &&
+      partialRefund.text.includes('The rest is unaffected.') &&
+      partialRefund.text.includes('Refunded so far') &&
+      !partialRefund.text.includes('Refunded in total') &&
+      !partialRefund.text.includes('whole order'),
+  )
+
+  const fullRefund = await renderEmail('refund', SAMPLE.refund as never)
+
+  check(
+    'A: …a full refund (and a row queued before `partial` existed) says the whole order was refunded',
+    fullRefund.text.includes('The whole order was refunded') &&
+      fullRefund.text.includes('Refunded in total') &&
+      !fullRefund.text.includes('Partly refunded'),
+  )
+
+  check(
+    'A: **S08 the refund subject does not call a partial refund a refunded order**',
+    subjectFor('refund', { orderNumber: 'N1-X' }) === 'Refund for order N1-X',
+    subjectFor('refund', { orderNumber: 'N1-X' }),
+  )
+
+  const delivered = await renderEmail('orderDelivered', SAMPLE.orderDelivered as never)
+
+  check(
+    'A: **S16 the delivered message does not claim the carrier confirmed it** — staff mark it by hand',
+    !/carrier/i.test(delivered.text) &&
+      delivered.text.includes('We have marked your order as delivered'),
+  )
+
+  const welcome = await renderEmail('welcome', SAMPLE.welcome as never)
+
+  check(
+    'A: S17 the welcome message keeps only orders placed while signed in — a guest order is never attached',
+    welcome.text.includes('Orders you place while signed in will be kept here'),
   )
 
   /* No image and no tracking pixel: a blocked remote image must not be able to break a receipt. */
@@ -681,6 +749,127 @@ try {
       'L: **a replayed event does not queue a second confirmation**',
       replay.outcome === 'duplicate',
       replay.outcome,
+    )
+  }
+
+  /* ============================================ L3 — S06, a held order's receipt, from the row */
+  {
+    /*
+     * `finalisePaidOrder` writes the hold and queues the confirmation in one transaction. The order
+     * is created already held here, so what this proves is that the queue reads the hold off the row
+     * it is handed, and that the message delivered from that row says so.
+     */
+    const order = await payload.create({
+      collection: 'orders',
+      data: {
+        currency: 'USD',
+        discountMinor: 0,
+        email: `verify-email-${suffix}@example.test`,
+        fulfilmentHold: 'stockShortfall',
+        fulfillmentStatus: 'unfulfilled',
+        orderNumber: `N1-EM-L3-${suffix}`,
+        paymentStatus: 'paid',
+        shippingMinor: 0,
+        subtotalMinor: 12_000,
+        taxMinor: 0,
+        totalMinor: 12_000,
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'orders', id: order.id })
+
+    const queued = await queueOrderConfirmation(payload, order.id)
+
+    if (queued.outcome !== 'claimed') throw new Error('held confirmation failed to queue')
+
+    created.push({ collection: 'email-messages', id: queued.id })
+
+    const heldData = (await messageById(queued.id)).data as { onHold?: unknown } | null
+
+    check(
+      'L3: **a confirmation queued for an order held on a stock shortfall records the hold**',
+      heldData?.onHold === true,
+      JSON.stringify(heldData?.onHold),
+    )
+
+    const { seen, transport } = fakeTransport('ok')
+
+    await deliverEmail(payload, queued.id, courierWith(transport))
+
+    check(
+      'L3: …and the delivered message says nothing has been sent yet, not that it is on its way',
+      (seen[0]?.text ?? '').includes('nothing has been sent yet') &&
+        !/getting the order ready|on its way/i.test(seen[0]?.text ?? ''),
+    )
+
+    const unheld = await makeOrder('L3U')
+    const plain = await queueOrderConfirmation(payload, unheld.id)
+
+    if (plain.outcome !== 'claimed') throw new Error('unheld confirmation failed to queue')
+
+    created.push({ collection: 'email-messages', id: plain.id })
+
+    const plainData = (await messageById(plain.id)).data as { onHold?: unknown } | null
+
+    check(
+      'L3: …and an order with no hold records none',
+      plainData?.onHold === false,
+      JSON.stringify(plainData?.onHold),
+    )
+  }
+
+  /* ============================================ N — S08, a partial refund announced as partial */
+  {
+    const order = await makeOrder('N')
+
+    const partial = await queueRefundMessage(payload, order.id, 1_500)
+
+    if (partial.outcome !== 'claimed') throw new Error('partial refund failed to queue')
+
+    created.push({ collection: 'email-messages', id: partial.id })
+
+    const partialRow = await messageById(partial.id)
+
+    check(
+      'N: **a refund of part of the total is recorded as partial** — `isFullRefund`, the rule the order status follows',
+      (partialRow.data as { partial?: unknown } | null)?.partial === true,
+      JSON.stringify(partialRow.data),
+    )
+
+    check(
+      'N: …under a subject that does not say the order was refunded',
+      !/refunded/i.test(String(partialRow.subject)) &&
+        String(partialRow.subject).includes(String(order.orderNumber)),
+      String(partialRow.subject),
+    )
+
+    const full = await queueRefundMessage(payload, order.id, 12_000)
+
+    if (full.outcome !== 'claimed') throw new Error('full refund failed to queue')
+
+    created.push({ collection: 'email-messages', id: full.id })
+
+    const fullData = (await messageById(full.id)).data as { partial?: unknown } | null
+
+    check(
+      'N: …a second refund reaching the total is its own message, recorded as full',
+      fullData?.partial === false,
+      JSON.stringify(fullData),
+    )
+
+    const { seen, transport } = fakeTransport('ok')
+
+    await deliverEmail(payload, partial.id, courierWith(transport))
+    await deliverEmail(payload, full.id, courierWith(transport))
+
+    check(
+      'N: …and the two delivered messages say "Partly refunded" with a running total, then the whole order',
+      (seen[0]?.text ?? '').includes('Partly refunded.') &&
+        (seen[0]?.text ?? '').includes('Refunded so far') &&
+        (seen[1]?.text ?? '').includes('The whole order was refunded') &&
+        (seen[1]?.text ?? '').includes('Refunded in total'),
+      `${seen.length} sent`,
     )
   }
 

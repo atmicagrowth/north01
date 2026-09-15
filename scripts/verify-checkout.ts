@@ -806,6 +806,17 @@ try {
       `${afterFirstRace.length} order(s)`,
     )
 
+    /* Sweep 1, S15: session creation prints this number on Stripe's page and receipt. */
+    check(
+      'G2: **S15 the attempt returns the order’s customer-facing number** — the stored `N1-YYMM-XXXXXX`, not the id',
+      a.ok &&
+        b.ok &&
+        a.orderNumber === afterFirstRace[0]?.orderNumber &&
+        b.orderNumber === a.orderNumber &&
+        /^N1-\d{4}-[A-Z0-9]{6}$/.test(a.orderNumber),
+      a.ok ? `${a.orderNumber} / stored ${afterFirstRace[0]?.orderNumber}` : 'refused',
+    )
+
     const claims = await Promise.all([
       claimFor(a, `cs_race_a_${suffix}`),
       claimFor(b, `cs_race_b_${suffix}`),
@@ -827,6 +838,12 @@ try {
       upsertPendingOrder(payload, input, retire),
       upsertPendingOrder(payload, input, retire),
     ])
+
+    check(
+      'G2: …and an attempt that reuses the order returns the same number — the receipt matches the first attempt’s',
+      a.ok && c.ok && d.ok && c.orderNumber === a.orderNumber && d.orderNumber === a.orderNumber,
+      c.ok ? c.orderNumber : 'refused',
+    )
 
     check(
       'G2: **two attempts on a pending order retire its live session exactly once**',
@@ -895,6 +912,19 @@ try {
 check(
   'H: every preflight refusal has a sentence',
   Object.values(PREFLIGHT_COPY).every((value) => typeof value === 'string' && value.length > 0),
+)
+
+/*
+ * Sweep 1, S07: `alreadyPaid` said "Check your email before trying again". The only order email a
+ * payment produces is the confirmation, sent once the order is paid; a payment still clearing has none
+ * yet, and one that fails sends nothing. So it may promise the confirmation, and nothing else.
+ */
+check(
+  'H: **S07 `alreadyPaid` does not send a customer to an email that may not exist**',
+  !/check your email/i.test(PREFLIGHT_COPY.alreadyPaid) &&
+    /email your order confirmation once a payment is confirmed/i.test(PREFLIGHT_COPY.alreadyPaid) &&
+    /if it does not go through, no email is sent/i.test(PREFLIGHT_COPY.alreadyPaid),
+  PREFLIGHT_COPY.alreadyPaid,
 )
 
 check(

@@ -26,10 +26,12 @@ import {
  *
  * ### An unwritten policy says so — or, for a legal document, is not a page at all
  *
- * `null` is a real state — nobody has written the policy yet, an editor emptied the field, or the
- * settings global could not be read. Rendering a title over nothing would tell a customer the page is
- * broken; saying the policy is not published yet, and offering somewhere to go instead, is the honest
- * answer and the one §0.1.17 asks for. *Written* means **has text** (`hasPublishedText`): an emptied
+ * `null` is a real state — nobody has written the policy yet, or an editor emptied the field.
+ * Rendering a title over nothing would tell a customer the page is broken; saying the policy is not
+ * published yet, and offering somewhere to go instead, is the honest answer and the one §0.1.17 asks
+ * for. A settings global that **could not be read** never reaches this component: `getSupportPolicies`
+ * throws, and the error boundary answers instead, because "not published" is a claim a failed read
+ * cannot make (sweep 1, S18). *Written* means **has text** (`hasPublishedText`): an emptied
  * Lexical field is a truthy object holding one blank paragraph, and branching on truthiness rendered
  * exactly the title-over-nothing this section exists to prevent.
  *

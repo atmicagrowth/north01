@@ -61,20 +61,24 @@ export type FaqGroup = {
  *
  * Sorted by `sortOrder` then by question, so a merchandiser's ordering wins and ties are stable
  * rather than left to the planner.
+ *
+ * **And no `.catch`** (sweep 1, S18). This turned a failed read into `docs: []`, which the page renders
+ * as *"There are no published answers here yet."* — with HTTP 200 and indexable metadata, a false
+ * statement about the shop made on the one occasion the page cannot know it. `indexOf` in
+ * `lib/editorial/read.ts` removed the same pattern; the error now reaches `(frontend)/error.tsx`, which
+ * offers a retry and is `noindex`.
  */
 export const getFaqGroups = cache(async (): Promise<FaqGroup[]> => {
   const payload = await getPayloadClient()
 
-  const { docs } = await payload
-    .find({
-      collection: 'faqs',
-      depth: 0,
-      limit: 200,
-      pagination: false,
-      sort: ['sortOrder', 'question'],
-      ...STOREFRONT_ACCESS,
-    })
-    .catch(() => ({ docs: [] as Faq[] }))
+  const { docs } = await payload.find({
+    collection: 'faqs',
+    depth: 0,
+    limit: 200,
+    pagination: false,
+    sort: ['sortOrder', 'question'],
+    ...STOREFRONT_ACCESS,
+  })
 
   return FAQ_TOPICS.map(({ label, value }) => ({
     entries: (docs as Faq[])
@@ -100,8 +104,16 @@ const publishedOrNull = (value: unknown): unknown => (hasPublishedText(value) ? 
  *
  * `null` is a real state and each surface answers it, rather than rendering a heading over nothing:
  * `/help/shipping` and `/help/returns` say the policy is not published yet, and `/legal/privacy` and
- * `/legal/terms` answer 404 and drop out of every link row. An unreachable settings global is the
- * same answer for the same reason — see the catalogue's readers.
+ * `/legal/terms` answer 404 and drop out of every link row.
+ *
+ * **An unreachable settings global is not that state, and throws** (sweep 1, S18). It used to be
+ * caught into four nulls, so a database blip made `/help/returns` and `/help/shipping` tell customers
+ * — and any crawler — with HTTP 200 that the shop had no returns or shipping policy, and made the
+ * legal pages answer 404. Unpublished is something this read can know; unreadable is not, so the error
+ * reaches `(frontend)/error.tsx` (a retry, `noindex`) exactly as `indexOf`, `getJournalIndex` and
+ * `getLookbookIndex` already let theirs. The **links** still fail closed, in `getLegalPublication`:
+ * hiding two footer links for one request is harmless, a page claiming a document does not exist is
+ * not.
  *
  * **`null` means *no text*, not *no value*.** A field an editor emptied in the admin is stored as a
  * Lexical root holding one empty paragraph — truthy, and blank. Passing that through made a cleared
@@ -120,7 +132,7 @@ const publishedOrNull = (value: unknown): unknown => (hasPublishedText(value) ? 
 export const getSupportPolicies = cache(async (): Promise<SupportPolicy> => {
   const payload = await getPayloadClient()
 
-  const settings = await payload.findGlobal({ depth: 0, slug: 'site-settings' }).catch(() => null)
+  const settings = await payload.findGlobal({ depth: 0, slug: 'site-settings' })
 
   return {
     privacy: publishedOrNull(settings?.privacyPolicy),
@@ -160,8 +172,9 @@ const loadLegalPublication = unstable_cache(
  * rendered a document it had just been told was empty would not be.
  *
  * **It fails closed, and does not remember failing** — the `getSeoDefaults` arrangement. A settings
- * global that cannot be read hides both links for that request, which is what the pages behind them
- * would do too (`getSupportPolicies` degrades to `null`); the error is logged, and nothing is cached.
+ * global that cannot be read hides both links for that request; the error is logged, and nothing is
+ * cached. The pages behind them do not degrade the same way — `getSupportPolicies` throws, so a page
+ * that cannot read its document shows the error boundary rather than a 404 or a "not published".
  */
 export const getLegalPublication = cache(async (): Promise<LegalPublication> => {
   try {

@@ -22,12 +22,11 @@ import { dedupeKeyFor } from '@/lib/email/rules'
 import { deliverEmail, enqueueEmail } from '@/lib/email/send'
 import { siteUrl } from '@/lib/env.server'
 import { checkPassword } from '@/lib/password-policy'
-import { reportFailure } from '@/lib/observability/report'
 
 import type { AuthFormState } from './form-state'
 import { ForgotPasswordSchema, LoginSchema, RegisterSchema, ResetPasswordSchema } from './schemas'
 import { safeReturnPath } from './session'
-import { resetIssuedRecently } from './reset-cooldown'
+import { requestPasswordReset } from './reset-cooldown'
 
 /**
  * **Every authentication mutation in the storefront.** Plan §7.1e's list — registration, login,
@@ -580,34 +579,14 @@ export async function forgotPassword(
   const payload = await getPayloadClient()
 
   /*
-   * **One link per address per cooldown** (`lib/auth/reset-cooldown.ts`). A request inside it is
-   * answered with exactly the sentence below and sends nothing — the response must not reveal
-   * whether an account exists, and it must not reveal that a link was just sent either.
+   * **One link per address per cooldown** (`lib/auth/reset-cooldown.ts`), decided and claimed in one
+   * statement so that simultaneous requests cannot each pass it — sweep 1, finding S05. A request
+   * inside the cooldown, and one for an address with no account, are answered with exactly the
+   * sentence below and send nothing: the response must not reveal whether an account exists, and it
+   * must not reveal that a link was just sent either.
    */
-  const recent = await payload.find({
-    collection: 'customers',
-    depth: 0,
-    limit: 1,
-    overrideAccess: true,
-    select: { resetPasswordExpiration: true },
-    showHiddenFields: true,
-    where: { email: { equals: parsed.data.email.trim().toLowerCase() } },
-  })
-
-  if (resetIssuedRecently(recent.docs[0]?.resetPasswordExpiration, Date.now())) {
-    return success(previous, RESET_REQUESTED)
-  }
-
   try {
-    await payload.forgotPassword({
-      collection: 'customers',
-      data: { email: parsed.data.email },
-      /*
-       * The forgot-password operation builds the link from `config.serverURL`, not from this
-       * request — see `payload/email/resetPasswordEmail.ts` for why a `Host` header must never
-       * decide where a reset link points.
-       */
-    })
+    await requestPasswordReset(payload, parsed.data.email)
   } catch (error) {
     payload.logger.error({ err: error, msg: 'Could not start a password reset.' })
 
@@ -626,13 +605,16 @@ export async function forgotPassword(
  *
  * §7.1e names two edge cases and they arrive as the same error, which is correct: an **expired** link
  * and a **reused** one are both "this token is no longer valid", and Payload cannot tell them apart
- * either — `resetPassword` clears `resetPasswordToken` on success, so the second use finds nothing,
- * exactly as the sixty-first minute does. The message says both.
+ * either — `resetPassword` spends the link by setting `resetPasswordExpiration` to the moment of use
+ * (the token stays in place), and the reset lock in `Customers.ts` makes a concurrent second use
+ * re-read that spent expiry, so a reused link fails exactly as the sixty-first minute does. The
+ * message says both.
  *
  * **The password policy is checked here, not by a hook**, because `resetPassword` writes through
- * `payload.db.updateOne` and never runs a collection hook — so the `customers` `beforeValidate` rule
- * that governs every other path does not see this one. Same function, so the rules cannot diverge;
- * `lib/password-policy.ts` says why it is shared rather than duplicated.
+ * `payload.db.updateOne`, and the `beforeValidate` hooks it does call are handed the stored row,
+ * never the new password — so the `customers` rule that governs every other path does not see this
+ * one. Same function, so the rules cannot diverge; `lib/password-policy.ts` says why it is shared
+ * rather than duplicated.
  *
  * Resetting does **not** sign the customer in. A password reset is the one moment where the person
  * holding the link might not be the account holder, and handing out a seven-day session on the
@@ -657,10 +639,8 @@ export async function resetPassword(
     return failure(previous, formData, null, { password: problem })
   }
 
-  let customerId: null | number | string = null
-
   try {
-    const result = await payload.resetPassword({
+    await payload.resetPassword({
       collection: 'customers',
       data: { password: parsed.data.password, token: parsed.data.token },
       /*
@@ -670,8 +650,6 @@ export async function resetPassword(
        */
       overrideAccess: true,
     })
-
-    customerId = (result.user as { id?: number | string }).id ?? null
   } catch (error) {
     if (error instanceof APIError && error.status === 403) {
       return failure(
@@ -693,38 +671,17 @@ export async function resetPassword(
   }
 
   /*
-   * **A reset ends every session the account had** — Phase 36, audit R1-13.
+   * **A reset ends every session the account had** — Phase 36, audit R1-13; since sweep 1 (finding
+   * S02), in the same commit as the new password.
    *
-   * A reset is what someone does when they think their account is compromised, and until now
-   * whoever held the old cookie stayed signed in for up to seven days under the new password.
-   * `resetPassword` writes through `payload.db`, so the `Customers` hook that clears sessions on a
-   * password change never runs for it; this does the same thing explicitly.
-   *
-   * This cannot sign the customer out of the reset itself, because the reset never signs them in
-   * (see the docblock). Payload's operation does add a session and returns a token for it, but this
-   * action never sets that token as a cookie, so the session is unreachable and is cleared here with
-   * the rest.
-   *
-   * A failure here does not undo the reset — the new password is already stored and the old one no
-   * longer works — so it is logged and reported rather than shown as a failed reset.
+   * A reset is what someone does when they think their account is compromised, and whoever held the
+   * old cookie must not stay signed in under the new password. This action used to clear the
+   * sessions itself once `resetPassword` had returned — a second transaction, so the old cookie kept
+   * working until it committed, and for good if it failed. The `Customers` collection now does it
+   * inside the operation (its `beforeLogin` hook), so by the time this line runs the reset and the
+   * revocation have committed together or not at all. That includes the session the operation makes
+   * for the token it returns, which this action never sets as a cookie.
    */
-  if (customerId !== null) {
-    await payload
-      .update({
-        collection: 'customers',
-        data: { sessions: [] },
-        id: customerId,
-        overrideAccess: true,
-      })
-      .catch((error: unknown) => {
-        payload.logger.error({
-          err: error,
-          msg: 'A password was reset, but the old sessions could not be cleared.',
-        })
-        reportFailure(error, 'auth.resetPassword.sessions', { customerId: String(customerId) })
-      })
-  }
-
   redirect('/login?reset=1')
 }
 

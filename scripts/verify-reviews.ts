@@ -10,6 +10,9 @@
  * §21.1c abuse cases and §13.1f's rendering rules, which are decidable without one.
  *
  * Sections A–C are pure. D onwards is the real database, and the **D-10** guard applies.
+ *
+ * **Sweep 1, S19** added section G: a product may be reviewed exactly when its page would render —
+ * never while it is scheduled, withdrawn, a draft or in the trash.
  */
 
 import type { Payload } from 'payload'
@@ -17,7 +20,12 @@ import type { Payload } from 'payload'
 import config from '../src/payload.config'
 
 import { developmentDatabase } from '../src/lib/env.core'
-import { hasPaidOrderFor, hasReviewed, readProductReviews } from '../src/lib/reviews/read'
+import {
+  hasPaidOrderFor,
+  hasReviewed,
+  isReviewableProduct,
+  readProductReviews,
+} from '../src/lib/reviews/read'
 import {
   distributionPercent,
   isRating,
@@ -173,7 +181,7 @@ function check(name: string, ok: boolean, detail = '') {
 const payload: Payload = await getPayload({ config })
 
 const created: {
-  collection: 'customers' | 'order-items' | 'orders' | 'products' | 'reviews'
+  collection: 'customers' | 'order-items' | 'orders' | 'product-variants' | 'products' | 'reviews'
   id: number
 }[] = []
 
@@ -205,7 +213,10 @@ async function makeCustomer(tag: string) {
   return customer
 }
 
-async function makeProduct(index: string) {
+async function makeProduct(
+  index: string,
+  extra: { publishedAt?: string; status?: 'draft' | 'published' } = {},
+) {
   const product = await payload.create({
     collection: 'products',
     data: {
@@ -213,6 +224,7 @@ async function makeProduct(index: string) {
       slug: `review-fixture-${suffix}-${index}`,
       sortOrder: 9999,
       status: 'published',
+      ...extra,
     } as never,
     overrideAccess: true,
   })
@@ -220,6 +232,30 @@ async function makeProduct(index: string) {
   created.push({ collection: 'products', id: product.id })
 
   return product
+}
+
+/** One active, priced variant — which is what makes a published product sellable, and so listable. */
+async function makeSellable(productId: number, index: string) {
+  const variant = await payload.create({
+    collection: 'product-variants',
+    data: {
+      active: true,
+      color: 'Bone',
+      colorFamily: 'bone',
+      colorHex: '#e8e4dc',
+      inventoryQuantity: 5,
+      priceMinor: 5_000,
+      product: productId,
+      size: 'M',
+      sizeSortOrder: 30,
+      sku: `RV-${suffix}-${index}`,
+    } as never,
+    overrideAccess: true,
+  })
+
+  created.push({ collection: 'product-variants', id: variant.id })
+
+  return variant
 }
 
 async function makeReview(
@@ -434,6 +470,93 @@ try {
       'F: **an unpaid order verifies nothing** — §21.1a says paid, and the bar is exactly there',
       !(await hasPaidOrderFor(payload, browser.id, product.id)),
     )
+  }
+
+  /* ============================================ G — sweep 1 S19, only a product whose page renders */
+  {
+    /*
+     * `isReviewableProduct` used the collection's access rule alone — `status: published` — so a
+     * scheduled drop or a withdrawn product, both of which 404 on their page, accepted a review from
+     * anyone who posted the id. It now applies `publishedProductWhere`, the product page's own rule.
+     */
+    const live = await makeProduct('g-live')
+
+    await makeSellable(live.id, 'g-live')
+
+    check(
+      'G: a published product with a priced, active variant may be reviewed',
+      await isReviewableProduct(payload, live.id),
+    )
+
+    const scheduled = await makeProduct('g-scheduled', {
+      publishedAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    })
+
+    await makeSellable(scheduled.id, 'g-scheduled')
+
+    check(
+      'G: **S19 a scheduled product — published, `publishedAt` next week — may not**',
+      !(await isReviewableProduct(payload, scheduled.id)),
+    )
+
+    const released = await makeProduct('g-released', {
+      publishedAt: new Date(Date.now() - 86_400_000).toISOString(),
+    })
+
+    await makeSellable(released.id, 'g-released')
+
+    check(
+      'G: …while one whose `publishedAt` has passed may — the clause is a date, not a blanket refusal',
+      await isReviewableProduct(payload, released.id),
+    )
+
+    const withdrawn = await makeProduct('g-withdrawn')
+
+    check(
+      'G: **S19 a withdrawn product — published, with no active priced variant — may not**',
+      !(await isReviewableProduct(payload, withdrawn.id)),
+    )
+
+    const draft = await makeProduct('g-draft', { status: 'draft' })
+
+    await makeSellable(draft.id, 'g-draft')
+
+    check('G: a draft may not', !(await isReviewableProduct(payload, draft.id)))
+
+    const trashed = await makeProduct('g-trashed')
+
+    await makeSellable(trashed.id, 'g-trashed')
+
+    /* Moving to the trash is an update that stamps `deletedAt` — `payload.delete` is permanent. */
+    await payload.update({
+      collection: 'products',
+      data: { deletedAt: new Date().toISOString() } as never,
+      id: trashed.id,
+      overrideAccess: true,
+    })
+
+    const inTrash = await payload.find({
+      collection: 'products',
+      depth: 0,
+      limit: 1,
+      overrideAccess: true,
+      trash: true,
+      where: { and: [{ id: { equals: trashed.id } }, { deletedAt: { exists: true } }] },
+    })
+
+    check(
+      'G: a product in the trash may not',
+      inTrash.totalDocs === 1 && !(await isReviewableProduct(payload, trashed.id)),
+      `in trash: ${inTrash.totalDocs}`,
+    )
+
+    /* `cleanup` deletes with `trash: false`, which skips a trashed row — so this one goes now. */
+    await payload.delete({
+      collection: 'products',
+      id: trashed.id,
+      overrideAccess: true,
+      trash: true,
+    })
   }
 } finally {
   await cleanup()

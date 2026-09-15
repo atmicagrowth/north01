@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { CONFIRMATION_UNREADABLE, confirmationCopy } from '@/lib/checkout/confirmation-copy'
+import {
+  CONFIRMATION_UNREADABLE,
+  confirmationCopy,
+  stripeLineItemDescription,
+} from '@/lib/checkout/confirmation-copy'
 import type { PaymentStatus } from '@/lib/checkout/rules'
 
 /**
@@ -37,6 +41,26 @@ describe('confirmationCopy — one sentence per payment status', () => {
       expect(confirmationCopy(status).promisesEmail).toBe(false)
       expect(confirmationCopy(status).body).not.toMatch(/email/i)
     }
+  })
+
+  it('promises the pending customer an email only once the payment is confirmed, never "either way"', () => {
+    const { body } = confirmationCopy('pending_payment')
+
+    /*
+     * Sweep 1, S07: a bank debit can stay pending for days and then fail, and a failed payment or an
+     * expired session sends no email at all. The copy may promise the confirmation and nothing else.
+     */
+    expect(body).not.toMatch(/either way/i)
+    expect(body).toMatch(/email you once it is confirmed/i)
+    expect(body).toMatch(/if it does not go through, no email is sent/i)
+    expect(body).toMatch(/can take a few days/i)
+  })
+
+  it('says a refund is on its way back rather than already returned — the bank decides when it lands', () => {
+    const { body } = confirmationCopy('refunded')
+
+    expect(body).toMatch(/on its way back/i)
+    expect(body).not.toMatch(/has been returned/i)
   })
 
   it('tells a customer whose card was declined that nothing was charged, and offers the bag back', () => {
@@ -82,6 +106,48 @@ describe('confirmationCopy — one sentence per payment status', () => {
 
     /* draft and checkout_started share "Not completed"; every other status is distinct. */
     expect(labels.size).toBe(ALL.length - 1)
+  })
+})
+
+describe('stripeLineItemDescription — what Stripe prints under the one line item', () => {
+  const totals = (discountMinor: number, shippingMinor: number, taxMinor: number) => ({
+    discountMinor,
+    shippingMinor,
+    taxMinor,
+  })
+
+  it('names delivery and tax only when each is actually in the total', () => {
+    expect(stripeLineItemDescription(totals(0, 1_200, 840))).toBe('Includes delivery and tax.')
+    expect(stripeLineItemDescription(totals(0, 1_200, 0))).toBe('Includes delivery.')
+    expect(stripeLineItemDescription(totals(0, 0, 840))).toBe('Includes tax.')
+  })
+
+  it('does not claim delivery and tax for a discount alone — sweep 1, S15', () => {
+    /* A $200 bag with a 10% code, free Standard delivery and no tax: the total differs from the subtotal. */
+    expect(stripeLineItemDescription(totals(2_000, 0, 0))).toBe('Discount applied.')
+    expect(stripeLineItemDescription(totals(2_000, 1_200, 840))).toBe(
+      'Includes delivery and tax. Discount applied.',
+    )
+  })
+
+  it('says nothing at all when the total is the goods alone, so no empty description reaches Stripe', () => {
+    expect(stripeLineItemDescription(totals(0, 0, 0))).toBeNull()
+  })
+
+  /*
+   * The reference is `session.ts`'s to add, and it adds the customer-facing order number in front of
+   * this sentence (`checkout-session.test.ts`). This sentence carries none, so it can never leak the
+   * database id — a number the customer cannot match to anything.
+   */
+  it('carries no order reference of its own — session.ts puts the customer-facing order number in front', () => {
+    for (const [d, s, t] of [
+      [0, 0, 0],
+      [1, 1, 1],
+      [0, 1_200, 0],
+      [2_000, 0, 840],
+    ] as const) {
+      expect(stripeLineItemDescription(totals(d, s, t)) ?? '').not.toMatch(/order|\d/i)
+    }
   })
 })
 

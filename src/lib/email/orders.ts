@@ -3,6 +3,7 @@ import type { Payload, PayloadRequest } from 'payload'
 import type { EmailData } from '@/emails/messages'
 import type { EnqueueOutcome } from './send'
 
+import { isFullRefund } from '@/lib/checkout/rules'
 import { formatMinorUnits } from '@/lib/money'
 import { dedupeKeyFor } from './rules'
 import { enqueueEmail } from './send'
@@ -53,6 +54,11 @@ async function shopLocale(payload: Payload): Promise<string> {
  * receipt says what the customer bought at the price they paid, permanently, even after the product
  * is renamed or repriced. That is what makes `/checkout/success`'s promise (*"your confirmation email
  * is the record"*) true rather than aspirational.
+ *
+ * **`onHold` is read from the same row, inside the payment's transaction.** `finalisePaidOrder`
+ * writes `fulfilmentHold: stockShortfall` before it queues this, through the transaction `req` passes,
+ * so a paid order whose stock was not there gets a receipt that says so instead of one promising a
+ * dispatch notice (sweep 1, S06).
  */
 export async function queueOrderConfirmation(
   payload: Payload,
@@ -87,6 +93,7 @@ export async function queueOrderConfirmation(
       quantity: Number(item.quantity),
       variantLabel: String(item.variantLabel),
     })),
+    onHold: order.fulfilmentHold === 'stockShortfall',
     orderNumber: String(order.orderNumber),
     shipping: money(order.shippingMinor, currency, locale),
     shippingMethodLabel:
@@ -173,6 +180,12 @@ export async function queueFulfilmentMessage(
  * Keyed on the order **and the amount**, because partial refunds are ordinary — `Orders.refundedMinor`
  * says so — and a second, larger refund is a second thing the customer is owed a notice about. Keying
  * on the order alone would swallow it silently.
+ *
+ * **Partial or full is decided here, by the rule that decided the order's status.** `amountMinor` is
+ * Stripe's cumulative `amount_refunded`, and `isFullRefund` against the order's total is exactly the test
+ * `applyRefund` uses to leave the order `paid` or move it to `refunded` — so the message cannot call a
+ * refund full while the order still says paid. A partial one is announced as partial (sweep 1, S08),
+ * with the amount labelled as the running total rather than as this refund.
  */
 export async function queueRefundMessage(
   payload: Payload,
@@ -197,7 +210,11 @@ export async function queueRefundMessage(
       data: {
         amount: money(amountMinor, String(order.currency), locale),
         orderNumber: String(order.orderNumber),
-      },
+        partial:
+          typeof amountMinor === 'number' &&
+          typeof order.totalMinor === 'number' &&
+          !isFullRefund(amountMinor, order.totalMinor),
+      } satisfies EmailData['refund'],
       dedupeKey: dedupeKeyFor('refund', { amountMinor, id: orderId }),
       kind: 'refund',
       orderId,

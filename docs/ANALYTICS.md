@@ -154,7 +154,6 @@ instead of it (Phase 36, audit R3-13).
 | `catalog`, `search` | `src/lib/catalog/catalog.ts` (site settings, vocabulary, category and curated reads; listings, suggestions, popular searches) |
 | `tax.stripe` | `src/lib/tax/provider.ts` |
 | `shell` | `src/lib/navigation/shell-session.ts` |
-| `auth.resetPassword.sessions` | `src/lib/auth/actions.ts` |
 
 Unhandled request errors reach Sentry through `onRequestError` in `src/instrumentation.ts`; render
 errors through `src/app/(frontend)/error.tsx` and `src/app/global-error.tsx`.

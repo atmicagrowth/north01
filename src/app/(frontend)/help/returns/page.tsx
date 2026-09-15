@@ -13,7 +13,7 @@ import { pageMetadata } from '@/lib/seo/site'
  */
 export async function generateMetadata(): Promise<Metadata> {
   return pageMetadata({
-    description: 'How to return or exchange an order, and how long you have.',
+    description: 'How to return an order, and how long you have.',
     path: '/help/returns',
     title: 'Returns',
   })

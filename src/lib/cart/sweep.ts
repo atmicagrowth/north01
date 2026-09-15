@@ -40,20 +40,63 @@ import { reportFailure } from '@/lib/observability/report'
  * data by association (it sits beside a cookie, a time and what someone considered buying), and
  * keeping it past the thirty days it can be used serves nobody.
  *
- * Only `active` bags past their expiry. A `converted` bag is the order's history and is not touched.
- * An order that pointed at a swept bag keeps its snapshot; the relationship clears (`Orders.ts`
- * already documents that the link lives "while that bag still exists"), and a Stripe Checkout
- * Session lives 31 minutes (`lib/checkout/session.ts`), far inside the thirty days.
+ * Only `active` bags past their expiry — {@link expiredCartWhere}. A `converted` bag is the order's
+ * history and is not touched. An order that pointed at a swept bag keeps its snapshot; the
+ * relationship clears (`Orders.ts` already documents that the link lives "while that bag still
+ * exists"), and a Stripe Checkout Session lives 31 minutes (`lib/checkout/session.ts`), far inside the
+ * thirty days.
  *
  * Deleting through Payload runs `Carts.beforeDelete`, which removes the lines first.
+ *
+ * ### Why the delete re-checks, under a lock — sweep 1, S04
+ *
+ * The read and the delete are separate statements, and the delete used to be `id IN (…)` alone. A
+ * payment landing between them — a Checkout Session opened on the bag's last day, or a delayed bank
+ * payment clearing — converts the bag (`fulfil.ts`), and the sweep then deleted the converted bag and
+ * its lines anyway: the order's history, and the only thing that lets a guest open their confirmation
+ * page (`checkout/confirmation.ts` matches the order to the bag's token).
+ *
+ * So the bag sweep now does what the order sweep below does. In its own transaction it locks, each
+ * set in id order:
+ *
+ * 1. **the orders that point at the selected bags**, and only then
+ * 2. **the bags themselves**,
+ *
+ * and deletes with {@link expiredCartWhere} **re-applied** alongside the ids, inside the same
+ * transaction. A bag converted (or otherwise changed) before the lock was granted no longer matches
+ * and is left alone; a payment that arrives after it waits for the commit, then finds its bag gone
+ * and carries on — `fulfil.ts` treats a missing bag as nothing to convert, and the payment stands.
+ *
+ * **Orders first, because that is the order `fulfil.ts` takes them in.** Finalising a payment locks the
+ * order (the claim) and then the bag (the conversion). Deleting a bag clears `orders.cart`
+ * (`ON DELETE SET NULL`), which needs the order's lock too — so a sweep holding the bag and a payment
+ * holding the order would each wait on the other, and Postgres would abort one of them. Taking the
+ * orders first means the two queue on the same row instead.
+ *
+ * A bag whose delayed payment is still clearing on its expiry day is still deleted if nothing has
+ * converted it by the time the lock is granted — the retention promise is about the bag, and the
+ * order keeps the lines, the address and the record of the payment.
  */
 export const CART_SWEEP_BATCH = 200
+
+/**
+ * **Which bags the thirty-day promise covers** — `active` and past `expiresAt`, measured from the
+ * clock the caller passes. The sweep's read and its delete both use it (see "Why the delete
+ * re-checks").
+ */
+export function expiredCartWhere(now: Date): { and: Where[] } {
+  return {
+    and: [{ status: { equals: 'active' } }, { expiresAt: { less_than: now.toISOString() } }],
+  }
+}
 
 export async function sweepExpiredCarts(
   payload: Payload,
   now: Date = new Date(),
   batch: number = CART_SWEEP_BATCH,
 ): Promise<{ deleted: number; more: boolean }> {
+  const expiry = expiredCartWhere(now)
+
   const expired = await payload.find({
     collection: 'carts',
     depth: 0,
@@ -61,20 +104,51 @@ export async function sweepExpiredCarts(
     overrideAccess: true,
     select: {},
     sort: 'expiresAt',
-    where: {
-      and: [{ status: { equals: 'active' } }, { expiresAt: { less_than: now.toISOString() } }],
-    },
+    where: expiry,
   })
 
   const ids = expired.docs.map((cart) => cart.id)
 
   if (ids.length === 0) return { deleted: 0, more: false }
 
-  const result = await payload.delete({
-    collection: 'carts',
-    overrideAccess: true,
-    where: { id: { in: ids } },
-  })
+  const transactionID = await payload.db.beginTransaction()
+
+  if (transactionID === null) {
+    throw new Error('Could not begin a transaction for the bag sweep.')
+  }
+
+  let result: Awaited<ReturnType<typeof deleteExpired>>
+
+  try {
+    const tx = transactionHandle(payload, transactionID, 'bag sweep')
+    const idList = sql.join(
+      ids.map((id) => sql`${id}`),
+      sql`, `,
+    )
+
+    await tx.execute(
+      sql`SELECT "id" FROM "orders"
+          WHERE "cart_id" IN (${idList})
+          ORDER BY "id"
+          FOR UPDATE`,
+    )
+
+    await tx.execute(
+      sql`SELECT "id" FROM "carts"
+          WHERE "id" IN (${idList})
+          ORDER BY "id"
+          FOR UPDATE`,
+    )
+
+    result = await deleteExpired(payload, transactionID, ids, expiry)
+
+    await payload.db.commitTransaction(transactionID)
+  } catch (error) {
+    /* Payload may already have ended the transaction on a failed Local API call. */
+    await payload.db.rollbackTransaction(transactionID).catch(() => undefined)
+
+    throw error
+  }
 
   if (result.errors.length > 0) {
     payload.logger.error({
@@ -89,6 +163,22 @@ export async function sweepExpiredCarts(
   }
 
   return { deleted: result.docs.length, more: ids.length === batch }
+}
+
+/** The selected ids, **and** the expiry predicate again — see "Why the delete re-checks". */
+function deleteExpired(
+  payload: Payload,
+  transactionID: number | string,
+  ids: (number | string)[],
+  expiry: { and: Where[] },
+) {
+  return payload.delete({
+    collection: 'carts',
+    depth: 0,
+    overrideAccess: true,
+    req: { transactionID } as Parameters<typeof payload.find>[0]['req'],
+    where: { and: [{ id: { in: ids } }, ...expiry.and] },
+  })
 }
 
 /* -------------------------------------------------------------------------------------------------
@@ -186,6 +276,23 @@ export function unpaidOrderRetentionWhere(now: Date): { and: Where[] } {
 }
 
 type TxHandle = { execute: (query: unknown) => Promise<unknown> }
+
+/** The raw handle of an open transaction, for the `FOR UPDATE` locks both sweeps take. */
+function transactionHandle(
+  payload: Payload,
+  transactionID: number | string,
+  label: string,
+): TxHandle {
+  const tx = (payload.db as unknown as { sessions?: Record<string, { db: TxHandle }> }).sessions?.[
+    String(transactionID)
+  ]?.db
+
+  if (!tx) {
+    throw new Error(`The ${label}’s transaction session was not available.`)
+  }
+
+  return tx
+}
 
 /**
  * **Deletes unpaid, unheld orders that have sat untouched for {@link UNPAID_ORDER_RETENTION_DAYS}
@@ -299,12 +406,7 @@ export async function sweepUnpaidOrders(
   let result: Awaited<ReturnType<typeof deleteQualifying>>
 
   try {
-    const tx = (payload.db as unknown as { sessions?: Record<string, { db: TxHandle }> })
-      .sessions?.[String(transactionID)]?.db
-
-    if (!tx) {
-      throw new Error('The unpaid-order sweep’s transaction session was not available.')
-    }
+    const tx = transactionHandle(payload, transactionID, 'unpaid-order sweep')
 
     await tx.execute(
       sql`SELECT "id" FROM "orders"

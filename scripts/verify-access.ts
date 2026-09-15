@@ -25,10 +25,12 @@
  * customer rows.
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload, TypedUser } from 'payload'
 
 import config from '../src/payload.config'
 
+import { CUSTOMER_REVISION_KEY_PREFIX } from '../src/lib/auth/customer-revision'
 import { developmentDatabase } from '../src/lib/env.core'
 
 if (!developmentDatabase.ok) {
@@ -39,7 +41,14 @@ if (!developmentDatabase.ok) {
   )
 }
 
-const { getPayload } = await import('payload')
+const {
+  createLocalReq,
+  getPayload,
+  logoutOperation,
+  refreshOperation,
+  updateByIDOperation,
+  updateOperation,
+} = await import('payload')
 
 const PREFIX = 'verify-access'
 const PASSWORD = 'correct-horse-battery-staple'
@@ -120,6 +129,79 @@ async function fixture(
   return created as { id: number }
 }
 
+/**
+ * **A Payload write held open in its own transaction** — sweep 1, finding S02.
+ *
+ * The races S02 is about cannot be produced by firing two requests and hoping. So the revoking write
+ * runs inside a transaction this script owns and has not committed; the competing write is started;
+ * `blockedBehind` waits until Postgres itself reports that write queued behind the held transaction;
+ * and only then is the held one committed. Every interleaving below is therefore the dangerous one,
+ * on every run, rather than on the runs where the timing happened to line up.
+ */
+async function holdTransaction() {
+  const transactionID = await payload.db.beginTransaction()
+
+  if (transactionID === null) {
+    throw new Error('Could not begin a transaction to hold.')
+  }
+
+  const handle = (
+    payload.db as unknown as {
+      sessions: Record<
+        string,
+        { db: { execute: (query: unknown) => Promise<{ rows: unknown[] }> } }
+      >
+    }
+  ).sessions[String(transactionID)].db
+
+  const { rows } = await handle.execute(sql`SELECT pg_backend_pid() AS "pid"`)
+
+  return {
+    commit: () => payload.db.commitTransaction(transactionID),
+    pid: Number((rows[0] as { pid: number }).pid),
+    req: { transactionID } as never,
+    transactionID,
+  }
+}
+
+/** Wait until some other backend is blocked on a lock held by `pid`. */
+async function blockedBehind(pid: number, timeoutMs = 15_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    const { rows } = await payload.db.drizzle.execute(
+      sql`SELECT count(*)::int AS "waiting" FROM pg_stat_activity WHERE ${pid} = ANY(pg_blocking_pids(pid))`,
+    )
+
+    if ((rows[0] as { waiting: number }).waiting > 0) {
+      return true
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+
+  return false
+}
+
+/** How an operation ended: `'done'`, or the name of the error it threw. */
+function outcomeOf(operation: Promise<unknown>): Promise<string> {
+  return operation.then(
+    () => 'done',
+    (error: unknown) => (error instanceof Error ? error.constructor.name : String(error)),
+  )
+}
+
+/** Whether `operation` settles within `ms` — false when it is still queued on a lock. */
+function settlesWithin(operation: Promise<unknown>, ms = 5_000): Promise<boolean> {
+  return Promise.race([
+    operation.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms)),
+  ])
+}
+
 /* -------------------------------------------------------------------------------------------------
  * Fixtures
  * ---------------------------------------------------------------------------------------------- */
@@ -176,8 +258,30 @@ async function cleanup() {
     overrideAccess: true,
     trash: false,
   })
+
+  const customerIds = (
+    await payload.find({
+      collection: 'customers',
+      limit: 0,
+      overrideAccess: true,
+      pagination: false,
+      trash: true,
+      where,
+    })
+  ).docs.map((doc) => `${CUSTOMER_REVISION_KEY_PREFIX}${doc.id}`)
+
   await payload.delete({ collection: 'customers', where, overrideAccess: true, trash: false })
   await payload.delete({ collection: 'users', where, overrideAccess: true })
+
+  // The revision markers the locks stamped — `Customers.ts` never deletes one, so a fixture must.
+  if (customerIds.length > 0) {
+    await payload.db.drizzle.execute(
+      sql`DELETE FROM "payload_kv" WHERE "key" IN (${sql.join(
+        customerIds.map((key) => sql`${key}`),
+        sql`, `,
+      )})`,
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------------------------------
@@ -841,6 +945,623 @@ try {
       user: disabledUser,
     }),
   )
+
+  /* ---- Sweep 1, S02: a revocation stays revoked while another write of the row is in flight ---- */
+
+  {
+    const racerEmail = `${PREFIX}-racer@example.test`
+    const NEW_PASSWORD = 'A-new-passphrase-for-verify-9'
+    const racer = await makeCustomer('racer')
+    const racerUser = asUser(racer, 'customers')
+
+    const sessionsOf = async (id: number) =>
+      (
+        await payload.findByID({
+          collection: 'customers',
+          id,
+          overrideAccess: true,
+          showHiddenFields: true,
+        })
+      ).sessions ?? []
+
+    const signIn = (password = PASSWORD) =>
+      payload.login({ collection: 'customers', data: { email: racerEmail, password } })
+
+    const authenticates = async (token: string | undefined) =>
+      (await payload.auth({ headers: new Headers({ Authorization: `JWT ${token}` }) })).user !==
+      null
+
+    const reEnable = () =>
+      payload.update({
+        collection: 'customers',
+        data: { accountStatus: 'active' },
+        id: racer.id,
+        overrideAccess: true,
+      })
+
+    /* The REST refresh door. */
+
+    const refreshing = await signIn()
+    const refreshingAuth = await payload.auth({
+      headers: new Headers({ Authorization: `JWT ${refreshing.token}` }),
+    })
+    const restRefresh = await createLocalReq({ user: refreshingAuth.user as TypedUser }, payload)
+
+    restRefresh.payloadAPI = 'REST'
+
+    await denied(
+      'S02: **`POST /api/customers/refresh-token` is refused** — it outlived the seven-day bound and rewrote the row from a stale read',
+      () => refreshOperation({ collection: payload.collections.customers, req: restRefresh }),
+      ['Forbidden'],
+    )
+
+    const restLogout = await createLocalReq({ user: refreshingAuth.user as TypedUser }, payload)
+
+    restLogout.payloadAPI = 'REST'
+
+    await allowed('S02: …while `POST /api/customers/logout` still signs out', () =>
+      logoutOperation({ collection: payload.collections.customers, req: restLogout }),
+    )
+
+    check('S02: …and that sign-out revoked its session', !(await authenticates(refreshing.token)))
+
+    /* A disable against an in-flight profile write — the measured failure. */
+
+    const patched = await signIn()
+    const disablingForPatch = await holdTransaction()
+
+    await payload.update({
+      collection: 'customers',
+      data: { accountStatus: 'disabled' },
+      id: racer.id,
+      overrideAccess: true,
+      req: disablingForPatch.req,
+    })
+
+    const stalePatch = payload
+      .update({
+        collection: 'customers',
+        data: { firstName: 'Stale' },
+        id: racer.id,
+        overrideAccess: false,
+        user: racerUser,
+      })
+      .then(
+        () => 'written',
+        (error: unknown) => (error instanceof Error ? error.constructor.name : String(error)),
+      )
+
+    check(
+      "S02: the customer's own profile write is queued behind the uncommitted disable",
+      await blockedBehind(disablingForPatch.pid),
+    )
+
+    await disablingForPatch.commit()
+    await stalePatch
+
+    const afterPatch = await payload.findByID({
+      collection: 'customers',
+      id: racer.id,
+      overrideAccess: true,
+    })
+
+    check(
+      '**S02: a disable that commits under an in-flight profile write stays disabled** — it came back `active` before the lock',
+      afterPatch.accountStatus === 'disabled',
+      String(afterPatch.accountStatus),
+    )
+    check(
+      "S02: …its sessions stay revoked, so the customer's token stops authenticating",
+      (await sessionsOf(racer.id)).length === 0 && !(await authenticates(patched.token)),
+      `${(await sessionsOf(racer.id)).length} session(s)`,
+    )
+
+    /* A disable against an in-flight sign-out of another session. */
+
+    await reEnable()
+
+    const leaving = await signIn()
+    const staying = await signIn()
+    const leavingAuth = await payload.auth({
+      headers: new Headers({ Authorization: `JWT ${leaving.token}` }),
+    })
+    const disablingForLogout = await holdTransaction()
+
+    await payload.update({
+      collection: 'customers',
+      data: { accountStatus: 'disabled' },
+      id: racer.id,
+      overrideAccess: true,
+      req: disablingForLogout.req,
+    })
+
+    const logoutReq = await createLocalReq({ user: leavingAuth.user as TypedUser }, payload)
+
+    logoutReq.payloadAPI = 'REST'
+
+    const staleLogout = logoutOperation({
+      collection: payload.collections.customers,
+      req: logoutReq,
+    }).catch(() => undefined)
+
+    check(
+      'S02: a sign-out is queued behind the uncommitted disable',
+      await blockedBehind(disablingForLogout.pid),
+    )
+
+    await disablingForLogout.commit()
+    await staleLogout
+
+    const afterLogout = await payload.findByID({
+      collection: 'customers',
+      id: racer.id,
+      overrideAccess: true,
+      showHiddenFields: true,
+    })
+
+    check(
+      '**S02: a sign-out that straddles a disable does not put the other sessions back**',
+      afterLogout.accountStatus === 'disabled' &&
+        (afterLogout.sessions ?? []).length === 0 &&
+        !(await authenticates(staying.token)),
+      `${String(afterLogout.accountStatus)}, ${(afterLogout.sessions ?? []).length} session(s)`,
+    )
+
+    /* A reset, and a sign-in with the old password that straddles it. */
+
+    await reEnable()
+
+    const beforeReset = await signIn()
+    const resetToken = await payload.forgotPassword({
+      collection: 'customers',
+      data: { email: racerEmail },
+      disableEmail: true,
+    })
+    const resetting = await holdTransaction()
+
+    await payload.resetPassword({
+      collection: 'customers',
+      data: { password: NEW_PASSWORD, token: String(resetToken) },
+      overrideAccess: true,
+      req: resetting.req,
+    })
+
+    const staleSignIn = signIn().then(
+      () => 'signed in',
+      (error: unknown) => (error instanceof Error ? error.constructor.name : String(error)),
+    )
+
+    check(
+      'S02: a sign-in with the old password is queued behind the uncommitted reset',
+      await blockedBehind(resetting.pid),
+    )
+
+    await resetting.commit()
+
+    const staleOutcome = await staleSignIn
+
+    check(
+      '**S02: a sign-in with the old password that straddles a reset is refused** — it restored the old hash before',
+      staleOutcome === 'AuthenticationError',
+      staleOutcome,
+    )
+    check(
+      'S02: **a reset leaves no session at all** — the old cookie and the reset’s own, in the same commit as the password',
+      (await sessionsOf(racer.id)).length === 0 && !(await authenticates(beforeReset.token)),
+      `${(await sessionsOf(racer.id)).length} session(s)`,
+    )
+
+    await denied('S02: …the old password no longer signs in', () => signIn(), [
+      'AuthenticationError',
+    ])
+    await allowed('S02: …and the new one does', () => signIn(NEW_PASSWORD))
+
+    /* One link, used three times at once. */
+
+    const sharedToken = await payload.forgotPassword({
+      collection: 'customers',
+      data: { email: racerEmail },
+      disableEmail: true,
+    })
+    const reuses = await Promise.allSettled(
+      [1, 2, 3].map((attempt) =>
+        payload.resetPassword({
+          collection: 'customers',
+          data: { password: `${NEW_PASSWORD}-${attempt}`, token: String(sharedToken) },
+          overrideAccess: true,
+        }),
+      ),
+    )
+
+    check(
+      'S02: **one reset link used three times at once works exactly once**',
+      reuses.filter((outcome) => outcome.status === 'fulfilled').length === 1,
+      `${reuses.filter((outcome) => outcome.status === 'fulfilled').length} succeeded`,
+    )
+
+    /* The lock is the customer's own row, whatever `where` they send. */
+
+    const bystander = await makeCustomer('bystander')
+    const holdingBystander = await holdTransaction()
+
+    await payload.update({
+      collection: 'customers',
+      data: { phone: '555 0100' },
+      id: bystander.id,
+      overrideAccess: true,
+      req: holdingBystander.req,
+    })
+
+    const broadWrite = payload
+      .update({
+        collection: 'customers',
+        data: { phone: '555 0199' },
+        overrideAccess: false,
+        user: racerUser,
+        where: { id: { exists: true } },
+      })
+      .then(
+        (result) => result.docs.map((doc) => doc.id),
+        () => [] as number[],
+      )
+
+    const finishedFirst = await Promise.race([
+      broadWrite.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000)),
+    ])
+
+    await holdingBystander.commit()
+
+    const broadWritten = await broadWrite
+
+    check(
+      "S02: a customer's `where: { id: { exists: true } }` update does not wait on another customer's locked row",
+      finishedFirst,
+    )
+    check(
+      '…and it wrote their own row and nobody else’s',
+      broadWritten.length === 1 && broadWritten[0] === racer.id,
+      broadWritten.join(','),
+    )
+
+    /* The admin panel's bulk edit arrives as a `where`, and locks the rows that `where` names. */
+    const bulk = await payload.update({
+      collection: 'customers',
+      data: { phone: '555 0142' },
+      overrideAccess: false,
+      user: adminUser,
+      where: { id: { in: [racer.id, bystander.id] } },
+    })
+
+    check(
+      'S02: a staff bulk edit by `where` still writes every row it names',
+      bulk.errors.length === 0 && bulk.docs.length === 2,
+      `${bulk.docs.length} written, ${bulk.errors.length} error(s)`,
+    )
+
+    /*
+     * **The recheck: the lock is decided by the access rule, not by who is asking.** Payload's REST
+     * handlers never pass `overrideAccess`, and the first version of the lock read that absence as
+     * trusted server code — so an anonymous `PATCH` locked whatever it named, the whole table for a
+     * broad `where`, before `update` refused it. Each call below is shaped exactly as the REST
+     * handler makes it (`payloadAPI: 'REST'`, no `overrideAccess`) and runs while another
+     * transaction holds the bystander's row. One that locked that row would queue behind it;
+     * `settlesWithin` is false for exactly that case, which `pg_blocking_pids` confirms below.
+     */
+
+    const holdingForRest = await holdTransaction()
+
+    await payload.update({
+      collection: 'customers',
+      data: { phone: '555 0101' },
+      id: bystander.id,
+      overrideAccess: true,
+      req: holdingForRest.req,
+    })
+
+    const restReq = async (user?: TypedUser) => {
+      const req = await createLocalReq(user ? { user } : {}, payload)
+
+      req.payloadAPI = 'REST'
+
+      return req
+    }
+
+    const racerRestUser = racerUser
+
+    const restCases: { expect: string; name: string; run: () => Promise<unknown> }[] = [
+      {
+        name: 'an anonymous REST `PATCH /api/customers?where[id][exists]=true`',
+        expect: 'Forbidden',
+        run: async () =>
+          updateOperation({
+            collection: payload.collections.customers,
+            data: { phone: '555 0666' },
+            req: await restReq(),
+            where: { id: { exists: true } },
+          }),
+      },
+      {
+        name: "an anonymous REST `PATCH /api/customers/<a customer's id>`",
+        expect: 'Forbidden',
+        run: async () =>
+          updateByIDOperation({
+            collection: payload.collections.customers,
+            data: { phone: '555 0666' },
+            id: bystander.id,
+            req: await restReq(),
+          }),
+      },
+      {
+        name: "a customer's REST `PATCH` of another customer's row",
+        expect: 'Forbidden',
+        run: async () =>
+          updateByIDOperation({
+            collection: payload.collections.customers,
+            data: { phone: '555 0666' },
+            id: bystander.id,
+            req: await restReq(racerRestUser),
+          }),
+      },
+      {
+        name: "a customer's REST `where[hash][exists]=true` (a hidden column)",
+        expect: 'QueryError',
+        run: async () =>
+          updateOperation({
+            collection: payload.collections.customers,
+            data: { phone: '555 0666' },
+            req: await restReq(racerRestUser),
+            where: { hash: { exists: true } },
+          }),
+      },
+    ]
+
+    const pending: Promise<unknown>[] = []
+
+    for (const restCase of restCases) {
+      const running = outcomeOf(restCase.run())
+
+      pending.push(running)
+
+      const settled = await settlesWithin(running)
+      const outcome = settled ? await running : 'still queued on the bystander’s lock'
+
+      check(
+        `S02 recheck: ${restCase.name} locks nothing it may not write, and is refused as before`,
+        settled && outcome === restCase.expect,
+        outcome,
+      )
+    }
+
+    const broadRest = updateOperation({
+      collection: payload.collections.customers,
+      data: { phone: '555 0177' },
+      req: await restReq(racerRestUser),
+      where: { id: { exists: true } },
+    })
+
+    pending.push(broadRest.catch(() => undefined))
+
+    const broadRestSettled = await settlesWithin(broadRest)
+    const broadRestIds = broadRestSettled
+      ? (await broadRest.catch(() => ({ docs: [] as { id: number }[] }))).docs.map((doc) => doc.id)
+      : []
+
+    check(
+      "S02 recheck: a customer's REST `where[id][exists]=true` does not wait on another customer's row, and writes only their own",
+      broadRestSettled && broadRestIds.length === 1 && broadRestIds[0] === racer.id,
+      broadRestSettled ? broadRestIds.join(',') : 'still queued on the bystander’s lock',
+    )
+
+    const { rows: blockedRows } = await payload.db.drizzle.execute(
+      sql`SELECT count(*)::int AS "waiting" FROM pg_stat_activity WHERE ${holdingForRest.pid} = ANY(pg_blocking_pids(pid))`,
+    )
+
+    check(
+      'S02 recheck: …and Postgres reports nothing queued behind the bystander’s lock',
+      (blockedRows[0] as { waiting: number }).waiting === 0,
+      `${(blockedRows[0] as { waiting: number }).waiting} waiting`,
+    )
+
+    /* A permitted REST write still takes the lock: the editor's edit of the held row waits for it. */
+    const staffRest = outcomeOf(
+      updateByIDOperation({
+        collection: payload.collections.customers,
+        data: { phone: '555 0188' },
+        id: bystander.id,
+        req: await restReq(editorUser),
+      }),
+    )
+
+    pending.push(staffRest)
+
+    check(
+      'S02 recheck: a staff REST edit of a row another transaction holds still queues behind it',
+      await blockedBehind(holdingForRest.pid),
+    )
+
+    await holdingForRest.commit()
+    await Promise.all(pending)
+
+    check(
+      'S02 recheck: …and completes once that transaction commits',
+      (await staffRest) === 'done',
+      await staffRest,
+    )
+
+    const ownRest = await outcomeOf(
+      updateByIDOperation({
+        collection: payload.collections.customers,
+        data: { firstName: 'Renamed' },
+        id: racer.id,
+        req: await restReq(racerRestUser),
+      }),
+    )
+    const renamed = await payload.findByID({
+      collection: 'customers',
+      id: racer.id,
+      overrideAccess: true,
+    })
+
+    check(
+      "S02 recheck: a customer's own REST profile edit still works",
+      ownRest === 'done' && renamed.firstName === 'Renamed',
+      `${ownRest}, firstName ${renamed.firstName}`,
+    )
+
+    const staffBulkRest = await updateOperation({
+      collection: payload.collections.customers,
+      data: { phone: '555 0143' },
+      req: await restReq(adminUser),
+      where: { id: { in: [racer.id, bystander.id] } },
+    })
+
+    check(
+      'S02 recheck: a staff REST bulk edit by `where` still writes every row it names',
+      staffBulkRest.errors.length === 0 && staffBulkRest.docs.length === 2,
+      `${staffBulkRest.docs.length} written, ${staffBulkRest.errors.length} error(s)`,
+    )
+
+    /*
+     * **The sign-in check runs on the sign-in's own connection.** Its first version read the
+     * committed row on a second pool connection while the sign-in's transaction held the first and
+     * the row lock, so every successful sign-in needed two connections at once. Here every pool
+     * connection but one is checked out and held, and a sign-in has to finish on the one that is
+     * left. The first version waited out `connectionTimeoutMillis` (15s) for a second connection and
+     * failed; the window below is shorter than that on purpose.
+     */
+
+    const lonely = await makeCustomer('lonely')
+    const lonelyEmail = `${PREFIX}-lonely@example.test`
+    const pool = (
+      payload.db as unknown as {
+        pool: {
+          connect: () => Promise<{ release: () => void }>
+          idleCount: number
+          options: { max?: number }
+          totalCount: number
+        }
+      }
+    ).pool
+    /*
+     * What is already checked out stays out of reach — the adapter's `connect` keeps one client for
+     * its reconnect listener and never releases it — so the count to hold is the pool's size, less
+     * those, less the one the sign-in gets.
+     */
+    const alreadyOut = pool.totalCount - pool.idleCount
+    const occupied = await Promise.all(
+      Array.from({ length: (pool.options.max ?? 10) - alreadyOut - 1 }, () => pool.connect()),
+    )
+    const lonelySignIn = outcomeOf(
+      payload.login({ collection: 'customers', data: { email: lonelyEmail, password: PASSWORD } }),
+    )
+    const lonelySettled = await settlesWithin(lonelySignIn, 10_000)
+
+    for (const client of occupied) {
+      client.release()
+    }
+
+    const lonelyOutcome = await lonelySignIn
+
+    check(
+      `S02 recheck: **a sign-in completes with a single free pool connection** (${occupied.length + alreadyOut} of ${pool.options.max ?? 10} held elsewhere)`,
+      lonelySettled && lonelyOutcome === 'done',
+      lonelySettled ? lonelyOutcome : 'still waiting for a second connection after 10s',
+    )
+
+    /*
+     * `resetLoginAttempts` rewrites `updated_at` inside the sign-in's transaction whenever the account
+     * has a failed attempt on record — the reason the check cannot use that column as its marker.
+     */
+    await denied(
+      'S02 recheck: a wrong password is refused…',
+      () =>
+        payload.login({
+          collection: 'customers',
+          data: { email: lonelyEmail, password: 'not-the-password' },
+        }),
+      ['AuthenticationError'],
+    )
+    await allowed('S02 recheck: …and the right one, straight after it, still signs in', () =>
+      payload.login({ collection: 'customers', data: { email: lonelyEmail, password: PASSWORD } }),
+    )
+
+    /* A sign-out, the one revocation that leaves `updated_at` alone, straddled by a sign-in. */
+
+    const leavingDevice = await payload.login({
+      collection: 'customers',
+      data: { email: lonelyEmail, password: PASSWORD },
+    })
+    const leavingDeviceAuth = await payload.auth({
+      headers: new Headers({ Authorization: `JWT ${leavingDevice.token}` }),
+    })
+    const signingOut = await holdTransaction()
+    const signOutReq = await createLocalReq({ user: leavingDeviceAuth.user as TypedUser }, payload)
+
+    signOutReq.transactionID = signingOut.transactionID
+
+    await logoutOperation({ collection: payload.collections.customers, req: signOutReq })
+
+    const signInOverSignOut = outcomeOf(
+      payload.login({ collection: 'customers', data: { email: lonelyEmail, password: PASSWORD } }),
+    )
+
+    check(
+      'S02 recheck: a sign-in is queued behind an uncommitted sign-out',
+      await blockedBehind(signingOut.pid),
+    )
+
+    await signingOut.commit()
+
+    check(
+      '**S02 recheck: a sign-in that straddles a sign-out is refused**, so the signed-out session stays dead',
+      (await signInOverSignOut) === 'AuthenticationError' &&
+        !(await authenticates(leavingDevice.token)),
+      await signInOverSignOut,
+    )
+
+    /* A permanent delete, straddled by a sign-in whose write is an upsert. */
+
+    const deleting = await holdTransaction()
+
+    await payload.delete({
+      collection: 'customers',
+      id: lonely.id,
+      overrideAccess: true,
+      req: deleting.req,
+      trash: false,
+    })
+
+    const signInOverDelete = outcomeOf(
+      payload.login({ collection: 'customers', data: { email: lonelyEmail, password: PASSWORD } }),
+    )
+
+    check(
+      'S02 recheck: a sign-in is queued behind an uncommitted delete',
+      await blockedBehind(deleting.pid),
+    )
+
+    await deleting.commit()
+
+    const resurrected = await payload.find({
+      collection: 'customers',
+      limit: 1,
+      overrideAccess: true,
+      trash: true,
+      where: { id: { equals: lonely.id } },
+    })
+
+    check(
+      '**S02 recheck: a sign-in that straddles a delete is refused and does not re-insert the account**',
+      (await signInOverDelete) === 'AuthenticationError' && resurrected.docs.length === 0,
+      `${await signInOverDelete}, ${resurrected.docs.length} row(s)`,
+    )
+
+    // `cleanup` finds markers through the fixtures still present, and this one's customer is gone.
+    await payload.db.drizzle.execute(
+      sql`DELETE FROM "payload_kv" WHERE "key" = ${`${CUSTOMER_REVISION_KEY_PREFIX}${lonely.id}`}`,
+    )
+  }
 
   /* ---- Password policy, on every path ---- */
 

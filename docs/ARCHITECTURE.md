@@ -632,8 +632,11 @@ push people toward `Password1!` and away from length, which is the property that
 It lives in `src/lib/password-policy.ts` — a module with no imports, so the `customers` collection can
 reach it through a relative path under tsx and the Zod schemas can reach it through the alias — and it
 is enforced by a collection hook rather than only by the form, so the REST API, the admin panel and a
-seed script are all held to it. The reset flow is the one path a hook cannot see (`resetPassword`
-writes through `payload.db.updateOne`), so the action calls the same function directly.
+seed script are all held to it. The reset flow is the one path the policy hook cannot check:
+`resetPassword` writes through `payload.db.updateOne`, and the `beforeValidate` hooks it does call
+receive the stored row rather than the new password, so the action calls the same function directly.
+It does run `beforeOperation` and `beforeLogin`, which is where the reset lock and the session wipe
+live (sweep 1 of the owner follow-up, notes §1.43).
 
 ### D-25 — The password-reset flow is real; only its delivery is stubbed
 
@@ -1077,8 +1080,12 @@ Phase 12 chose.
 Phase 14 cleared the bag cookie at every sign-in, treating it as a guest identity only. Phase 31
 (plan §31.1f, "session expired") needed the opposite: once the cookie was gone, a customer whose session
 ran out mid-checkout was told *"Your bag is empty"*, with nothing on the device left to recognise their
-intact bag by. `mergeGuestCart` now leaves the cookie naming the customer's bag, and `hasSignedOutBag()`
-turns *no customer + a cookie that names an owned bag* into *"Your session has ended — sign in"*.
+intact bag by. `mergeGuestCart` now leaves the cookie naming the customer's bag after a merge, and
+`hasSignedOutBag()` turns *no customer + a cookie that names an owned bag* into *"Your session has ended —
+sign in"*. A merge deferred because the guest bag has a checkout in flight (sweep 1, S03) leaves the
+cookie naming the guest bag instead, and nothing retries it: a later sign-in merges that bag only if the
+cookie still names it, and signing out — or the first add to the bag while signed in, which re-issues the
+cookie for the account bag — forgets it.
 
 It exposes nothing Phase 14's second sweep protects against: `resolveCart` still refuses an owned bag
 to an anonymous request whatever the cookie says, so the cookie can only ever lead to a sign-in

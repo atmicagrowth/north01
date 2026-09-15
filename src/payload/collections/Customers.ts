@@ -1,5 +1,13 @@
-import type { CollectionConfig } from 'payload'
-import { AuthenticationError, Forbidden, ValidationError } from 'payload'
+import { sql } from '@payloadcms/db-postgres'
+import type { AccessResult, CollectionConfig, PayloadRequest, Where } from 'payload'
+import {
+  AuthenticationError,
+  combineQueries,
+  executeAccess,
+  Forbidden,
+  validateQueryPaths,
+  ValidationError,
+} from 'payload'
 
 import { checkPassword } from '../../lib/password-policy'
 import {
@@ -14,6 +22,12 @@ import {
 import { resetPasswordEmail } from '../email/resetPasswordEmail'
 import { normaliseEmail } from '../fields/slug'
 import { cascadeDelete } from '../hooks/cascadeDelete'
+import {
+  bypassesAccessControl,
+  CUSTOMER_REVISION_KEY_PREFIX,
+  type RevisionSnapshot,
+  signInOvertaken,
+} from '../../lib/auth/customer-revision'
 import { RESET_TOKEN_LIFETIME_MS } from '../../lib/auth/reset-cooldown'
 
 /**
@@ -75,8 +89,11 @@ export const Customers: CollectionConfig = {
       /**
        * One hour — Payload's default, stated because §7.1e requires an *expired reset link* to be a
        * defined behaviour rather than an accident of a library default. The token is single-use as
-       * well as time-limited: `resetPassword` clears `resetPasswordToken` when it succeeds, so the
-       * second use of a link fails the same way the twenty-fifth hour does.
+       * well as time-limited: `resetPassword` finds the account by the token *and* an expiry still in
+       * the future, and when it succeeds it sets `resetPasswordExpiration` to that moment. It leaves
+       * the token itself in place, so a second use of the link fails on the expiry, the same way the
+       * twenty-fifth hour does. Two uses at the same moment are the reset lock's job, in
+       * `beforeOperation` below.
        */
       expiration: RESET_TOKEN_LIFETIME_MS,
 
@@ -300,21 +317,31 @@ export const Customers: CollectionConfig = {
      *
      * The storefront signs customers in, sends reset links and resets passwords through Server
      * Actions that call the Local API, and those actions carry the controls: Turnstile, the password
-     * policy (which `resetPassword` bypasses, since it writes through `payload.db`), and the reset
+     * policy (which the hook below cannot apply to a password `resetPassword` sets), and the reset
      * cooldown. Payload's own `/api/customers/login`, `/forgot-password` and `/reset-password` sat
      * beside them with none of it — measured by the audit: a reset through REST accepted the password
      * `abc` and signed the customer in, and forgot-password re-issued a token on every request.
      *
+     * **`/refresh-token` is closed too** — sweep 1, finding S02. It carries no credential worth
+     * guessing, but it did two things nothing here wants. Each call pushed the session's expiry a
+     * further seven days out, so a stolen token that kept refreshing never expired and the
+     * seven-day bound above was not a bound. And it rewrites the whole customer row — `sessions`,
+     * `hash`, `accountStatus` — from a read taken before its write, so a refresh that straddled a
+     * password reset or a disable put back what that change had just removed. The storefront never
+     * refreshes: a session is read from its cookie, and seven days needs no rolling renewal.
+     *
      * Nothing in this application calls those endpoints; the admin panel authenticates `users`, not
-     * customers. So they refuse anything that is not the Local API. `logout`, `me` and `refresh`
-     * stay open — they carry no credential worth guessing and the session needs them.
+     * customers. So they refuse anything that is not the Local API. Of the auth routes a shopper can
+     * use, only `logout` and `me` stay open — signing out has to work from anywhere, and `me` only
+     * reads. (`unlock` is open to staff alone, by its access rule.)
      */
     beforeOperation: [
       ({ args, operation, req }) => {
         if (
           (operation === 'login' ||
             operation === 'forgotPassword' ||
-            operation === 'resetPassword') &&
+            operation === 'resetPassword' ||
+            operation === 'refresh') &&
           req.payloadAPI !== 'local'
         ) {
           throw new Forbidden(req.t)
@@ -338,6 +365,89 @@ export const Customers: CollectionConfig = {
           Boolean((args.data as { password?: unknown }).password)
         ) {
           throw new Forbidden(req.t)
+        }
+      },
+
+      /**
+       * **A write to a customer row reads that row only once it holds the row's lock** — sweep 1,
+       * finding S02.
+       *
+       * Payload's writes are read-modify-write: `update` reads the stored document, merges the
+       * incoming fields into *all* of it, and writes every column back — including `sessions`,
+       * `hash` and `accountStatus`, which the caller never mentioned. Postgres locks the row only at
+       * that final `UPDATE`. So a write whose read came before a revocation committed, and whose
+       * `UPDATE` came after, restored what the revocation removed. Measured, on this collection,
+       * before this hook existed: an admin disabled an account while that customer's own profile
+       * `PATCH` was in flight, and the result was `accountStatus: active` with the session back. A
+       * stolen cookie can send that `PATCH` in a loop, so the window did not need to be hit by luck.
+       *
+       * Taking `SELECT … FOR UPDATE` here — after Payload has opened the operation's transaction and
+       * before it reads anything — moves the lock in front of the read. A second writer now waits
+       * for the first to commit and then reads what it wrote. The same statement guards the other
+       * operations that rewrite or remove the row: `delete`, `resetPassword` below, and logout in
+       * `afterLogout`. Each of them also stamps the row's **revision marker** as it takes the lock
+       * (`lockCustomerRowsWhere`). Sign-in is the one writer that cannot be locked first; it
+       * snapshots that marker here, before it reads the account, and `beforeLogin` checks it.
+       *
+       * **Which rows: the ones the operation's own access rule will permit.** This hook runs before
+       * the operation checks access, so it must not act on the request as sent. Unless the call is
+       * the Local API with `overrideAccess: true`, the collection's `update` (or `delete`) rule is
+       * evaluated here first, exactly as the operation will evaluate it; a caller's `where` goes
+       * through the same `validateQueryPaths` the operation applies; and only the rows the rule
+       * allows are locked, by id. An anonymous caller locks nothing, and a customer at most their own
+       * row. Before the sweep-1 recheck, a missing `overrideAccess` — which is every REST request —
+       * counted as trusted server code, so an anonymous `PATCH /api/customers?where[id][exists]=true`
+       * locked the whole table, through a `where` nobody had validated, before `update` refused it.
+       *
+       * `orderTransitions.ts` locks orders the same way for the same reason, and like it this is a
+       * no-op when there is no transaction to hold the lock in — which on this adapter does not
+       * happen.
+       */
+      async ({ args, operation, req }) => {
+        if (operation === 'update' || operation === 'delete') {
+          await lockCustomerRows(
+            req,
+            await rowsThisWriteMayTouch(operation, args as WriteArgs, req),
+          )
+        }
+
+        if (operation === 'login') {
+          signInsInProgress.set(req, {
+            before: await revisionBeforeSignIn(req, args as { data?: { email?: unknown } }),
+            operation: 'login',
+          })
+        }
+
+        if (operation === 'resetPassword') {
+          signInsInProgress.set(req, { operation: 'resetPassword' })
+
+          /*
+           * Locked by the token, since that is all the operation knows. This is also what makes a
+           * link single-use under concurrency. `resetPassword` finds the account by the token and an
+           * unexpired `resetPasswordExpiration`, and spends the link by setting that expiry to now.
+           * Two resets with one token could both read it before either wrote; now the second waits
+           * here until the first commits, then reads the spent expiry and finds no account.
+           */
+          const token = (args as { data?: { token?: unknown } }).data?.token
+
+          if (typeof token === 'string' && token.length > 0) {
+            await lockCustomerRowsWhere(req, sql`"reset_password_token" = ${token}`)
+          }
+        }
+      },
+    ],
+
+    /**
+     * **Signing out removes one session by rewriting all of them** — from a read, like `update`
+     * above, so it takes the same lock (and stamps the same revision marker) first. `afterLogout` is
+     * the hook that runs inside the operation's transaction and before its read.
+     */
+    afterLogout: [
+      async ({ req }) => {
+        const user = req.user as { collection?: string; id?: unknown } | null
+
+        if (user?.collection === 'customers') {
+          await lockCustomerRows(req, [Number(user.id)])
         }
       },
     ],
@@ -377,8 +487,8 @@ export const Customers: CollectionConfig = {
        * one was set. Writing `sessions` in the same row update also means no second write and no
        * shared `context` flag — the latch the disable hook below records a bulk edit tripping over.
        *
-       * The reset flow does not reach this hook (`resetPassword` writes through `payload.db`);
-       * `lib/auth/actions.ts` clears the sessions itself after a successful reset.
+       * The reset flow does not reach this hook (`resetPassword` writes through `payload.db`); it
+       * clears the sessions in `beforeLogin` below, inside the reset's own transaction.
        */
       ({ data, operation }) => {
         if (
@@ -439,9 +549,12 @@ export const Customers: CollectionConfig = {
        * `data.password` is present only when a password is actually being set — Payload strips it
        * before storage and keeps the salt and hash — so an ordinary profile edit skips this entirely.
        *
-       * The reset flow is the one exception, and it is Payload's rather than ours:
-       * `resetPassword` writes through `payload.db.updateOne` and never reaches a collection hook.
-       * `lib/auth/actions.ts` therefore validates before calling it, using this same function.
+       * The reset flow is the one exception, and it is Payload's rather than ours. `resetPassword`
+       * does run `beforeValidate`, but it passes the stored account — salt and hash already
+       * replaced — rather than the new password, so there is no `data.password` here to check.
+       * `lib/auth/actions.ts` therefore validates before calling it, using this same function. (The
+       * reset does run this collection's `beforeOperation` and `beforeLogin` hooks, which is where
+       * its lock and its session wipe live.)
        */
       ({ data, req }) => {
         if (!data || typeof data.password !== 'string') {
@@ -478,6 +591,70 @@ export const Customers: CollectionConfig = {
     beforeLogin: [
       ({ req, user }) => {
         if (user.accountStatus !== 'active') {
+          throw new AuthenticationError(req.t)
+        }
+
+        return user
+      },
+
+      /**
+       * **Payload runs `beforeLogin` for two operations, and each needs one more thing here** —
+       * sweep 1, finding S02. Both run inside the operation's transaction, after its write and
+       * before its commit, which is what makes either of them sound.
+       *
+       * **A reset ends every session in the same commit as the new password.** Phase 36 (audit
+       * R1-13) cleared them from the Server Action *after* `resetPassword` returned: a second
+       * transaction, and until it committed the old cookie still worked under the new password. If
+       * that second write failed, it never stopped working. Here the new hash and the empty session
+       * list are one commit or neither. The session the operation creates for its own token is
+       * cleared too — the action never sets that token as a cookie, so nobody holds it.
+       *
+       * **A sign-in that was overtaken is refused.** `login` reads the account before verifying the
+       * password and before opening its transaction, so no lock can be taken ahead of that read the
+       * way `beforeOperation` does for everything else. Its session write then puts back every
+       * column it read: a sign-in with the *old* password whose read preceded a reset, and whose
+       * write followed it, restored the old hash — the old password worked again and the new one
+       * did not. The same shape restored an account a disable had just switched off, and sessions a
+       * sign-out had just ended; and because that write is an upsert, it would re-insert a row a
+       * delete had just removed.
+       *
+       * So the check happens after the fact, at the one point where it cannot be raced: the
+       * operation's own write holds the row lock, so no locking writer can commit until this
+       * transaction ends. Every locking writer stamps the row's revision marker as it takes the
+       * lock. The sign-in took a snapshot of that marker in `beforeOperation`, before it read the
+       * account, and reads it again here. If it moved, something committed after the snapshot — so
+       * possibly between the read and the write — and the sign-in throws the ordinary
+       * wrong-password error, the transaction rolls back, and whatever that writer did stands. A
+       * customer who hits this by coincidence — signing in on a phone in the instant they sign out
+       * on a laptop — sees the usual message and succeeds on the next try.
+       *
+       * **Why a marker in another table, read on this connection.** Inside this transaction the row
+       * shows the sign-in's own write, and the one column that write leaves alone, `updated_at`, is
+       * overwritten a moment later by Payload's `resetLoginAttempts` whenever the account had a
+       * failed attempt. The first version of this check therefore read the committed row on a
+       * *second* pool connection while this one held the lock, so every successful sign-in needed
+       * two connections at once, and ten concurrent sign-ins could exhaust a pool of ten
+       * (`payload.config.ts`) and wait out `connectionTimeoutMillis`. The marker lives in
+       * `payload_kv`, which the sign-in's write never touches, so it is read on the connection the
+       * transaction already holds. `pnpm verify:access` signs in with one free connection to prove it.
+       */
+      async ({ req, user }) => {
+        const inProgress = signInsInProgress.get(req)
+
+        if (inProgress?.operation === 'resetPassword') {
+          await req.payload.db.updateOne({
+            collection: 'customers',
+            data: { sessions: [] },
+            id: user.id,
+            req,
+            returning: false,
+          })
+        }
+
+        if (
+          inProgress?.operation === 'login' &&
+          signInOvertaken(inProgress.before, user.id, await currentRevision(req, user.id))
+        ) {
           throw new AuthenticationError(req.t)
         }
 
@@ -526,4 +703,265 @@ export const Customers: CollectionConfig = {
       },
     ],
   },
+}
+
+/* -------------------------------------------------------------------------------------------------
+ * Row locks and revision markers — sweep 1, finding S02, and its recheck
+ * ---------------------------------------------------------------------------------------------- */
+
+type SqlHandle = { execute: (query: unknown) => Promise<{ rows?: unknown[] }> }
+
+type WriteArgs = {
+  data?: unknown
+  id?: unknown
+  overrideAccess?: boolean
+  trash?: boolean
+  where?: Where
+}
+
+type SignInInProgress =
+  { before: RevisionSnapshot; operation: 'login' } | { operation: 'resetPassword' }
+
+/**
+ * Which sign-in operation a request is running, set in `beforeOperation` and read in `beforeLogin`,
+ * which Payload calls from both `login` and `resetPassword` without saying which. For `login` it also
+ * carries the revision snapshot taken before the account was read.
+ *
+ * A `WeakMap` keyed by the request object rather than `req.context`: the Phase 6 audit found
+ * `context` merged onto a *shared* request, so a flag there could leak into a nested operation. The
+ * request object is the one both hooks are handed, and nothing else can read or set this.
+ */
+const signInsInProgress = new WeakMap<object, SignInInProgress>()
+
+async function transactionOf(req: PayloadRequest): Promise<SqlHandle | null> {
+  const transactionID =
+    req.transactionID instanceof Promise ? await req.transactionID : req.transactionID
+
+  if (transactionID === undefined || transactionID === null) {
+    return null
+  }
+
+  return (
+    (req.payload.db as unknown as { sessions?: Record<string, { db: SqlHandle }> }).sessions?.[
+      String(transactionID)
+    ]?.db ?? null
+  )
+}
+
+/**
+ * The operation's own transaction when it has one; otherwise the pool. With no transaction there is
+ * no lock held, so taking a pool connection here cannot be what starves the pool.
+ */
+async function connectionFor(req: PayloadRequest): Promise<SqlHandle> {
+  return (await transactionOf(req)) ?? (req.payload.db.drizzle as unknown as SqlHandle)
+}
+
+/** `SELECT … FOR UPDATE` on these rows, in id order so two writers of several rows cannot deadlock. */
+async function lockCustomerRows(req: PayloadRequest, ids: number[]): Promise<void> {
+  const unique = [...new Set(ids.filter((id) => Number.isInteger(id)))].sort((a, b) => a - b)
+
+  if (unique.length === 0) {
+    return
+  }
+
+  await lockCustomerRowsWhere(
+    req,
+    sql`"id" IN (${sql.join(
+      unique.map((id) => sql`${id}`),
+      sql`, `,
+    )})`,
+  )
+}
+
+/**
+ * Lock the matching customer rows in id order **and stamp each one's revision marker**, in one
+ * statement inside the operation's transaction.
+ *
+ * The marker is `customer-revision:<id>` in Payload's `payload_kv` table, set to this transaction's
+ * id (`lib/auth/customer-revision.ts` says why it lives outside the row). It commits or rolls back
+ * with the write it belongs to. Its own row lock is taken only after the customer row's, and in the
+ * same id order, so it adds no deadlock the customer locks did not already rule out. A marker is
+ * never deleted, including when its customer is: a sign-in that read the account before the delete
+ * must still see the marker move. That is one small row per customer who has ever been written.
+ *
+ * A no-op when there is no transaction to hold the lock in — which on this adapter does not happen.
+ */
+async function lockCustomerRowsWhere(
+  req: PayloadRequest,
+  condition: ReturnType<typeof sql>,
+): Promise<void> {
+  const transaction = await transactionOf(req)
+
+  if (!transaction) {
+    return
+  }
+
+  await transaction.execute(
+    sql`WITH "locked" AS (
+          SELECT "id" FROM "customers" WHERE ${condition} ORDER BY "id" FOR UPDATE
+        )
+        INSERT INTO "payload_kv" ("key", "data")
+        SELECT ${CUSTOMER_REVISION_KEY_PREFIX}::text || "locked"."id"::text,
+               to_jsonb(pg_current_xact_id()::text)
+        FROM "locked"
+        ORDER BY "locked"."id"
+        ON CONFLICT ("key") DO UPDATE SET "data" = EXCLUDED."data"`,
+  )
+}
+
+/**
+ * **The rows an `update` or `delete` will actually be allowed to write**, so the lock covers those
+ * and nothing else — decided before the operation decides, but by the same rule.
+ *
+ * - **The Local API with `overrideAccess: true`** is server code: it locks the id it names, or the
+ *   rows its own `where` matches.
+ * - **Everyone else** — every REST request, and Local API calls that ask for access control — has
+ *   the collection's access rule evaluated here, as the operation will evaluate it. A refusal locks
+ *   nothing and leaves the operation to refuse. A `Where` result (a customer's own row) is combined
+ *   with the request, so the lock covers only the rows both allow. A caller's `where` is checked by
+ *   `validateQueryPaths` before it is used, so a predicate on a hidden column such as `hash` is
+ *   refused here with the same `QueryError` the operation would raise, before any row is read.
+ *
+ * The rows are resolved to ids first, and only ids reach the `FOR UPDATE`.
+ *
+ * **One lock-order inversion is accepted.** Checkout and payment take the customer row last, as a
+ * foreign-key share lock (orders, then carts, then the email row); a permanent customer `delete` takes
+ * it first and then clears `orders`, `carts` and `email_messages` through `ON DELETE SET NULL`. A hard
+ * delete that coincides with that same customer's checkout or payment can therefore meet a deadlock,
+ * which Postgres detects and aborts one side of — as it already could before this lock. Everything
+ * else keeps the project's order: the per-cart advisory lock first, orders before carts, customers last.
+ */
+async function rowsThisWriteMayTouch(
+  operation: 'delete' | 'update',
+  args: WriteArgs,
+  req: PayloadRequest,
+): Promise<number[]> {
+  const collectionConfig = req.payload.collections.customers.config
+  const trusted = bypassesAccessControl({
+    overrideAccess: args.overrideAccess,
+    payloadAPI: req.payloadAPI,
+  })
+  const hasId = args.id !== undefined && args.id !== null
+  const id = hasId ? Number(args.id) : null
+
+  if (hasId && !Number.isInteger(id)) {
+    return []
+  }
+
+  let access: AccessResult = true
+
+  if (!trusted) {
+    access = await executeAccess(
+      { data: args.data, disableErrors: true, id: id ?? undefined, req },
+      operation === 'update' ? collectionConfig.access.update : collectionConfig.access.delete,
+    )
+
+    /*
+     * An `update` that sets `deletedAt` is a move to the trash, and Payload holds it to the `delete`
+     * rule as well.
+     */
+    const trashing =
+      operation === 'update' &&
+      typeof args.data === 'object' &&
+      args.data !== null &&
+      (args.data as { deletedAt?: unknown }).deletedAt != null
+
+    if (access && trashing) {
+      const deleteAccess = await executeAccess(
+        { data: args.data, disableErrors: true, id: id ?? undefined, req },
+        collectionConfig.access.delete,
+      )
+
+      access = !deleteAccess
+        ? false
+        : access === true
+          ? deleteAccess
+          : combineQueries(access, deleteAccess)
+    }
+
+    if (!access) {
+      return []
+    }
+  }
+
+  let where: Where
+
+  if (id !== null) {
+    if (access === true) {
+      return [id]
+    }
+
+    where = combineQueries({ id: { equals: id } }, access)
+  } else {
+    if (!args.where) {
+      return []
+    }
+
+    if (!trusted) {
+      await validateQueryPaths({ collectionConfig, overrideAccess: false, req, where: args.where })
+    }
+
+    where = combineQueries(args.where, access)
+  }
+
+  const { docs } = await req.payload.db.find({
+    collection: 'customers',
+    limit: 0,
+    pagination: false,
+    req,
+    select: { id: true },
+    where: args.trash ? where : { and: [where, { deletedAt: { exists: false } }] },
+  })
+
+  return docs.map((doc) => Number(doc.id))
+}
+
+/**
+ * **The sign-in's snapshot**: the account it is about to read, and that account's revision marker,
+ * taken before Payload's `login` reads it.
+ *
+ * The address is normalised the way `login` normalises it, and trashed rows are excluded as `login`
+ * excludes them, so this finds the row the operation will find. No transaction or lock is held yet at
+ * this point, so the pool connection it may use is taken and returned before the sign-in holds any.
+ * An address that matches nothing gives `null`, and a sign-in that nonetheless succeeds is refused.
+ */
+async function revisionBeforeSignIn(
+  req: PayloadRequest,
+  args: { data?: { email?: unknown } },
+): Promise<RevisionSnapshot> {
+  const email = args.data?.email
+
+  if (typeof email !== 'string') {
+    return null
+  }
+
+  const { rows } = await (
+    await connectionFor(req)
+  ).execute(
+    sql`SELECT c."id", kv."data"::text AS "revision"
+        FROM "customers" c
+        LEFT JOIN "payload_kv" kv ON kv."key" = ${CUSTOMER_REVISION_KEY_PREFIX}::text || c."id"::text
+        WHERE c."email" = ${email.toLowerCase().trim()} AND c."deleted_at" IS NULL
+        LIMIT 1`,
+  )
+
+  const row = rows?.[0] as { id: number | string; revision: null | string } | undefined
+
+  return row ? { id: Number(row.id), revision: row.revision ?? null } : null
+}
+
+/**
+ * The account's revision marker as this transaction sees it — read on the transaction's own
+ * connection, after the sign-in's write took the row lock, so every locking writer that finished
+ * first has committed its marker and none can commit another until this transaction ends.
+ */
+async function currentRevision(req: PayloadRequest, id: number | string): Promise<null | string> {
+  const { rows } = await (
+    await connectionFor(req)
+  ).execute(
+    sql`SELECT "data"::text AS "revision" FROM "payload_kv"
+        WHERE "key" = ${`${CUSTOMER_REVISION_KEY_PREFIX}${Number(id)}`}`,
+  )
+
+  return (rows?.[0] as { revision: null | string } | undefined)?.revision ?? null
 }

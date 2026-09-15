@@ -51,6 +51,7 @@ A **variant** (one colour and size) is what is bought; cart and order lines poin
 | `compareAtPriceMinor` | Optional former price, shown struck through. A value `<=` the price is **refused on save**, because it would claim a saving that does not exist | `ProductVariants.ts` compare-at hook; renderer `lib/catalog/resolve.ts` |
 | `inventoryQuantity` | Whole number `>= 0` (field validator). A Postgres `CHECK product_variants_inventory_non_negative` backs it, because the finalisation decrement is raw SQL past every validator | `ProductVariants.ts` `validateStock`; `payload.config.ts` |
 | When stock moves | **Only at confirmed payment**, inside the webhook's transaction (D-06). Never at add-to-cart, never returned on cancel | `lib/checkout/fulfil.ts`; `payload/hooks/orderTransitions.ts` ("Restocking is deliberately absent") |
+| `products.derived.inventoryTotal` | A cache: the sum of the product's active variants' stock, read by shop cards (sold out / "Only N left"), the in-stock filter, homepage tiles and the search record — never by a stock decision, which reads `inventoryQuantity` live. Recomputed on every variant save (`syncProductDerived`) and, since sweep 1 (S01), **after every `finalised` payment** for each product the order took stock from (`refreshDerivedStock`, run in the webhook's `after()`, §8.4). A refresh that fails is logged and reported `checkout.derivedStock` and leaves that product's figure at its pre-sale value until its next save; the payment is unaffected | `payload/hooks/syncProductDerived.ts`; `lib/checkout/fulfil.ts` |
 | `active: false` | Withdrawn: not purchasable, gone from the size selector, row and stock kept | `ProductVariants.ts` |
 | Availability | Derived, not stored: discontinued / sold out (`0`) / low stock (`0 < qty <= lowStockThreshold`, default 5) / in stock | `ProductVariants.ts`; `site-settings.lowStockThreshold` |
 | Per-line maximum | `site-settings.maxQuantityPerLine` (default 10, max 99), plus a hard schema cap of 99 on `cart-items.quantity` | `SiteSettings.ts`; `CartItems.ts`; `QUANTITY_HARD_CAP` in `lib/cart/rules.ts` |
@@ -76,16 +77,56 @@ is the only way in.
 | **Price-changed notice** | `cart-items.priceSeenMinor` is the unit price when the line was last added or changed. When the live price differs, the line shows the old price and `CART_COPY.priceChanged` ("You pay the price shown"). Display only, never charged. `null` (lines carried over by a merge, or older lines) shows no notice (`priceMovedFrom`) |
 | Session expired | `hasSignedOutBag` tells "signed out, bag intact" apart from "empty". Preflight answers `sessionExpired` and sends the customer to `/login?next=%2Fcheckout&expired=1` |
 
-**Merge at sign-in** (`mergeGuestCart`, called from `login` and `register`):
+**Merge at sign-in** (`mergeGuestCart`, called from `login` and `register`; the database half is
+`mergeGuestBag`):
 
 1. No guest bag → nothing.
-2. Guest bag, no customer bag → the guest bag is **claimed** (one `customer` write).
-3. Both → `mergeCartLines`: the customer's lines come first; the same variant is **summed first, then
+2. Guest bag, no customer bag → the guest bag is **claimed** (one `customer` write). Any order on it
+   keeps pointing at it.
+3. **Guest bag with a checkout in flight → left exactly as it is** (sweep 1, S03). In flight
+   (`guestBagHasLiveCheckout`) means an order on the bag that is `pending_payment` (an open Checkout
+   Session, or a delayed payment clearing — any age), or `checkout_started` last written less than
+   `PREPARED_CHECKOUT_WINDOW_MS` = 1 hour ago. Nothing is merged or deleted and the cookie keeps
+   naming the guest bag, so the order stays reachable through `orders.cart`: preflight can still
+   expire its session, the payment still converts its bag, and a guest's confirmation page still
+   opens. The signed-in shopper sees their own bag meanwhile. **Nothing retries the merge:** while
+   they stay signed in, `resolveCart` finds their bag by customer id and never reads the cookie, and
+   the first add to the bag while signed in replaces the cookie with the account bag's token — after which
+   the guest bag is forgotten as if they had signed out, and a guest order still paying in another tab
+   cannot show its confirmation page on this device (the payment, the email and the order are
+   unaffected). A
+   later sign-in merges the guest bag only if the cookie still names it (and its checkout has ended
+   by then) — the case after a session that simply expired. **Signing out forgets it**
+   (`forgetCartCookie`): no later sign-in can find the guest bag, so if its checkout was not paid its
+   lines stay in an ownerless bag until the sweep deletes it at expiry. The one path that still picks
+   it up is the account bag being converted by its own checkout while the cookie names the guest bag:
+   the next bag write finds no account bag, falls back to the cookie and claims the guest bag. Before
+   this, the merge deleted the bag and cleared `orders.cart`, which let an account-bag checkout open a
+   second payable session for the same goods.
+4. Both → `mergeCartLines`: the customer's lines come first; the same variant is **summed first, then
    clamped** against stock and policy; lines that are withdrawn, deleted or sold out are **dropped**,
    from the customer's own bag too. The guest bag is deleted. If the customer's bag has no discount
-   code, the guest's code moves over (Phase 36, R2-03) and is re-decided on the next read.
-4. The cookie then points at the customer's bag (so an expired session can offer "sign in"). An
-   explicit sign-out clears it (`forgetCartCookie`).
+   code, the guest's code moves over (Phase 36, R2-03) and is re-decided on the next read. Orders on
+   the guest bag that cannot take a payment (`draft`, `payment_failed`, `cancelled`, an abandoned
+   `checkout_started`) lose their `cart` link, as before.
+5. After a merge the cookie points at the customer's bag (so an expired session can offer "sign in").
+   After a claim, a deferral or a bag found `gone` it is left as it was — after a deferral that means
+   it still names the guest bag (step 3). An explicit sign-out clears it (`forgetCartCookie`).
+
+Steps 3 and 4 run in **one transaction** that takes three locks in this order: the guest bag's
+**checkout lock** (`cartCheckoutLock` in `pending-order.ts` — the advisory lock `upsertPendingOrder`
+holds from its order lookup to its commit, §7.2), then the **orders on the guest bag**, then the
+**guest bag** (`FOR UPDATE`) — the order a payment takes those two in. It then **reads the orders on
+the bag again and decides on that read** (the recheck of S03): an order inserted without the checkout
+lock and committed while the merge waited for the bag was invisible to the order lock, and an insert
+referencing the bag has to wait for the bag's lock, so the second read sees every order. So an order
+being prepared on the bag is either committed and seen, or not started until the merge commits (and
+fails on the deleted bag, before any session exists); no order on the bag can be paid, and nothing can
+convert it, while the merge decides and writes. Preflight takes the checkout lock first and a payment
+and the sweep never take it, so the order cannot deadlock. A guest bag found paid for (or already
+merged) once the lock is granted is left alone and nothing is written. A failure part-way rolls back
+every write; the cookie is left as it was, so a later sign-in retries from the same two bags only if
+the cookie still names the guest bag.
 
 A failed merge is logged and **never fails the sign-in**.
 
@@ -94,9 +135,15 @@ A failed merge is logged and **never fails the sign-in**.
 refused with 401, see DEPLOYMENT.md §7) runs `sweepRetention` in `lib/cart/sweep.ts`, two steps that
 fail independently:
 
-- **Bags** (`sweepExpiredCarts`): up to 200 `active` bags past expiry per run (`Carts.beforeDelete`
-  removes their lines first). `converted` bags are order history and are never touched. An order that
-  pointed at a swept bag keeps its snapshot; the relationship clears.
+- **Bags** (`sweepExpiredCarts`): up to 200 bags matching `expiredCartWhere` — `active` and past
+  `expiresAt` — per run (`Carts.beforeDelete` removes their lines first). `converted` bags are order
+  history and are never touched. An order that pointed at a swept bag keeps its snapshot; the
+  relationship clears. The delete runs in its own transaction (sweep 1, S04): `SELECT … FOR UPDATE` on
+  the **orders pointing at the selected bags**, then on the **bags**, each in id order, then a delete
+  whose `where` repeats `expiredCartWhere` alongside the ids — so a bag a payment converted between the
+  read and the delete survives, and locking orders before bags (the order `fulfil.ts` takes them in)
+  means a sweep and a payment queue rather than deadlock. A bag whose delayed payment is still clearing
+  when it expires is deleted if nothing has converted it by then; the payment still lands on its order.
 - **Unpaid orders** (`sweepUnpaidOrders`): up to 200 per run matching `unpaidOrderRetentionWhere` —
   a never-paid status (`NEVER_PAID_STATUSES`: `draft`, `checkout_started`, `pending_payment`,
   `payment_failed`, `cancelled`), `updatedAt` more than `UNPAID_ORDER_RETENTION_DAYS` = 30 days ago,
@@ -137,8 +184,11 @@ Sentry as `retention.carts` / `retention.orders`. Why the window and clock are w
   valid shows its reason, and **preflight refuses** (`promotionInvalid`) rather than quietly charging
   full price.
 - **Per-customer limit** counts that customer's orders with this promotion that are `paid`, or
-  `pending_payment` on a cart that is no longer active (Phase 36, R1-07). A guest counts as zero
-  (**DEV-59**). The global `usageLimit` still applies to guests.
+  `pending_payment` on a cart that is not one of the customer's current bags (Phase 36, R1-07). A
+  current bag is `active` **and not past `expiresAt`** — the definition `resolveCart` uses (sweep 1,
+  S20); a pending order on an expired bag that still says `active` (the daily sweep has not reached it)
+  counts, because no request can reach that bag again. A guest counts as zero (**DEV-59**). The global
+  `usageLimit` still applies to guests.
 - **Usage limit at payment.** `timesUsed` goes up inside the payment transaction, by a conditional
   `UPDATE … WHERE usage_limit IS NULL OR times_used < usage_limit`. If that matches no row, the payment
   still stands (the money has moved), the redemption is not counted, and the event is logged and
@@ -215,7 +265,7 @@ Steps 3–7 of plan §17.1a are the `getCart` read. Preflight adds the refusals,
 | 7 | Destination supported | `addressUnsupported` | We cannot deliver to that address. |
 | 8 | Shipping re-quoted; chosen method exists and is eligible | `noShippingMethod` | No delivery option is available for that address. |
 | 9 | Tax calculated | `taxUnavailable` | We could not calculate tax just now. Please try again in a moment. |
-| 10 | Pending order written (§7.2) — the prior session was paid or is clearing | `alreadyPaid` | This bag has already been paid for, or its payment is still being processed. Check your email before trying again. |
+| 10 | Pending order written (§7.2) — the prior session was paid or is clearing | `alreadyPaid` | This bag has already been paid for, or its payment is still being processed — a bank payment can take a few days. We email your order confirmation once a payment is confirmed. If it does not go through, no email is sent, and you can check out this bag again. |
 | 10 | — Stripe error while retiring the prior session | `stripeUnconfigured` | (as row 1) |
 | — | Anything thrown | `checkoutFailed` | Something went wrong before you were sent to payment, and nothing was charged. Please try again in a moment. |
 
@@ -223,6 +273,9 @@ A failed session creation (§7.3) also shows the `stripeUnconfigured` sentence (
 
 ### 7.2 The pending order — `upsertPendingOrder`
 
+- **One attempt per cart at a time.** A per-cart advisory lock (`cartCheckoutLock`) is held from the
+  order lookup to the commit, so two attempts on one bag cannot both create an order. The sign-in merge
+  takes the same lock on a guest bag before it decides (§3).
 - **One order per cart**, reused across attempts. The most recent order on the cart in
   `REUSABLE_ORDER_STATUSES` — `draft`, `checkout_started`, `pending_payment`, `payment_failed` — is
   reused. `cancelled` is not: an expiry makes the fulfilment side terminal, so the next attempt gets a
@@ -248,13 +301,16 @@ A failed session creation (§7.3) also shows the `stripeUnconfigured` sentence (
   `UNKNOWN`), variant label, unit price, quantity (`effectiveQuantity`) and a **stored**
   `lineTotalMinor`. Name, SKU, unit price and variant label cannot be changed afterwards
   (`FROZEN_ORDER_LINE_FIELDS`, `payload/hooks/freezeOrderLines.ts`).
-- Order numbers for new orders come from `formatOrderNumber`: `N1-YYMM-XXXXXX`.
+- Order numbers for new orders come from `formatOrderNumber`: `N1-YYMM-XXXXXX`. A reused order keeps
+  its number. The attempt returns it (`orderNumber`, beside `orderId` and `preparedAt`), and preflight
+  passes it to session creation (§7.3).
 
 ### 7.3 The Stripe Checkout Session — `lib/checkout/session.ts`
 
 | Parameter | Value | Why |
 |---|---|---|
 | `line_items` | **One** line, `unit_amount = totalMinor`, quantity 1, named for the item count | Stripe cannot become a second place the total is computed (**DEV-63**) |
+| `line_items[0].price_data.product_data.description` | `Order <orderNumber>.` followed by `stripeLineItemDescription(totals)` — `Includes delivery and tax.` / `Includes delivery.` / `Includes tax.`, each part only when it is above zero, then `Discount applied.` when there is one | Stripe prints it on its payment page and receipt, so the receipt carries the same order number as the confirmation email, the success page and the account (sweep 1, S15). Never the database id |
 | `expires_at` | now + 31 min | Stripe's minimum is 30 min; the extra minute covers latency. Previously 24 h (R1-01) |
 | `metadata.orderId`, `payment_intent_data.metadata.orderId` | the internal order id | The webhook's way back; parsed, never trusted (`parseOrderReference`) |
 | `customer_email` | the validated email | — |
@@ -379,19 +435,32 @@ Steps 6 and 7 run on both the normal and the oversold path.
 ### 8.4 After the response
 
 The `stripe-events` row is marked `processed` (or `ignored`) first, then **200** is returned. Work that
-must not delay Stripe runs in Next's `after()`:
+must not delay Stripe runs in Next's `after()`, as `afterStripeEvent` (`lib/checkout/after-stripe-event.ts`,
+with the courier and the Stripe client passed in by the route). Its three steps are **started together
+and awaited with `Promise.allSettled`**, so none waits on another and each reports its own failure (the
+recheck of S01: run in sequence, a slow Algolia behind the refresh held the tax record back, and a
+platform that ends `after()` at the function's duration limit could lose it unlogged):
 
 - **Deliver** the email rows the transaction already queued — the confirmation, or a refund message
-  (one per new cumulative amount; the dedupe key includes it) — and log a failed delivery.
-- An opportunistic drain of up to 5 queued emails (R1-21: Resend calls time out after 8 s).
+  (one per new cumulative amount; the dedupe key includes it) — and log a failed delivery. Then an
+  opportunistic drain of up to 5 queued emails (R1-21: Resend calls time out after 8 s). Failures are
+  reported `stripe.webhook.email`.
 - **Record the Stripe Tax transaction** — `tax.transactions.createFromCalculation` with the calculation
   id stored on the order at preflight and the order number as reference (`lib/tax/transactions.ts`),
-  with an idempotency key. Skipped when there is no `taxcalc_` id; failures are reported, never
-  blocking. **Reversal on refund is not built** — a refunded sale stays in Stripe Tax's reports until
-  it is reversed by hand in the Dashboard.
+  with an idempotency key. Skipped when there is no `taxcalc_` id; failures are reported
+  `stripe.webhook.taxTransaction` for someone to record by hand. **Reversal on refund is not built** — a
+  refunded sale stays in Stripe Tax's reports until it is reversed by hand in the Dashboard.
+- **Refresh the products' cached stock figure** after a `finalised` payment (sweep 1, S01):
+  `refreshDerivedStock` reads the order's lines and their variants, and runs `recalculateProductDerived`
+  (no transaction) for each product, whose product update also re-syncs the search index and
+  revalidates the `catalog` and `home` caches. Any other outcome refreshes nothing — no other outcome
+  moved stock. It never throws; a failure is logged and reported `checkout.derivedStock`.
 
 Nothing in `after()` can change the order or the response. A failed delivery stays on its
-`email-messages` row, which the drain retries — see EMAIL.md.
+`email-messages` row, which the drain retries — see EMAIL.md. Nothing else here is retried: if the
+`after()` work never runs or is cut short, a tax transaction not yet recorded is found only by
+reconciling Stripe Tax, and a refresh not yet done leaves the product's cached figure at its pre-sale
+value until its next save — a Stripe redelivery is answered `alreadyFinal`, which refreshes nothing.
 
 ## 9. Order state
 
@@ -438,11 +507,12 @@ tab). Cancelling does not restock.
 |---|---|---|
 | Database down — storefront | Cart drawer says `CART_COPY.failed` rather than "empty". Success page → `CONFIRMATION_UNREADABLE`, not "order not found" (R3-14). Checkout → `checkoutFailed` | `components/shell/cart-drawer.tsx`, `checkout/success/page.tsx`, `lib/checkout/actions.ts` |
 | Database down — webhook | Recording the event fails → 500. A mid-processing read error → row `failed`, 500. Stripe retries and the retry is reprocessed | `route.ts`, `fulfil.ts` `notFoundAsNull` |
-| Database down — sign-in merge | Logged; sign-in succeeds; guest lines may be lost | `lib/cart/cart.ts` `mergeGuestCart` |
+| Database down — sign-in merge | Logged; sign-in succeeds; the merge's transaction rolls back, so both bags stay as they were and the guest lines are missing from the signed-in bag. The cookie still names the guest bag, so a later sign-in merges them only if it still does — signing out forgets it (§3, merge step 3) | `lib/cart/cart.ts` `mergeGuestCart` |
+| Cached stock refresh fails after a payment | Payment and stock unaffected; logged and reported `checkout.derivedStock`; that product's cards keep the pre-sale count until it or a variant is next saved — `pnpm reindex` copies the same column and does not fix it | `fulfil.ts` `refreshDerivedStock` |
 | Stripe unconfigured | Checkout page declines; preflight `stripeUnconfigured`; tax deferred; webhook 503 | `stripe.ts`, `preflight.ts`, `tax/provider.ts`, `route.ts` |
 | Stripe down at checkout | Session create (2 SDK retries) fails → the order stays `checkout_started`, the customer sees the `stripeUnconfigured` sentence, reported `checkout.createSession`. Retiring the prior session fails → refused the same way | `session.ts`, `preflight.ts` |
 | Tax slow or failing | 5 s timeout, no retry → `unavailable` → `taxUnavailable`; reported `tax.stripe`. Never charged as zero | `tax/provider.ts` |
-| Email slow or failing | Runs after the 200; the order is unaffected; `email-messages` row retried by the drain and the daily cron | `route.ts` `sendOrderEmails`, DEPLOYMENT.md §7 |
+| Email slow or failing | Runs after the 200, beside the tax record and the stock refresh and holding neither up; the order is unaffected; `email-messages` row retried by the drain and the daily cron | `lib/checkout/after-stripe-event.ts`, DEPLOYMENT.md §7 |
 | Webhook delayed | Success page shows "Confirming your payment"; the order is `pending_payment` until the event arrives. The 31-minute session expiry does not affect a completed payment | `confirmation-copy.ts` |
 | Webhook duplicated | Unique `eventId` → acknowledge / 409 / reprocess (§8.1); conditional claims make a reprocess change nothing | `route.ts`, `events.ts`, `fulfil.ts` |
 | Two payments race for the last unit | The second finalisation finds no stock → paid + `stockShortfall`, no partial decrement | `fulfil.ts` |
@@ -458,12 +528,14 @@ Unit tests (`pnpm test:unit`, Vitest, no database):
 | Clamp, clamp copy, card availability and low stock | `tests/unit/inventory.test.ts`, `tests/unit/variants.test.ts` |
 | Bag totals, `null` vs `0`, `isFinal` | `tests/unit/cart-totals.test.ts` |
 | Merge (§14.1b) | `tests/unit/cart-merge.test.ts` |
+| Retention sweep queries — both predicates, the re-checked and locked deletes, the bound | `tests/unit/retention-sweep.test.ts` |
 | Price-changed notice | `tests/unit/cart-price-changed.test.ts` |
 | Promotion checks and calculation | `tests/unit/promotions.test.ts` |
 | Rate card, threshold, rate validation | `tests/unit/shipping.test.ts` |
 | Tax contract and deferral; Stripe Tax request and mapping | `tests/unit/tax.test.ts`, `tests/unit/tax-stripe.test.ts` |
 | Event plan, session mismatch, unclaimed classification, refund by amount, redelivery, prior-session and reuse | `tests/unit/checkout-webhook.test.ts` |
-| Success-page copy by status | `tests/unit/checkout-confirmation.test.ts` |
+| Success-page copy by status; the line item's description sentence | `tests/unit/checkout-confirmation.test.ts` |
+| The Checkout Session parameters: the order number in the description, one line item at the total, the id in metadata and URLs, the claim | `tests/unit/checkout-session.test.ts` (Stripe client mocked) |
 | Fulfilment machine, frozen line fields, displayed status | `tests/unit/order-state.test.ts` |
 
 Harnesses (`pnpm verify:<name>`, `payload run`). Sections that write data are guarded by **D-10**: they
@@ -471,12 +543,12 @@ refuse to run anywhere but the development database `DATABASE_PUSH_TARGET` names
 
 | Script | Covers |
 |---|---|
-| `scripts/verify-cart.ts` | §14's rules and every §14.1b merge edge case; section F against the database |
-| `scripts/verify-promotions.ts` | §15.1a checks and §15.1c edge cases; section G: the normalised unique index and per-customer counting |
+| `scripts/verify-cart.ts` | §14's rules and every §14.1b merge edge case; section F against the database; section **G** (S03): `mergeGuestBag` defers for a pending or just-started checkout, merges past dead orders, and — with a rival transaction holding the order the way a payment does — waits, sees the bag was paid for, writes nothing and does not deadlock; **G5** a merge queued behind a preflight holding the bag's checkout lock defers once the order it then writes commits; **G6** a merge queued on the bag behind an uncommitted order insert (no checkout lock) sees the order and defers |
+| `scripts/verify-promotions.ts` | §15.1a checks and §15.1c edge cases; section G: the normalised unique index; section H: per-customer counting, including a pending order on an expired, still-active bag (S20) |
 | `scripts/verify-shipping.ts` | §16 rate shape, validation, edge cases and the tax boundary (mostly pure) |
-| `scripts/verify-checkout.ts` | State machine, preflight vocabulary, stock plan; section F: **real offline signature verification** with `generateTestHeaderString` |
-| `scripts/verify-webhook.ts` | `applyStripeEvent` against real orders, variants and stock: both barriers, the transaction, the inventory race, `stripe-events` bookkeeping; sections M–S vary one session fact at a time; G separates `orderMissing` from `noOrder`; T proves every claim that changes an order sets `updated_at`, and a superseded claim does not |
-| `scripts/verify-orders.ts` | Fulfilment transitions and line immutability, measured as rejected writes against the database. Section **M**, the retention sweep: its own fixtures only, aged with raw SQL to 1997–2000 and swept at a fixed clock (`SWEEP_NOW` = 2000-03-01) — the 30-day window, the batch bound, trashed rows, paid and refunded never taken, a `paymentMismatch` hold kept, a null hold taken, a webhook claim restarting the clock — and **permanently deletes** those fixtures, clearing leftovers of an aborted run first |
+| `scripts/verify-checkout.ts` | State machine, preflight vocabulary, stock plan; section F: **real offline signature verification** with `generateTestHeaderString`; G2: concurrent attempts on one bag, and (S15) the customer-facing order number each attempt returns, kept on reuse; H: the refusal copy, including `alreadyPaid` promising only the confirmation (S07) |
+| `scripts/verify-webhook.ts` | `applyStripeEvent` against real orders, variants and stock: both barriers, the transaction, the inventory race, `stripe-events` bookkeeping; sections M–S vary one session fact at a time; G separates `orderMissing` from `noOrder`; T proves every claim that changes an order sets `updated_at`, and a superseded claim does not; U (S01) proves `refreshDerivedStock` sets each product's `derived.inventoryTotal` to the sum of its active variants' stock after a sale, only for `finalised`, idempotently, and that one product's failed refresh neither throws nor stops the others; then runs the route's `afterStripeEvent` with stub dependencies — it refreshes the figure and records the tax, the refresh finishes while the tax record is stuck, and the tax record while the refresh is stuck; C (S06) proves the confirmation queued for a held order carries `data.onHold: true`, on the plain and the savepoint paths. It first removes what an aborted run left behind, by the fixture prefixes only this script uses |
+| `scripts/verify-orders.ts` | Fulfilment transitions and line immutability, measured as rejected writes against the database. Section **M**, the retention sweep: its own fixtures only, aged with raw SQL to 1997–2000 and swept at a fixed clock (`SWEEP_NOW` = 2000-03-01) — the 30-day window, the batch bound, trashed rows, paid and refunded never taken, a `paymentMismatch` hold kept, a null hold taken, a webhook claim restarting the clock — and **permanently deletes** those fixtures, clearing leftovers of an aborted run first. Section **M2** (S04), the bag sweep: a rival transaction locks an order and then converts its expired bag while the sweep waits on that order; the converted bag survives, no deadlock, and only the genuinely expired bag is counted |
 
 **Not verified anywhere:** a live `stripe.checkout.sessions.create`, a live Stripe Tax calculation, and
 a real payment (DEV-62, `TODO.md` §4). The first test in a keyed environment is one test-mode purchase

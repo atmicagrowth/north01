@@ -2,6 +2,7 @@ import type { Payload } from 'payload'
 
 import type { ReviewEligibility, ReviewSummary } from './rules'
 
+import { publishedProductWhere } from '@/lib/catalog/query'
 import { FINALISABLE_STATUSES } from '@/lib/checkout/rules'
 import { reviewEligibility, summariseReviews } from './rules'
 
@@ -211,9 +212,17 @@ export async function resolveEligibility(
 /**
  * Whether this product may be reviewed at all — §21.1c's *"deleted product"*.
  *
- * The same publication rule the shop grid uses, under `overrideAccess: false, user: null`, so a
- * soft-deleted, unpublished or scheduled product answers `false` without this module needing to know
- * which of the three it was.
+ * **The rule the product page itself uses** — `publishedProductWhere(now)`, under
+ * `overrideAccess: false, user: null` — so a product answers `true` here exactly when
+ * `/product/<slug>` would render it. A soft-deleted, unpublished, **scheduled** (`publishedAt` still in
+ * the future) or **withdrawn** (published, but no active priced variant) product answers `false`
+ * without this module needing to know which it was.
+ *
+ * Sweep 1, S19: this used to be the collection's access rule alone, which is `status: published` and
+ * deliberately nothing more (`access/index.ts`). A scheduled drop or a withdrawn product 404s on its
+ * page and sits in no listing, yet a signed-in customer posting its sequential id to the Server Action
+ * could leave a review on it — and the different answer told them which ids were unreleased products.
+ * The docblock claimed the grid's rule while the query applied a weaker one.
  */
 export async function isReviewableProduct(payload: Payload, productId: number): Promise<boolean> {
   const { totalDocs } = await payload.find({
@@ -221,7 +230,9 @@ export async function isReviewableProduct(payload: Payload, productId: number): 
     depth: 0,
     limit: 1,
     ...STOREFRONT_ACCESS,
-    where: { id: { equals: productId } },
+    where: {
+      and: [...publishedProductWhere(new Date().toISOString()), { id: { equals: productId } }],
+    },
   })
 
   return totalDocs > 0

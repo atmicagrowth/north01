@@ -25,6 +25,7 @@ import config from '../src/payload.config'
 
 import {
   NEVER_PAID_STATUSES,
+  sweepExpiredCarts,
   sweepRetention,
   sweepUnpaidOrders,
   UNPAID_ORDER_RETENTION_DAYS,
@@ -74,7 +75,8 @@ async function refused(name: string, operation: () => Promise<unknown>, detail =
 const payload: Payload = await getPayload({ config })
 
 const created: {
-  collection: 'customers' | 'order-items' | 'orders' | 'product-variants' | 'products' | 'users'
+  collection:
+    'carts' | 'customers' | 'order-items' | 'orders' | 'product-variants' | 'products' | 'users'
   id: number
 }[] = []
 
@@ -1726,6 +1728,178 @@ try {
         (await stillThere('orders', held.id)) &&
         (await stillThere('orders', awaiting.id)),
       `carts deleted=${both.carts.deleted} orders deleted=${both.orders.deleted}`,
+    )
+  }
+
+  /* ============================================ M2 — sweep 1 S04, a bag a payment converts mid-sweep */
+  {
+    /*
+     * **The bag sweep deleted by id alone**, so a bag a payment converted between its read and its
+     * delete was destroyed — the order's history, and what a guest's confirmation page matches the
+     * order to. It now locks the orders on its bags, then the bags, and re-applies the expiry predicate
+     * inside that transaction.
+     *
+     * Provoked exactly as a payment would provoke it. A rival transaction does what `fulfil.ts` does —
+     * locks the order first (its claim), then converts the bag — and the sweep is started between the
+     * two. The harness waits until Postgres shows the sweep **waiting on the order lock**, then lets
+     * the rival convert the bag and commit.
+     *
+     * Before the fix this could not pass either way: the sweep's `DELETE` took the bag's row lock and
+     * then waited on the order (`ON DELETE SET NULL`), the rival's conversion waited on the bag, and
+     * Postgres aborted one of them as a deadlock.
+     *
+     * Every fixture bag expires before 2000 and the sweep runs at a clock in 2000, like section M, so no
+     * real bag can qualify.
+     */
+    const CART_SWEEP_NOW = new Date('2000-03-01T00:00:00.000Z')
+
+    /* A run that died before its `finally` leaves pre-2000 bags the count below would include. */
+    await payload.delete({
+      collection: 'carts',
+      overrideAccess: true,
+      where: {
+        and: [
+          { token: { like: 'orders-m2-' } },
+          { expiresAt: { less_than: '2001-01-01T00:00:00.000Z' } },
+        ],
+      },
+    })
+
+    const makeBag = async (label: string, status: 'active' | 'converted', expiresAt: string) => {
+      const cart = await payload.create({
+        collection: 'carts',
+        data: {
+          currency: 'USD',
+          expiresAt,
+          status,
+          token: `orders-m2-${label}-${suffix}`,
+        } as never,
+        overrideAccess: true,
+      })
+
+      created.push({ collection: 'carts', id: cart.id })
+
+      return cart
+    }
+
+    const bagThere = async (id: number) =>
+      (
+        await payload.find({
+          collection: 'carts',
+          depth: 0,
+          limit: 1,
+          overrideAccess: true,
+          where: { id: { equals: id } },
+        })
+      ).docs[0] ?? null
+
+    const expired = await makeBag('expired', 'active', '1999-06-01T00:00:00.000Z')
+    const converting = await makeBag('converting', 'active', '1999-06-02T00:00:00.000Z')
+    const history = await makeBag('history', 'converted', '1999-06-03T00:00:00.000Z')
+    const live = await makeBag('live', 'active', '2000-06-01T00:00:00.000Z')
+
+    const paying = await makeOrder('BAGRACE', 'pending_payment')
+
+    await payload.update({
+      collection: 'orders',
+      data: { cart: converting.id },
+      id: paying.id,
+      overrideAccess: true,
+    })
+
+    const rival = await payload.db.beginTransaction()
+
+    if (rival === null) throw new Error('could not open the rival transaction')
+
+    const rivalDb = (
+      payload.db as unknown as {
+        sessions: Record<string, { db: { execute: (query: unknown) => Promise<unknown> } }>
+      }
+    ).sessions[String(rival)]!.db
+
+    /* The claim: the payment holds the order's row. */
+    await rivalDb.execute(sql`UPDATE "orders" SET "updated_at" = now() WHERE "id" = ${paying.id}`)
+
+    const sweeping = sweepExpiredCarts(payload, CART_SWEEP_NOW).then(
+      (outcome) => ({ error: null, outcome }),
+      (error: unknown) => ({ error, outcome: null }),
+    )
+
+    /* Until the sweep is parked on the order lock — or ten seconds, after which the checks say so. */
+    let parked = false
+
+    for (let attempt = 0; attempt < 50 && !parked; attempt += 1) {
+      const waiting = await payload.db.drizzle.execute(
+        sql`SELECT count(*)::int AS "waiting" FROM pg_stat_activity
+            WHERE "datname" = current_database()
+              AND "wait_event_type" = 'Lock'
+              AND "query" ILIKE '%"cart_id" IN%FOR UPDATE%'`,
+      )
+
+      parked = Number((waiting.rows[0] as { waiting?: number } | undefined)?.waiting ?? 0) > 0
+
+      if (!parked) await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+
+    /* The conversion, then the commit — exactly `fulfil.ts`'s order. */
+    const converted = await rivalDb
+      .execute(sql`UPDATE "carts" SET "status" = 'converted' WHERE "id" = ${converting.id}`)
+      .then(
+        async () => {
+          await payload.db.commitTransaction(rival)
+
+          return true
+        },
+        async () => {
+          await payload.db.rollbackTransaction(rival).catch(() => undefined)
+
+          return false
+        },
+      )
+
+    const swept = await sweeping
+    const convertedAfter = await bagThere(converting.id)
+    const payingAfter = await orderNow(paying.id)
+
+    check(
+      'M2: the race was really run — the sweep waited on the order a payment was holding',
+      parked,
+    )
+
+    check(
+      'M2: **S04 no deadlock** — the payment converted its bag and committed, and the sweep finished',
+      converted && swept.error === null,
+      `converted=${converted} sweep=${swept.error === null ? 'ok' : String(swept.error)}`,
+    )
+
+    check(
+      'M2: **S04 a bag converted mid-sweep is not deleted** — it is still there, converted, and the order still points at it',
+      convertedAfter?.status === 'converted' &&
+        (typeof payingAfter.cart === 'object' && payingAfter.cart !== null
+          ? payingAfter.cart.id
+          : payingAfter.cart) === converting.id,
+      `${convertedAfter?.status ?? 'deleted'}, order.cart=${JSON.stringify(payingAfter.cart ?? null)}`,
+    )
+
+    check(
+      'M2: …an expired active bag on the same run is deleted',
+      (await bagThere(expired.id)) === null,
+    )
+
+    check(
+      'M2: …a bag converted long ago is left alone — it is order history',
+      (await bagThere(history.id))?.status === 'converted',
+    )
+
+    check(
+      'M2: …and a bag that has not expired at the sweep’s clock is left alone',
+      (await bagThere(live.id)) !== null,
+    )
+
+    check(
+      'M2: …and the count is what the delete removed — the one expired bag, not the two selected',
+      swept.outcome?.deleted === 1,
+      JSON.stringify(swept.outcome),
     )
   }
 } finally {

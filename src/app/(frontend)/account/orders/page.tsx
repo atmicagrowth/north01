@@ -25,6 +25,10 @@ export const metadata: Metadata = privateMetadata('Your orders')
  * The phase prompt requires it by name: *"ensure account screens work with zero orders."* A customer
  * who has never bought anything is the **normal** case for a new account, so the empty state is
  * written as a sentence and a way out rather than as an apology.
+ *
+ * It says *while signed in* because that is the only way an order gets here: `pending-order.ts` links
+ * an order to a customer only when one is signed in at checkout, and a guest order placed with the
+ * same email is never attached later (sweep 1, S17).
  */
 export default async function AccountOrdersPage() {
   const customer = await requireCustomer('/account/orders')
@@ -42,7 +46,7 @@ export default async function AccountOrdersPage() {
         <div className="flex flex-col items-start gap-s border-t border-border pt-m">
           <p className="font-sans text-body text-foreground">No orders yet.</p>
           <p className="max-w-measure font-sans text-body-sm text-foreground-muted">
-            Anything you buy will appear here, with its status and what you paid.
+            Orders you place while signed in will appear here, with their status and what you paid.
           </p>
           <Link className="mt-s font-sans text-meta uppercase" href="/shop">
             Browse the shop

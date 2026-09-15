@@ -4,6 +4,7 @@ import { getPayloadClient } from '@/lib/payload'
 import { siteUrl } from '@/lib/env.server'
 import { reportFailure } from '@/lib/observability/report'
 
+import { stripeLineItemDescription } from './confirmation-copy'
 import { claimOrderForSession } from './pending-order'
 import type { PreflightResult } from './preflight'
 import { stripeClient } from './stripe'
@@ -26,6 +27,15 @@ import { stripeClient } from './stripe'
  *
  * A line per product would make Stripe a **second place the total is computed**. One line item priced
  * at the order's own `totalMinor` makes a disagreement between the two impossible to express.
+ *
+ * ### The order number is on Stripe's page and receipt — sweep 1, S15
+ *
+ * The line item's description starts with the customer-facing order number preflight returns
+ * (`Order N1-2609-7K4QX2.`), followed by `stripeLineItemDescription`'s account of what the total
+ * includes. Stripe prints it under the item on its payment page and on the receipt it emails, so the
+ * receipt can be matched to the confirmation email, the success page and the account, which all show
+ * the same number. Every order has one, so every session has a description. The database id is never
+ * shown: it stays in the metadata and the return URLs, where it is the webhook's and the pages' key.
  *
  * ### The metadata is the webhook's way home
  *
@@ -73,8 +83,16 @@ export async function createCheckoutSession(
           price_data: {
             currency: preflight.cart.currency.toLowerCase(),
             product_data: {
-              description:
-                `${preflight.totals.subtotalMinor === preflight.totals.totalMinor ? '' : 'Includes delivery and tax. '}Order ${preflight.orderId}`.trim(),
+              /*
+               * The order number the customer can match, then only what is really in the total —
+               * sweep 1, S15. Never the database id.
+               */
+              description: [
+                `Order ${preflight.orderNumber}.`,
+                stripeLineItemDescription(preflight.totals),
+              ]
+                .filter((sentence): sentence is string => sentence !== null)
+                .join(' '),
               name: `NORTH / 01 — ${preflight.cart.totals.itemCount} item${preflight.cart.totals.itemCount === 1 ? '' : 's'}`,
             },
             unit_amount: preflight.totals.totalMinor,

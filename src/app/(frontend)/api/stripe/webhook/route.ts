@@ -1,5 +1,4 @@
 import { after } from 'next/server'
-import type { Payload } from 'payload'
 import type Stripe from 'stripe'
 
 import {
@@ -9,9 +8,9 @@ import {
   reclaimWebhookDelivery,
 } from '@/lib/checkout/events'
 import { courierFor } from '@/lib/email/courier'
-import { deliverEmail, drainEmails } from '@/lib/email/send'
-import { recordTaxTransaction, type TaxTransactionClient } from '@/lib/tax/transactions'
-import { applyStripeEvent, type FulfilOutcome, type SessionFacts } from '@/lib/checkout/fulfil'
+import type { TaxTransactionClient } from '@/lib/tax/transactions'
+import { afterStripeEvent } from '@/lib/checkout/after-stripe-event'
+import { applyStripeEvent, type SessionFacts } from '@/lib/checkout/fulfil'
 import {
   decideDuplicateDelivery,
   isHandledEventType,
@@ -70,7 +69,11 @@ import { getPayloadClient } from '@/lib/payload'
  * `after()` (supported in route handlers — `next/dist/docs/.../functions/after.md`), because a slow
  * mail provider used to hold Stripe's request open, and a timeout there is a failure to Stripe even
  * though the order was already paid. If the send never runs, the queued row is delivered by the
- * drain. The Stripe Tax transaction is recorded there too, for the same reason.
+ * drain. The Stripe Tax transaction is recorded there too, for the same reason, and so (sweep 1, S01)
+ * is the refresh of the products' cached stock figure after a sale, whose index upsert is a network
+ * call to Algolia. All three are `afterStripeEvent` (`lib/checkout/after-stripe-event.ts`), which
+ * starts them together so none waits on another, and which `pnpm verify:webhook` runs as this route
+ * does, with the courier and the Stripe client this route passes swapped for stubs.
  *
  * ### `force-dynamic`, because a cached webhook is not a webhook
  */
@@ -284,8 +287,16 @@ export async function POST(request: Request): Promise<Response> {
       overrideAccess: true,
     })
 
-    /* §17.1d: the email was queued with the state change; this only delivers it. */
-    after(() => afterResponse(payload, event.id, outcome))
+    /*
+     * §17.1d: the email was queued with the state change; this only delivers it — beside the tax
+     * record and the stock-figure refresh. See `afterStripeEvent`.
+     */
+    after(() =>
+      afterStripeEvent(payload, event.id, outcome, {
+        courier: () => courierFor(payload),
+        taxClient: () => stripeClient() as TaxTransactionClient,
+      }),
+    )
 
     return new Response('OK', { status: 200 })
   } catch (error) {
@@ -309,88 +320,5 @@ export async function POST(request: Request): Promise<Response> {
       .catch(() => undefined)
 
     return new Response('Processing failed.', { status: 500 })
-  }
-}
-
-/**
- * Everything that may happen after the response, none of which may throw.
- *
- * **Emails are delivered, not queued, here** (Phase 36 sweep 1). `fulfil.ts` queues the confirmation
- * (for `finalised`, and `outOfStock` — the customer was charged and deserves the receipt; it confirms
- * the order, never dispatch) and the refund message in the **same transaction** as the state change,
- * so the row exists whether or not this runs. If it does not run, the drain delivers it later.
- *
- * **The Stripe Tax transaction** is recorded for a newly paid order — see `lib/tax/transactions.ts`.
- * A failure is logged and reported for someone to record by hand; it never touches the order.
- */
-async function afterResponse(
-  payload: Payload,
-  eventId: string,
-  outcome: FulfilOutcome,
-): Promise<void> {
-  try {
-    const courier = await courierFor(payload)
-
-    const emailId =
-      outcome.outcome === 'finalised' || outcome.outcome === 'outOfStock'
-        ? outcome.confirmationEmailId
-        : outcome.outcome === 'refunded'
-          ? outcome.emailId
-          : null
-
-    if (emailId !== null && courier) {
-      const delivered = await deliverEmail(payload, emailId, courier)
-
-      if (delivered.outcome !== 'sent') {
-        payload.logger.error({
-          emailId,
-          eventId,
-          msg: `An order email was queued but not delivered (${delivered.outcome}); the drain will retry it.`,
-        })
-      }
-    }
-
-    /*
-     * Opportunistic, and bounded. The admin-panel messages are queued inside a transaction and have
-     * no sender of their own; a webhook is the most frequent server-side event this application has.
-     */
-    if (courier) {
-      await drainEmails(payload, courier, { limit: 5 })
-    }
-  } catch (error) {
-    payload.logger.error({
-      err: error,
-      eventId,
-      msg: 'Sending an order email failed. The order is unaffected — see the email-messages record.',
-    })
-    reportFailure(error, 'stripe.webhook.email', { eventId })
-  }
-
-  if (outcome.outcome === 'finalised' || outcome.outcome === 'outOfStock') {
-    try {
-      const order = await payload.findByID({
-        collection: 'orders',
-        depth: 0,
-        id: outcome.orderId,
-        overrideAccess: true,
-      })
-
-      const recorded = await recordTaxTransaction(stripeClient() as TaxTransactionClient, {
-        orderNumber: String(order.orderNumber),
-        taxCalculationId: order.taxCalculationId,
-      })
-
-      if (recorded.outcome === 'failed') {
-        throw new Error(recorded.reason)
-      }
-    } catch (error) {
-      payload.logger.error({
-        err: error,
-        eventId,
-        msg: 'A paid order’s Stripe Tax transaction could not be recorded. Record it in Stripe by hand.',
-        orderId: outcome.orderId,
-      })
-      reportFailure(error, 'stripe.webhook.taxTransaction', { orderId: outcome.orderId })
-    }
   }
 }

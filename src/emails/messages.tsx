@@ -2,6 +2,7 @@ import { Hr, render, Section } from '@react-email/components'
 import type { ReactElement } from 'react'
 
 import type { EmailKind } from '@/lib/email/rules'
+import { PARTIAL_REFUND_COPY, STOCK_SHORTFALL_COPY } from '@/lib/orders/rules'
 
 import {
   EmailAction,
@@ -53,6 +54,12 @@ export type EmailData = {
   orderConfirmation: {
     discount: null | string
     lines: OrderLine[]
+    /**
+     * The order is paid but held because the stock was not there (`fulfilmentHold: stockShortfall`).
+     * Optional so a row queued before the field existed still renders — as not held, which is what
+     * it said then.
+     */
+    onHold?: boolean
     orderNumber: string
     shipping: null | string
     shippingMethodLabel: null | string
@@ -69,7 +76,17 @@ export type EmailData = {
     trackingUrl: null | string
   }
   passwordReset: { resetHref: string }
-  refund: { amount: null | string; orderNumber: string }
+  refund: {
+    /** The **cumulative** refunded amount — Stripe's `amount_refunded` — and labelled as a total. */
+    amount: null | string
+    orderNumber: string
+    /**
+     * Some, but not all, of the order total has been refunded, so the order is still `paid` and
+     * the rest is still being sent. Optional: a row queued before it existed renders as a full refund,
+     * which is what it said then.
+     */
+    partial?: boolean
+  }
   verification: { verifyHref: string }
   welcome: { accountHref: string; firstName: null | string }
 }
@@ -83,7 +100,7 @@ function Welcome({ accountHref, firstName }: EmailData['welcome']) {
     <EmailShell preview="Your account is ready. Nothing to confirm.">
       <EmailHeading>{firstName ? `Welcome, ${firstName}.` : 'Welcome.'}</EmailHeading>
       <EmailText>
-        Your account is ready. Orders you place from now on will be kept here, so you can find a
+        Your account is ready. Orders you place while signed in will be kept here, so you can find a
         receipt or a tracking number without searching your inbox for it.
       </EmailText>
       <EmailAction href={accountHref}>Your account</EmailAction>
@@ -160,10 +177,19 @@ function ContactConfirmation({ name }: EmailData['contactConfirmation']) {
  * already tells a customer so — *"if you have just paid, your confirmation email is the record"* —
  * and that sentence is only true if the email contains what a receipt contains. Every figure is a
  * snapshot taken at purchase, from `order-items`, so it stays correct after the product is edited.
+ *
+ * ### A held order is confirmed, and not promised
+ *
+ * `finalisePaidOrder` queues this message in the same transaction whether or not the stock was there.
+ * When it was not (`onHold`), the payment is still confirmed — it happened — but "getting the order
+ * ready to send" would be untrue, so the paragraph is `STOCK_SHORTFALL_COPY`, the sentence the account
+ * page and the success page already show for the same order (Phase 36, R3-19). The lines still list
+ * everything, because they are what was paid for.
  */
 function OrderConfirmation({
   discount,
   lines,
+  onHold,
   orderNumber,
   shipping,
   shippingEstimate,
@@ -179,10 +205,16 @@ function OrderConfirmation({
     >
       <EmailMeta>Order {orderNumber}</EmailMeta>
       <EmailHeading>Thank you — your order is confirmed.</EmailHeading>
-      <EmailText>
-        We have your payment and are getting the order ready to send. You will hear from us again
-        when it is on its way.
-      </EmailText>
+      {onHold ? (
+        <EmailText>
+          We have your payment. {STOCK_SHORTFALL_COPY.detail.replace(/^Paid\. /, '')}
+        </EmailText>
+      ) : (
+        <EmailText>
+          We have your payment and are getting the order ready to send. You will hear from us again
+          when it is on its way.
+        </EmailText>
+      )}
 
       <Hr
         style={{ border: 'none', borderTop: `1px solid ${COLOR.border}`, margin: `${SPACE.m}px 0` }}
@@ -268,32 +300,53 @@ function OrderShipped({
   )
 }
 
+/**
+ * **Sent when a member of staff marks the order delivered in the admin** (`queueOrderEmails`). There
+ * is no carrier integration and no tracking webhook, so the message says who marked it — we did — and
+ * never that the carrier confirmed anything.
+ */
 function OrderDelivered({ orderNumber }: EmailData['orderDelivered']) {
   return (
     <EmailShell
-      footnote="If something is not right with the order, reply to this message and we will sort it out."
-      preview={`Order ${orderNumber} has been delivered.`}
+      footnote="If the parcel has not reached you, or something is not right with the order, reply to this message and we will sort it out."
+      preview={`Order ${orderNumber} has been marked as delivered.`}
     >
       <EmailMeta>Order {orderNumber}</EmailMeta>
       <EmailHeading>Delivered.</EmailHeading>
-      <EmailText>The carrier has marked your order as delivered.</EmailText>
+      <EmailText>We have marked your order as delivered.</EmailText>
     </EmailShell>
   )
 }
 
 /**
+ * **A refund notice, for a full refund or a partial one.**
+ *
+ * `fulfil.ts` queues one for every new cumulative `amount_refunded` Stripe reports, and a partial
+ * refund leaves the order `paid` with the rest still to be sent. So the heading and body follow
+ * `partial` — a partial refund reads `PARTIAL_REFUND_COPY`, the storefront's own sentence for the same
+ * state — and the figure is labelled as the **total refunded so far**, because that is what Stripe's
+ * number is: a second refund of $10 after one of $15 shows $25, and must not read as $25 more.
+ *
  * The refund figure is the one place the signal colour is used in an email. DEV-21 reserves Oxide for
  * signal, and money going back to a customer is the only thing in this set that qualifies.
  */
-function Refund({ amount, orderNumber }: EmailData['refund']) {
+function Refund({ amount, orderNumber, partial }: EmailData['refund']) {
   return (
     <EmailShell
-      footnote="Refunds usually reach a card within five to ten working days, depending on the bank."
-      preview={`Order ${orderNumber} has been refunded.`}
+      footnote="A refund usually takes five to ten business days to show on your statement, depending on the bank."
+      preview={
+        partial
+          ? `Part of order ${orderNumber} has been refunded.`
+          : `Order ${orderNumber} has been refunded.`
+      }
     >
       <EmailMeta>Order {orderNumber}</EmailMeta>
-      <EmailHeading>Refunded.</EmailHeading>
-      <EmailText>The money is on its way back to you.</EmailText>
+      <EmailHeading>{partial ? 'Partly refunded.' : 'Refunded.'}</EmailHeading>
+      <EmailText>
+        {partial
+          ? PARTIAL_REFUND_COPY.detail
+          : 'The whole order was refunded to your original payment method.'}
+      </EmailText>
       {amount ? (
         <Section style={{ margin: `${SPACE.m}px 0 0` }}>
           <table
@@ -310,7 +363,7 @@ function Refund({ amount, orderNumber }: EmailData['refund']) {
                     fontFamily: FONT.sans,
                   }}
                 >
-                  Refunded
+                  {partial ? 'Refunded so far' : 'Refunded in total'}
                 </td>
                 <td
                   style={{

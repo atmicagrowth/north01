@@ -11,14 +11,19 @@
  * explicitly. **Every one of them is a named check below**, in the plan's own words, because a rule
  * stated that concretely should be asserted that concretely.
  *
- * `lib/cart/cart.ts` is deliberately not imported: it is `server-only` and holds reads, writes and a
- * cookie. Everything asserted in the pure sections lives in `lib/cart/rules.ts`, which is why a merge
- * involving two bags, a stock change and a deleted product can be exercised as a fixture.
+ * `lib/cart/cart.ts` is not imported by the pure sections: everything asserted there lives in
+ * `lib/cart/rules.ts`, which is why a merge involving two bags, a stock change and a deleted product
+ * can be exercised as a fixture. Section G (sweep 1, S03) does import it — dynamically, after
+ * Payload is up — for `mergeGuestBag`, the merge's database half, which takes the cookie's token as
+ * an argument and so runs outside a request. G5 and G6 (the recheck of S03) hold a rival transaction
+ * open and wait until Postgres reports the merge queued behind it (`pg_blocking_pids`, the technique
+ * `verify-access.ts` uses), so the interleaving they test is the one that runs, every time.
  *
- * The **D-10** guard applies to section F — it creates and deletes documents, so it refuses to run
- * anywhere but the development database `DATABASE_PUSH_TARGET` names.
+ * The **D-10** guard applies to sections F and G — they create and delete documents, so the script
+ * refuses to run anywhere but the development database `DATABASE_PUSH_TARGET` names.
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
@@ -527,7 +532,10 @@ check(
 
 const payload: Payload = await getPayload({ config })
 
-const created: { collection: 'cart-items' | 'carts'; id: number }[] = []
+const created: {
+  collection: 'cart-items' | 'carts' | 'customers' | 'orders' | 'product-variants' | 'products'
+  id: number
+}[] = []
 
 const cleanup = async () => {
   for (const doc of [...created].reverse()) {
@@ -681,6 +689,527 @@ try {
       after === 0,
       String(after),
     )
+  }
+
+  /* ===============================================================================================
+   * G — sweep 1 S03, a guest bag with a checkout in flight survives sign-in
+   *
+   * The merge deleted the guest bag unconditionally, which cleared `orders.cart` on an order whose
+   * customer was paying for it in another tab: preflight could no longer find that order to expire
+   * its session, the payment could no longer convert its bag, and a guest could no longer open its
+   * confirmation. `mergeGuestBag` now leaves such a bag alone, and decides — and writes — under the
+   * locks a payment takes.
+   * ============================================================================================ */
+  {
+    const { guestBagHasLiveCheckout, mergeGuestBag, PREPARED_CHECKOUT_WINDOW_MS } =
+      await import('../src/lib/cart/cart')
+
+    const tag = Date.now().toString().slice(-9)
+    const NOW = new Date('2026-09-14T12:00:00.000Z')
+    const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString()
+
+    check(
+      'G: a pending_payment order is in flight at any age — a delayed payment can clear for days',
+      guestBagHasLiveCheckout(
+        [{ paymentStatus: 'pending_payment', updatedAt: ago(20 * 86_400_000) }],
+        NOW,
+      ),
+    )
+
+    check(
+      'G: a checkout_started order is in flight just inside the window, and not at it',
+      guestBagHasLiveCheckout(
+        [{ paymentStatus: 'checkout_started', updatedAt: ago(PREPARED_CHECKOUT_WINDOW_MS - 1) }],
+        NOW,
+      ) &&
+        !guestBagHasLiveCheckout(
+          [{ paymentStatus: 'checkout_started', updatedAt: ago(PREPARED_CHECKOUT_WINDOW_MS) }],
+          NOW,
+        ),
+    )
+
+    check(
+      'G: …and the window is an hour — twice the 31-minute session',
+      PREPARED_CHECKOUT_WINDOW_MS === 60 * 60 * 1000,
+    )
+
+    check(
+      'G: draft, payment_failed, cancelled and no orders at all are not in flight',
+      !guestBagHasLiveCheckout(
+        ['draft', 'payment_failed', 'cancelled'].map((paymentStatus) => ({
+          paymentStatus,
+          updatedAt: ago(0),
+        })),
+        NOW,
+      ) && !guestBagHasLiveCheckout([], NOW),
+    )
+
+    const product = await payload.create({
+      collection: 'products',
+      data: {
+        name: `Merge fixture ${tag}`,
+        slug: `merge-fixture-${tag}`,
+        sortOrder: 9999,
+        status: 'published',
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'products', id: product.id })
+
+    const variant = await payload.create({
+      collection: 'product-variants',
+      data: {
+        active: true,
+        color: 'Bone',
+        colorFamily: 'bone',
+        colorHex: '#e8e4dc',
+        inventoryQuantity: 10,
+        priceMinor: 5_000,
+        product: product.id,
+        size: 'M',
+        sizeSortOrder: 30,
+        sku: `MG-${tag}`,
+      } as never,
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'product-variants', id: variant.id })
+
+    const makeCustomer = async (label: string) => {
+      const customer = await payload.create({
+        collection: 'customers',
+        data: {
+          email: `merge-${label}-${tag}@example.test`,
+          firstName: 'Merge',
+          lastName: 'Fixture',
+          password: 'Correct-Horse-Battery-9',
+        } as never,
+        overrideAccess: true,
+      })
+
+      created.push({ collection: 'customers', id: customer.id })
+
+      return customer
+    }
+
+    const makeBag = async (label: string, customerId: null | number, lineQuantity: number) => {
+      const bag = await payload.create({
+        collection: 'carts',
+        data: {
+          ...(customerId === null ? {} : { customer: customerId }),
+          currency: 'USD',
+          expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+          status: 'active',
+          token: `merge-${label}-${tag}`,
+        } as never,
+        overrideAccess: true,
+      })
+
+      created.push({ collection: 'carts', id: bag.id })
+
+      if (lineQuantity > 0) {
+        const item = await payload.create({
+          collection: 'cart-items',
+          data: { cart: bag.id, product: product.id, quantity: lineQuantity, variant: variant.id },
+          overrideAccess: true,
+        })
+
+        created.push({ collection: 'cart-items', id: item.id })
+      }
+
+      return bag
+    }
+
+    const makeOrder = async (
+      label: string,
+      bagId: number,
+      paymentStatus: string,
+      req?: Parameters<typeof payload.create>[0]['req'],
+    ) => {
+      const order = await payload.create({
+        collection: 'orders',
+        data: {
+          cart: bagId,
+          currency: 'USD',
+          discountMinor: 0,
+          email: `merge-${label}-${tag}@example.test`,
+          fulfillmentStatus: 'unfulfilled',
+          orderNumber: `N1-MG-${label}-${tag}`,
+          paymentStatus,
+          shippingMinor: 0,
+          ...(paymentStatus === 'pending_payment'
+            ? { stripeCheckoutSessionId: `cs_merge_${label}_${tag}` }
+            : {}),
+          subtotalMinor: 10_000,
+          taxMinor: 0,
+          totalMinor: 10_000,
+        } as never,
+        overrideAccess: true,
+        req,
+      })
+
+      created.push({ collection: 'orders', id: order.id })
+
+      return order
+    }
+
+    const bagNow = async (id: number) =>
+      (
+        await payload.find({
+          collection: 'carts',
+          depth: 0,
+          limit: 1,
+          overrideAccess: true,
+          where: { id: { equals: id } },
+        })
+      ).docs[0] ?? null
+
+    const linesOf = async (bagId: number) =>
+      (
+        await payload.find({
+          collection: 'cart-items',
+          depth: 0,
+          limit: 10,
+          overrideAccess: true,
+          pagination: false,
+          where: { cart: { equals: bagId } },
+        })
+      ).docs
+
+    const cartOf = async (orderId: number) => {
+      const order = await payload.findByID({
+        collection: 'orders',
+        depth: 0,
+        id: orderId,
+        overrideAccess: true,
+      })
+
+      return typeof order.cart === 'object' && order.cart !== null
+        ? order.cart.id
+        : (order.cart ?? null)
+    }
+
+    /* ---- G1: on Stripe's page in another tab, then signs in */
+    {
+      const customer = await makeCustomer('g1')
+      const account = await makeBag('g1-account', customer.id, 0)
+      const guest = await makeBag('g1-guest', null, 2)
+      const paying = await makeOrder('G1', guest.id, 'pending_payment')
+
+      const result = await mergeGuestBag(payload, customer.id, guest.token)
+
+      check(
+        'G1: **S03 a guest bag whose order is pending payment is not merged** — deferred, cookie kept',
+        result.outcome === 'deferred' && result.cookie === 'keep',
+        JSON.stringify(result),
+      )
+
+      check(
+        'G1: …the guest bag still exists, still active, with its line',
+        (await bagNow(guest.id))?.status === 'active' && (await linesOf(guest.id)).length === 1,
+      )
+
+      check(
+        'G1: **…and the order still points at it** — preflight can expire its session, payment can convert it',
+        (await cartOf(paying.id)) === guest.id,
+        String(await cartOf(paying.id)),
+      )
+
+      check(
+        'G1: …while the account bag is untouched — the goods are not offered twice',
+        (await linesOf(account.id)).length === 0,
+      )
+    }
+
+    /* ---- G2: preflight has just prepared the order; the session is seconds from being recorded */
+    {
+      const customer = await makeCustomer('g2')
+
+      await makeBag('g2-account', customer.id, 0)
+
+      const guest = await makeBag('g2-guest', null, 1)
+      const prepared = await makeOrder('G2', guest.id, 'checkout_started')
+
+      const result = await mergeGuestBag(payload, customer.id, guest.token)
+
+      check(
+        'G2: **S03 a checkout just started on the guest bag defers the merge too**',
+        result.outcome === 'deferred' &&
+          (await bagNow(guest.id)) !== null &&
+          (await cartOf(prepared.id)) === guest.id,
+        JSON.stringify(result),
+      )
+    }
+
+    /* ---- G3: only orders that can no longer take money — the merge goes ahead */
+    {
+      const customer = await makeCustomer('g3')
+      const account = await makeBag('g3-account', customer.id, 0)
+      const guest = await makeBag('g3-guest', null, 2)
+      const failed = await makeOrder('G3F', guest.id, 'payment_failed')
+      const abandoned = await makeOrder('G3A', guest.id, 'checkout_started')
+
+      /* Two hours ago — `updatedAt` cannot be backdated through the Local API. */
+      await payload.db.drizzle.execute(
+        sql`UPDATE "orders" SET "updated_at" = ${new Date(Date.now() - 2 * 3_600_000).toISOString()}
+            WHERE "id" = ${abandoned.id}`,
+      )
+
+      const result = await mergeGuestBag(payload, customer.id, guest.token)
+      const accountLines = await linesOf(account.id)
+
+      check(
+        'G3: a guest bag whose orders cannot be paid — failed, and a start abandoned an hour ago — is merged',
+        result.outcome === 'merged' &&
+          typeof result.cookie === 'object' &&
+          result.cookie.issue === account.token,
+        JSON.stringify(result),
+      )
+
+      check(
+        'G3: …its line is in the account bag, and the guest bag is gone',
+        accountLines.length === 1 &&
+          accountLines[0]?.quantity === 2 &&
+          (await bagNow(guest.id)) === null,
+        `${accountLines.length} line(s), guest ${(await bagNow(guest.id)) === null ? 'gone' : 'kept'}`,
+      )
+
+      check(
+        'G3: …and those dead orders lose the link, as before — neither can take a payment',
+        (await cartOf(failed.id)) === null && (await cartOf(abandoned.id)) === null,
+      )
+    }
+
+    /* ---- G4: the guest bag is paid for in another tab while the merge waits for its lock */
+    {
+      const customer = await makeCustomer('g4')
+      const account = await makeBag('g4-account', customer.id, 0)
+      const guest = await makeBag('g4-guest', null, 1)
+      const paying = await makeOrder('G4', guest.id, 'pending_payment')
+
+      const rival = await payload.db.beginTransaction()
+
+      if (rival === null) throw new Error('could not open the rival transaction')
+
+      const rivalDb = (
+        payload.db as unknown as {
+          sessions: Record<string, { db: { execute: (query: unknown) => Promise<unknown> } }>
+        }
+      ).sessions[String(rival)]!.db
+
+      /* `fulfil.ts`'s claim: the payment holds the order's row. */
+      await rivalDb.execute(
+        sql`UPDATE "orders" SET "payment_status" = 'paid', "updated_at" = now() WHERE "id" = ${paying.id}`,
+      )
+
+      const merging = mergeGuestBag(payload, customer.id, guest.token).then(
+        (result) => ({ error: null, result }),
+        (error: unknown) => ({ error, result: null }),
+      )
+
+      let parked = false
+
+      for (let attempt = 0; attempt < 50 && !parked; attempt += 1) {
+        const waiting = await payload.db.drizzle.execute(
+          sql`SELECT count(*)::int AS "waiting" FROM pg_stat_activity
+              WHERE "datname" = current_database()
+                AND "wait_event_type" = 'Lock'
+                AND "query" ILIKE '%"cart_id" =%FOR UPDATE%'`,
+        )
+
+        parked = Number((waiting.rows[0] as { waiting?: number } | undefined)?.waiting ?? 0) > 0
+
+        if (!parked) await new Promise((resolve) => setTimeout(resolve, 200))
+      }
+
+      /* …then converts the bag and commits, in `fulfil.ts`'s order. */
+      const converted = await rivalDb
+        .execute(sql`UPDATE "carts" SET "status" = 'converted' WHERE "id" = ${guest.id}`)
+        .then(
+          async () => {
+            await payload.db.commitTransaction(rival)
+
+            return true
+          },
+          async () => {
+            await payload.db.rollbackTransaction(rival).catch(() => undefined)
+
+            return false
+          },
+        )
+
+      const merged = await merging
+
+      check('G4: the race was really run — the merge waited on the order being paid', parked)
+
+      check(
+        'G4: **S03 no deadlock, and the merge sees the bag was paid for** — `gone`, nothing written',
+        converted && merged.error === null && merged.result?.outcome === 'gone',
+        `converted=${converted} ${merged.error === null ? JSON.stringify(merged.result) : String(merged.error)}`,
+      )
+
+      check(
+        'G4: …the paid bag is kept as the order’s history, and the order still points at it',
+        (await bagNow(guest.id))?.status === 'converted' && (await cartOf(paying.id)) === guest.id,
+      )
+
+      check(
+        'G4: …and the lines just bought are not copied into the account bag',
+        (await linesOf(account.id)).length === 0,
+      )
+    }
+
+    /*
+     * ---- G5 and G6: an order is being written on the guest bag at the moment the merge runs
+     *
+     * The recheck of S03 found that the merge read the guest bag's orders BEFORE it locked the bag.
+     * An order preflight had inserted but not yet committed was invisible to that read, the bag lock
+     * then waited for the insert's commit, and the merge went ahead on the stale "no orders" — it
+     * deleted the bag, and the new checkout lost its link to it. So each scenario holds a rival
+     * transaction open, starts the merge, waits until Postgres itself says the merge is queued behind
+     * the rival, and only then lets the rival write and commit.
+     */
+    const { cartCheckoutLock } = await import('../src/lib/checkout/pending-order')
+
+    /** A transaction this script holds open, with its backend pid — as `verify-access.ts` does. */
+    const holdTransaction = async () => {
+      const transactionID = await payload.db.beginTransaction()
+
+      if (transactionID === null) throw new Error('could not open the rival transaction')
+
+      const handle = (
+        payload.db as unknown as {
+          sessions: Record<
+            string,
+            { db: { execute: (query: unknown) => Promise<{ rows: unknown[] }> } }
+          >
+        }
+      ).sessions[String(transactionID)]!.db
+
+      const { rows } = await handle.execute(sql`SELECT pg_backend_pid() AS "pid"`)
+
+      return {
+        commit: () => payload.db.commitTransaction(transactionID),
+        execute: (query: unknown) => handle.execute(query),
+        pid: Number((rows[0] as { pid: number }).pid),
+        req: { transactionID } as Parameters<typeof payload.create>[0]['req'],
+        rollback: () => payload.db.rollbackTransaction(transactionID).catch(() => undefined),
+      }
+    }
+
+    /** Wait until some other backend is blocked on a lock held by `pid`. */
+    const blockedBehind = async (pid: number, timeoutMs = 15_000) => {
+      const deadline = Date.now() + timeoutMs
+
+      while (Date.now() < deadline) {
+        const { rows } = await payload.db.drizzle.execute(
+          sql`SELECT count(*)::int AS "waiting" FROM pg_stat_activity WHERE ${pid} = ANY(pg_blocking_pids(pid))`,
+        )
+
+        if ((rows[0] as { waiting: number }).waiting > 0) return true
+
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+
+      return false
+    }
+
+    /* ---- G5: preflight holds the bag's checkout lock, and its order is not written yet */
+    {
+      const customer = await makeCustomer('g5')
+      const account = await makeBag('g5-account', customer.id, 0)
+      const guest = await makeBag('g5-guest', null, 1)
+
+      /* `upsertPendingOrder`'s first statement: the per-bag lock, held to its commit. */
+      const preflight = await holdTransaction()
+
+      await preflight.execute(cartCheckoutLock(guest.id))
+
+      const merging = mergeGuestBag(payload, customer.id, guest.token).then(
+        (result) => ({ error: null, result }),
+        (error: unknown) => ({ error, result: null }),
+      )
+
+      const parked = await blockedBehind(preflight.pid)
+
+      /* …then it creates the order on the bag and commits, as preflight does after its lookup. */
+      const written = await makeOrder('G5', guest.id, 'checkout_started', preflight.req).then(
+        async (order) => {
+          await preflight.commit()
+
+          return order
+        },
+        async () => {
+          await preflight.rollback()
+
+          return null
+        },
+      )
+
+      const merged = await merging
+
+      check(
+        'G5: **S03 the merge waits for a checkout being prepared on the guest bag** — the same checkout lock',
+        parked,
+      )
+
+      check(
+        'G5: **…and defers once that order is committed** — nothing merged, cookie kept',
+        written !== null && merged.error === null && merged.result?.outcome === 'deferred',
+        `order ${written === null ? 'not written' : 'written'}; ${merged.error === null ? JSON.stringify(merged.result) : String(merged.error)}`,
+      )
+
+      check(
+        'G5: …the new order still points at the guest bag, which keeps its line, and the account bag gets nothing',
+        written !== null &&
+          (await cartOf(written.id)) === guest.id &&
+          (await bagNow(guest.id))?.status === 'active' &&
+          (await linesOf(guest.id)).length === 1 &&
+          (await linesOf(account.id)).length === 0,
+        written === null ? 'no order' : `order cart ${await cartOf(written.id)}`,
+      )
+    }
+
+    /* ---- G6: an order inserted on the guest bag, uncommitted, by a writer without the checkout lock */
+    {
+      const customer = await makeCustomer('g6')
+      const account = await makeBag('g6-account', customer.id, 0)
+      const guest = await makeBag('g6-guest', null, 1)
+
+      /* The insert's foreign-key check holds a key-share lock on the bag row until it commits. */
+      const writer = await holdTransaction()
+      const order = await makeOrder('G6', guest.id, 'checkout_started', writer.req)
+
+      const merging = mergeGuestBag(payload, customer.id, guest.token).then(
+        (result) => ({ error: null, result }),
+        (error: unknown) => ({ error, result: null }),
+      )
+
+      /* The merge has passed its order lock — the row is invisible to it — and waits for the bag. */
+      const parked = await blockedBehind(writer.pid)
+
+      await writer.commit()
+
+      const merged = await merging
+
+      check('G6: the race was really run — the merge queued behind the uncommitted insert', parked)
+
+      check(
+        'G6: **S03 an order committed while the merge waited for the bag is seen** — deferred, not merged',
+        merged.error === null && merged.result?.outcome === 'deferred',
+        merged.error === null ? JSON.stringify(merged.result) : String(merged.error),
+      )
+
+      check(
+        'G6: …so the order keeps its bag, the bag keeps its line, and the account bag gets nothing',
+        (await cartOf(order.id)) === guest.id &&
+          (await bagNow(guest.id))?.status === 'active' &&
+          (await linesOf(guest.id)).length === 1 &&
+          (await linesOf(account.id)).length === 0,
+        `order cart ${await cartOf(order.id)}, guest ${(await bagNow(guest.id)) === null ? 'gone' : 'kept'}`,
+      )
+    }
   }
 } finally {
   await cleanup()

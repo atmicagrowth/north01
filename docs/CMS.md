@@ -237,7 +237,7 @@ next drain — the next Stripe webhook, the daily cron, or `POST /api/email/drai
 | Saved | Storefront cache (`revalidateTag`) | Search index (Algolia) |
 |---|---|---|
 | Product (save or delete) | `catalog`, `home` | re-synced (`syncSearchIndex`) |
-| Product variant | `syncProductDerived` rewrites the product's derived price and stock, which runs the product's hooks: `catalog`, `home` | re-synced, through the product |
+| Product variant | `syncProductDerived` rewrites the product's derived price and stock, which runs the product's hooks: `catalog`, `home`. A finalised payment re-derives the stock of every product it sold too, after the webhook's response (`refreshDerivedStock`, COMMERCE.md §8.4), because the stock decrement saves no variant | re-synced, through the product |
 | Category | `catalog`, `shell`, `navigation` | products renamed in the index (`syncTaxonomyRename`) |
 | Collection | `catalog` | products re-synced |
 | Campaign | `home` | — |

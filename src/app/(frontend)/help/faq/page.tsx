@@ -38,7 +38,8 @@ import { pageMetadata } from '@/lib/seo/site'
  *
  * A shop with no published FAQs renders the empty state and a way onward rather than a bare heading.
  * A topic with nothing in it is not rendered at all — see `getFaqGroups` for why an empty heading is
- * worse than an absent one.
+ * worse than an absent one. A failed read is **not** that state: `getFaqGroups` throws, and the error
+ * boundary answers rather than this page claiming nothing is published (sweep 1, S18).
  */
 export async function generateMetadata(): Promise<Metadata> {
   return pageMetadata({

@@ -254,6 +254,12 @@ const ARTICLES: ArticleSpec[] = [
  * are `site-settings.returnsPolicy`, tracking is a real column on `orders` and a real dispatch email,
  * and the card answer is true because `Orders.ts` stores no card fields at all. An FAQ that promises a
  * screen the shop does not have is §0.1.17's fake functionality in prose.
+ *
+ * Sweep 1 found three that promised more than that (S09–S11): an evening carrier scan nobody arranges,
+ * a same-day refund against the terms' *"once the return has reached us and been checked"* and a
+ * three-to-five-day bank window the refund email contradicted, and a delivery estimate "we hold
+ * ourselves to" where the terms call it an estimate. The tracking answer also only holds for an order
+ * placed signed in — a guest order is never attached to an account.
  */
 const FAQS: {
   answer: string[]
@@ -263,7 +269,7 @@ const FAQS: {
 }[] = [
   {
     answer: [
-      'It is in the dispatch email, and on the order in your account. Nothing moves on the tracking page until the carrier scans the parcel, which is usually the evening it leaves us.',
+      'It is in the dispatch email, and on the order in your account if you placed it while signed in. Nothing moves on the tracking page until the carrier scans the parcel.',
     ],
     question: 'Where is my tracking number?',
     sortOrder: 20,
@@ -280,7 +286,7 @@ const FAQS: {
   {
     answer: [
       'Standard is three to five business days. Express is two, and Overnight is the next business day.',
-      'The estimate shown at checkout is the one we hold ourselves to, and it starts from dispatch rather than from the order.',
+      'The time shown at checkout is an estimate rather than a guarantee, and it counts from dispatch rather than from the order.',
     ],
     question: 'How long does delivery take?',
     sortOrder: 10,
@@ -288,7 +294,7 @@ const FAQS: {
   },
   {
     answer: [
-      'Yes, to Canada, the United Kingdom, Ireland, France, Germany, the Netherlands and Australia, by Standard or Express. Overnight is United States only, because next-day is a promise we can keep in one country. Checkout will not accept an address anywhere else yet.',
+      'Yes, to Canada, the United Kingdom, Ireland, France, Germany, the Netherlands and Australia, by Standard or Express. Overnight is United States only, because next-day delivery is only realistic within one country. Checkout will not accept an address anywhere else yet.',
     ],
     question: 'Do you ship outside the United States?',
     sortOrder: 30,
@@ -305,7 +311,7 @@ const FAQS: {
   },
   {
     answer: [
-      'We refund to the original payment method the day the return is checked in, and email you when we do. Banks then take a further three to five business days to show it.',
+      'We refund to the original payment method once the return has reached us and been checked, and email you when we do. A refund usually takes five to ten business days to show on your statement, depending on the bank.',
     ],
     question: 'When will I see the refund?',
     sortOrder: 50,

@@ -45,6 +45,21 @@ import {
 /** Namespace for this file's advisory locks, so a cart id cannot collide with another lock's key. */
 const CART_LOCK_NAMESPACE = 3_601_017
 
+/**
+ * **The per-bag checkout lock**, as one statement for a transaction to run.
+ *
+ * `upsertPendingOrder` takes it before it looks for an order on the bag and holds it until it
+ * commits, so while another transaction holds it no attempt on that bag is between its lookup and its
+ * commit. The sign-in merge takes the same lock on the guest bag before it decides whether a checkout
+ * is in flight there (`mergeGuestBag` in `lib/cart/cart.ts`, sweep 1 S03), so an order being prepared
+ * on that bag is either committed and visible to the merge, or not started until the merge commits.
+ *
+ * Exported as the statement rather than the namespace, so the two callers cannot build different keys.
+ */
+export function cartCheckoutLock(cartId: number): ReturnType<typeof sql> {
+  return sql`SELECT pg_advisory_xact_lock(${CART_LOCK_NAMESPACE}::int, ${cartId}::int)`
+}
+
 export type PendingOrderInput = {
   cart: CartView
   contact: CheckoutContact
@@ -88,7 +103,8 @@ export async function upsertPendingOrder(
   input: PendingOrderInput,
   retirePriorSession: RetirePriorSession,
 ): Promise<
-  { ok: false; reason: PreflightFailure } | { ok: true; orderId: number; preparedAt: string }
+  | { ok: false; reason: PreflightFailure }
+  | { ok: true; orderId: number; orderNumber: string; preparedAt: string }
 > {
   const { cart, contact, customerId, rate, taxCalculationId, totals } = input
 
@@ -110,9 +126,7 @@ export async function upsertPendingOrder(
     const tx = txHandle(payload, transactionID)
 
     /* Race 1: one attempt at a time per bag, from the lookup to the commit. */
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(${CART_LOCK_NAMESPACE}::int, ${cart.id}::int)`,
-    )
+    await tx.execute(cartCheckoutLock(cart.id))
 
     const { docs: existing } = await payload.find({
       collection: 'orders',
@@ -269,7 +283,17 @@ export async function upsertPendingOrder(
 
     await payload.db.commitTransaction(transactionID)
 
-    return { ok: true, orderId: order.id, preparedAt: order.updatedAt }
+    /*
+     * `orderNumber` is the customer-facing reference (`N1-YYMM-XXXXXX`) — the one the confirmation
+     * email, the success page and the account show. A reused order keeps the number it was created
+     * with. Session creation prints it on Stripe's payment page and receipt (sweep 1, S15).
+     */
+    return {
+      ok: true,
+      orderId: order.id,
+      orderNumber: String(order.orderNumber),
+      preparedAt: order.updatedAt,
+    }
   } catch (error) {
     /* Payload may already have killed the transaction on a failed Local API call. */
     await payload.db.rollbackTransaction(transactionID).catch(() => undefined)

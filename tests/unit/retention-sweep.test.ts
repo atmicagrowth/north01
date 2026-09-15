@@ -21,7 +21,10 @@
  *    `createdAt` the sweep would delete an order a customer is paying for *right now*; on
  *    `greater_than` it would delete everything recent.
  * 4. **A delete that trusts its own earlier read.** An order paid between the read and the delete
- *    must not be deleted, so the delete re-applies the whole predicate under a row lock.
+ *    must not be deleted, so the delete re-applies the whole predicate under a row lock. The same goes
+ *    for a bag converted by a payment between the bag sweep's read and its delete (sweep 1, S04) —
+ *    and the bag sweep locks the orders pointing at its bags before the bags, in the order a payment
+ *    takes them, so the two cannot deadlock.
  * 5. **A soft delete masquerading as a retention promise.** Payload's `trash: true` means
  *    *permanently delete, trashed rows included*; `trash: false` would silently exempt every unpaid
  *    order somebody had moved to the admin trash, which still holds the name, email and address.
@@ -37,6 +40,7 @@ vi.mock('@/lib/observability/report', () => ({ reportFailure: vi.fn() }))
 
 import {
   CART_SWEEP_BATCH,
+  expiredCartWhere,
   NEVER_PAID_STATUSES,
   sweepExpiredCarts,
   sweepRetention,
@@ -474,6 +478,90 @@ describe('deleting permanently, trashed rows included', () => {
     const { deletes, events, payload } = fakePayload({ rows: { orders: [] } })
 
     expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 0, more: false })
+    expect(deletes).toHaveLength(0)
+    expect(events).toHaveLength(0)
+  })
+})
+
+/* ------------------------------------------------------------------------------------------------
+ * The bag delete — re-checked and locked too (sweep 1, S04)
+ * --------------------------------------------------------------------------------------------- */
+
+/** The exact predicate the bag sweep must send — active, and expired before the clock it is given. */
+const EXPECTED_CART_WHERE = {
+  and: [{ status: { equals: 'active' } }, { expiresAt: { less_than: AT.toISOString() } }],
+}
+
+/** A bag row, active and expired unless told otherwise. */
+const bag = (id: number, fields: Record<string, unknown> = {}): Row => ({
+  expiresAt: '2026-09-10T00:00:00.000Z',
+  id,
+  status: 'active',
+  ...fields,
+})
+
+describe('the bag delete re-checks what it deletes', () => {
+  it('reads and deletes with exactly the expiry predicate, the delete adding only the ids', async () => {
+    const { deletes, finds, payload } = fakePayload({ rows: { carts: [21, 22] } })
+
+    await sweepExpiredCarts(payload, AT)
+
+    expect(expiredCartWhere(AT)).toEqual(EXPECTED_CART_WHERE)
+    expect(finds[0].where).toEqual(EXPECTED_CART_WHERE)
+    expect(deletes[0].where).toEqual({
+      and: [{ id: { in: [21, 22] } }, ...EXPECTED_CART_WHERE.and],
+    })
+  })
+
+  it('leaves a bag a payment converted, or whose expiry moved, between the read and the delete', async () => {
+    // The ids alone would have deleted all three — a converted bag is the order's history, and the
+    // only thing a guest's confirmation page can match their order to.
+    const { payload } = fakePayload({
+      changedBeforeDelete: {
+        2: { status: 'converted' },
+        3: { expiresAt: '2026-10-11T00:00:00.000Z' },
+      },
+      rows: { carts: [bag(1), bag(2), bag(3)] },
+    })
+
+    expect(await sweepExpiredCarts(payload, AT)).toEqual({ deleted: 1, more: false })
+  })
+
+  it('locks the orders on the selected bags, then the bags, then deletes and commits in that transaction', async () => {
+    const { deletes, events, executed, payload } = fakePayload({ rows: { carts: [9, 4] } })
+
+    await sweepExpiredCarts(payload, AT)
+
+    expect(events).toEqual(['begin', 'lock', 'lock', 'delete:tx-1', 'commit:tx-1'])
+    expect(executed[0]).toMatch(
+      /SELECT "id" FROM "orders" WHERE "cart_id" IN \(\?, \?\) ORDER BY "id" FOR UPDATE/,
+    )
+    expect(executed[1]).toMatch(
+      /SELECT "id" FROM "carts" WHERE "id" IN \(\?, \?\) ORDER BY "id" FOR UPDATE/,
+    )
+    expect(deletes[0].req?.transactionID).toBe('tx-1')
+  })
+
+  it('rolls the transaction back when the delete throws, and the cron step reports it', async () => {
+    const { events, logged, payload } = fakePayload({
+      failOnDelete: 'carts',
+      rows: { carts: [1] },
+    })
+
+    const result = await sweepRetention(payload, AT)
+
+    expect(events.slice(0, 4)).toEqual(['begin', 'lock', 'lock', 'delete:tx-1'])
+    expect(events).toContain('rollback:tx-1')
+    expect(events).not.toContain('commit:tx-1')
+    expect(result.carts).toEqual({ deleted: 0, failed: true, more: true })
+    expect(logged).toContainEqual(expect.objectContaining({ level: 'error', step: 'carts' }))
+    expect(reported).toHaveBeenCalledWith(expect.any(Error), 'retention.carts')
+  })
+
+  it('opens no transaction and deletes nothing when no bag has expired', async () => {
+    const { deletes, events, payload } = fakePayload({ rows: { carts: [] } })
+
+    expect(await sweepExpiredCarts(payload, AT)).toEqual({ deleted: 0, more: false })
     expect(deletes).toHaveLength(0)
     expect(events).toHaveLength(0)
   })

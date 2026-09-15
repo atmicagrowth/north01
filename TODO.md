@@ -260,7 +260,7 @@ old wording, which promises an online returns flow that does not exist and names
 receive mail (audit DOC-01, DOC-02). **Do not run the seed against production to get it there**: the
 seed refuses any database but the development one `DATABASE_PUSH_TARGET` names (D-10), and it would
 overwrite production's settings, navigation and homepage and add demo customers, orders and reviews.
-Enter it by hand, in **Admin → Settings → Site Settings** and **Admin → FAQs**:
+Enter it by hand, in **Admin → Settings → Site Settings**, **Admin → FAQs** and **Admin → Size guides**:
 
 - **Site Settings → Contact → Contact Email** → `admin@micagrowth.com`.
 - **Site Settings → Policies → Returns Policy**, second paragraph → *Returns are arranged with our team
@@ -286,5 +286,33 @@ Enter it by hand, in **Admin → Settings → Site Settings** and **Admin → FA
   a return.*
 - **FAQ — "Do you ship outside the United States?"**, if production has it → *Yes, to Canada, the
   United Kingdom, Ireland, France, Germany, the Netherlands and Australia, by Standard or Express.
-  Overnight is United States only, because next-day is a promise we can keep in one country. Checkout
-  will not accept an address anywhere else yet.* It said *worldwide*, which checkout refuses.
+  Overnight is United States only, because next-day delivery is only realistic within one country.
+  Checkout will not accept an address anywhere else yet.* It said *worldwide*, which checkout refuses.
+- **FAQ — "When will my order ship?"** → *When your order leaves us, we email you the carrier and a
+  tracking number. The delivery estimate shown at checkout counts from then, not from the day you
+  ordered.* It promised same-working-day dispatch before 2pm, with no timezone, and nothing in the
+  shop backs a cut-off: an order ships when somebody marks it shipped. If you will commit to a dispatch
+  time, add it here — with a timezone — only once it is how orders are actually handled.
+- **FAQ — "How do I choose a size?"** → *Every piece of clothing has a size guide on its product page,
+  in centimetres. Accessories have none — a belt is sized to the trouser rather than the body, as its
+  description says. Between sizes, take the larger.* It said every product page has one.
+- **FAQ — "How should I wash wool?"** → *Knitted wool, such as merino and lambswool, can be hand washed
+  cool and dried flat — never hang wet knitwear. Woven wool, such as melton, twill and suiting cloth, is
+  dry clean only. The care notes on each product page come first.* It told customers to hand wash wool
+  that the product pages label dry clean only. Keep the question as it is.
+- **FAQ — "Where is my tracking number?"**, if production has it → *It is in the dispatch email, and
+  on the order in your account if you placed it while signed in. Nothing moves on the tracking page
+  until the carrier scans the parcel.* It promised an evening scan, and a guest order is never in an
+  account.
+- **FAQ — "How long does delivery take?"**, if production has it, second paragraph → *The time shown at
+  checkout is an estimate rather than a guarantee, and it counts from dispatch rather than from the
+  order.* It said the estimate was "the one we hold ourselves to"; the terms call it an estimate.
+- **FAQ — "When will I see the refund?"**, if production has it → *We refund to the original payment
+  method once the return has reached us and been checked, and email you when we do. A refund usually
+  takes five to ten business days to show on your statement, depending on the bank.* It promised a
+  refund the day the return is checked in, and three to five days where the refund email says five to
+  ten.
+- **Size guides → Tops → Fit notes** → *How each piece fits — slim, regular, relaxed or oversized — is
+  listed in its details. Between sizes, take the larger.* It said every top is a regular fit.
+- **Size guides → Trousers and shorts → Fit notes** → *Waist sizes run true. Between sizes, take the
+  larger.* It said the waists are measured flat, and they are the size on the label in centimetres.

@@ -601,13 +601,17 @@ try {
 
     created.push({ collection: 'customers', id: customer.id })
 
-    const cart = async (label: string, status: 'active' | 'converted') => {
+    const cart = async (
+      label: string,
+      status: 'active' | 'converted',
+      expiresAt = new Date(Date.now() + 86_400_000).toISOString(),
+    ) => {
       const row = await payload.create({
         collection: 'carts',
         data: {
           currency: 'USD',
           customer: customer.id,
-          expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+          expiresAt,
           status,
           token: `promo-cart-${label}-${suffix}`,
         } as never,
@@ -665,6 +669,31 @@ try {
       'H: …the checkout for the bag being paid now does not count against itself',
       uses !== 3,
       String(uses),
+    )
+
+    /*
+     * **Sweep 1, S20.** A bag past its `expiresAt` keeps `status: active` until the daily sweep deletes
+     * it, but `resolveCart` will never hand it out again — the customer's next add makes a new bag. A
+     * delayed bank payment still clearing on the expired bag is therefore a *different* checkout, and
+     * it used to be excluded as if it were the current one: the same code then validated at zero uses
+     * on the new bag.
+     */
+    const lapsed = await cart('lapsed', 'active', new Date(Date.now() - 86_400_000).toISOString())
+
+    await order('lapsed', 'pending_payment', lapsed.id)
+
+    const withLapsed = await countCustomerUses(payload, doc.id, customer.id)
+
+    check(
+      'H: **S20 a pending order on an expired, still-active bag counts** — it is not the bag being paid now',
+      withLapsed === 3,
+      String(withLapsed),
+    )
+
+    check(
+      'H: …and the current, unexpired bag’s own checkout still does not',
+      withLapsed !== 4,
+      String(withLapsed),
     )
   }
 } finally {

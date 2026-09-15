@@ -5,6 +5,7 @@ import { queueOrderConfirmation, queueRefundMessage } from '@/lib/email/orders'
 import { dedupeKeyFor } from '@/lib/email/rules'
 import type { EnqueueOutcome } from '@/lib/email/send'
 import { reportFailure } from '@/lib/observability/report'
+import { recalculateProductDerived } from '@/payload/hooks/syncProductDerived'
 
 import {
   classifyUnclaimedSessionEvent,
@@ -44,6 +45,11 @@ import {
  * email is split in two (Phase 36 sweep 1): its **row** is queued inside the transaction, so it
  * commits with the payment or not at all, and its **send** happens after the response — a mail
  * provider being slow or down must not roll back, or delay, a payment that has already happened.
+ *
+ * The products' cached stock figure (`products.derived.inventoryTotal`) is refreshed after the
+ * response too, by {@link refreshDerivedStock} (sweep 1, S01), which the route's after-response work
+ * (`after-stripe-event.ts`) runs beside the email and the tax record; the decrement is raw SQL and
+ * refreshes nothing on its own.
  *
  * ### The barriers
  *
@@ -617,6 +623,15 @@ async function queueOnce(
  *   customer paid with that code and for that bag, whether or not the goods are there.
  * - **It is visible.** `fulfilmentHold: stockShortfall` and the `shortfall` detail are written in the
  *   same transaction, and the failure is reported beyond the log.
+ *
+ * ### The catalogue's stock figure follows the sale — sweep 1, S01
+ *
+ * The decrements are raw SQL, so none of `ProductVariants`' hooks run, and `products.derived` — the
+ * `inventoryTotal` every shop card, the in-stock filter, the homepage tiles and the search record
+ * read — kept the count from before the sale until somebody happened to save that product. So a
+ * `finalised` outcome — the only one on which stock moved — is followed by {@link refreshDerivedStock},
+ * which the route runs after its response (`afterStripeEvent`). See that function for why it is not
+ * in here.
  */
 async function finalisePaidOrder(
   payload: Payload,
@@ -851,6 +866,121 @@ async function finalisePaidOrder(
   }
 
   return { confirmationEmailId, orderId, outcome: 'finalised' }
+}
+
+/**
+ * **Recompute `products.derived` for the products a paid order took stock from** — sweep 1, S01.
+ *
+ * `finalisePaidOrder` decrements stock with raw SQL, which runs no `ProductVariants` hook, so the
+ * cached `inventoryTotal` on each product — what the shop cards, the in-stock filter, the homepage
+ * tiles and the search record read — would keep its pre-sale figure. This puts it back in step.
+ *
+ * **Only for `finalised`.** It is the one outcome on which stock moved: `outOfStock` took none (the
+ * plan refused, or the savepoint undid it), a refund does not restock, and an expiry never took any.
+ * Every other outcome returns at once.
+ *
+ * **Through `recalculateProductDerived`, the mechanism an admin edit uses** (`hooks/
+ * syncProductDerived.ts`). It re-reads every active variant and rebuilds the figure rather than
+ * subtracting, so running it twice, or late, gives the same answer; and its `payload.update` on the
+ * product fires `Products.afterChange` — the search-index sync and the `catalog` / `home` cache
+ * revalidation — so the index and the cached pages learn about the sale the same way. (The index half
+ * is skipped outside Next, as it is for every CLI write; `pnpm reindex` builds from this column.)
+ *
+ * **After the commit, with no `req`, and after the route's response** — run by `afterStripeEvent`
+ * (`after-stripe-event.ts`) alongside the email delivery and the tax record, waiting on neither and
+ * holding neither up. Never inside the payment transaction, where a failed Local API write would make
+ * Payload kill the transaction and the payment would silently not have happened; and never before the
+ * response, where the index upsert is a network call to Algolia holding Stripe's request open (audit
+ * R1-21's lesson about the email). The products are read from the order's lines and their variants, so
+ * it needs nothing but the outcome.
+ *
+ * **It never throws.** The variants are the truth and the cache is reconstructible, so a failure — to
+ * read the lines, or to refresh one product — is logged and reported as `checkout.derivedStock`, and
+ * the other products are still refreshed. A product that failed keeps its pre-sale figure until it or
+ * one of its variants is next saved, which is exactly the state before this existed.
+ *
+ * Two sales of one product finishing together can each read the variants and write the product in
+ * either order, so the later write may carry the earlier read and leave the figure one sale high until
+ * the product's next write. That is tolerable for a display cache, and it is why every stock
+ * *decision* — the bag, the product page, preflight and the decrement itself — reads the variant's
+ * `inventoryQuantity` live and never this figure.
+ */
+export async function refreshDerivedStock(payload: Payload, outcome: FulfilOutcome): Promise<void> {
+  if (outcome.outcome !== 'finalised') {
+    return
+  }
+
+  const { orderId } = outcome
+  let productIds: number[] = []
+
+  try {
+    const { docs: items } = await payload.find({
+      collection: 'order-items',
+      depth: 0,
+      limit: 500,
+      overrideAccess: true,
+      pagination: false,
+      where: { order: { equals: orderId } },
+    })
+
+    const variantIds = [
+      ...new Set(
+        items
+          .map((item) => relatedId(item.variant))
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    ]
+
+    if (variantIds.length === 0) {
+      return
+    }
+
+    const { docs: variants } = await payload.find({
+      collection: 'product-variants',
+      depth: 0,
+      limit: variantIds.length,
+      overrideAccess: true,
+      pagination: false,
+      trash: true,
+      where: { id: { in: variantIds } },
+    })
+
+    /* The variant's parent owns the figure; the order line's `product` is a snapshot of it. */
+    productIds = [
+      ...new Set(
+        variants
+          .map((variant) => relatedId(variant.product))
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    ]
+  } catch (error) {
+    payload.logger.error({
+      err: error,
+      msg:
+        'A paid order took stock, and its products could not be read to refresh their cached stock ' +
+        'figure. The payment stands; shop cards show the old count until each product is next saved.',
+      orderId,
+    })
+    reportFailure(error, 'checkout.derivedStock', { orderId })
+
+    return
+  }
+
+  for (const productId of productIds) {
+    try {
+      await recalculateProductDerived({ payload, productId })
+    } catch (error) {
+      payload.logger.error({
+        err: error,
+        msg:
+          'A paid order took stock, and the product’s cached stock figure could not be refreshed. ' +
+          'The payment stands; shop cards show the old count until the product is next saved.',
+        orderId,
+        productId,
+      })
+      reportFailure(error, 'checkout.derivedStock', { orderId, productId })
+    }
+  }
 }
 
 /**
