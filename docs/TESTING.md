@@ -10,7 +10,7 @@ the gate as one sequence, a matrix of what each harness touches, and the invento
 | Layer | Where | Command | Needs |
 |---|---|---|---|
 | Unit | `tests/unit/*.test.ts` (20 files) | `pnpm test:unit` | nothing: Node environment, no DOM |
-| Component | `tests/components/*.test.tsx` (9 files) | `pnpm test:components` | nothing: jsdom, `tests/setup/components.ts` |
+| Component | `tests/components/*.test.tsx` (10 files) | `pnpm test:components` | nothing: jsdom, `tests/setup/components.ts` |
 | Both | — | `pnpm test:run` (CI), `pnpm test` (watch) | — |
 | Harnesses | `scripts/verify-*.ts` (23) | `pnpm verify:<name>` | most need the **development** database (§3) |
 | Secret scan | `scripts/scan-secrets.ts` | `pnpm scan:secrets` | git |
@@ -102,8 +102,8 @@ Unit tests cover pure rules: money, cart totals, merges and price changes, inven
 order, promotions, shipping, tax, order state, checkout confirmation, navigation routes, search
 mapping, the proxy, trusted origins, reply-to filtering and privacy redaction (`tests/unit/`).
 Component tests cover the interactive controls a customer uses: bag line, checkout form, filters,
-login form, quantity, search overlay, variant selector, wishlist button, and the demonstration notice
-(`tests/components/`).
+login form, quantity, search overlay, site footer, variant selector, wishlist button, and the
+demonstration notice (`tests/components/`).
 
 ## 5. End-to-end — Playwright
 

@@ -48,7 +48,7 @@ turn it off. The privacy notice is worded to stay true either way (*"may keep it
 | `north01:wishlist` — guest saved products, up to 50 ids | `localStorage` | until cleared; merged into the account and cleared at sign-in (`wishlist-sync.tsx`) | `lib/wishlist/rules.ts` |
 | `north01:recently-viewed` — up to 12 product ids | `localStorage` | until cleared | `lib/recently-viewed/rules.ts` |
 | `north01:recent-searches` — up to 6 terms | `localStorage` | until cleared | `lib/catalog/search.ts` |
-| `north01:demo-notice` — `1` once Continue is pressed on the demonstration notice | `localStorage` | until cleared | `components/shell/demo-notice.tsx` (DEV-86) |
+| `north01:demo-notice` — `1` once Continue is pressed on the demonstration notice | `localStorage` | until cleared | `lib/demo-notice.ts` `DEMO_NOTICE_KEY` (DEV-86) |
 | `north01:purchase:<order number>` | `sessionStorage` | the tab | `track-purchase.tsx` |
 | `ph_<key>_posthog` — `distinct_id`, `$device_id`, session id, first URL and referrer | cookie (365 days from last write) **and** `localStorage`; window ids in `sessionStorage` | as stated | PostHog, where configured (`analytics.tsx`) |
 | `_ga`, `_ga_<id>` — the GA client id | cookies | Google's default, up to 2 years (no `cookie_*` option is set) | gtag.js, where configured |

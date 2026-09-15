@@ -81,9 +81,18 @@ function markSeen(): void {
   listeners.forEach((listener) => listener())
 }
 
-/** Test seam: forget the in-memory acknowledgement between component tests. */
-export function resetDemoNoticeForTests(): void {
-  seenThisPage = false
+/**
+ * **Where focus goes when the notice closes**, which Radix cannot decide for this dialog.
+ *
+ * `DialogContentModal`'s own `onCloseAutoFocus` prevents the default restore and then focuses
+ * `Dialog.Trigger` — and there is no trigger here, so focus would land on `<body>`, the WCAG 2.4.3
+ * defect `shell/overlay-context.tsx` records finding in a browser. The shell's overlays restore to
+ * the control that opened them; nothing opened this one, so it hands focus to the page: `<main>`,
+ * which the layout already makes focusable for the skip link.
+ */
+function closeFocus(event: Event): void {
+  event.preventDefault()
+  document.getElementById('main-content')?.focus()
 }
 
 export function DemoNotice() {
@@ -92,8 +101,8 @@ export function DemoNotice() {
   return (
     <Dialog open={!seen}>
       <DialogContent
-        data-slot="demo-notice"
         hideCloseButton
+        onCloseAutoFocus={closeFocus}
         onEscapeKeyDown={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
         role="alertdialog"

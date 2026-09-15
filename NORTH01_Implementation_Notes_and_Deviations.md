@@ -9837,7 +9837,9 @@ first is the dialog's heading and its accessible name, the other two are its des
   opens once the page has hydrated. It is a fixed overlay, so nothing on the page moves when it does.
 - **With scripting off it never appears.** That is the right failure: a dialog that cannot be closed
   would be a shop nobody can use.
-- **`/admin` never shows it.** The admin is a sibling route group with its own root layout (D-08).
+- **`/admin` never shows it.** The admin is a sibling route group with its own root layout (D-08). The
+  storefront's two documents both mount it: the layout, and `app/global-not-found.tsx`, which renders
+  its own `<html>` and shell (sweep 1).
 - **If storage throws** — private browsing, blocked site data — Continue closes it for the rest of that
   page's life and it returns on the next full load. Shown too often rather than not at all.
 
@@ -9855,9 +9857,37 @@ first is the dialog's heading and its accessible name, the other two are its des
 *"All features work"* and *"you will be charged"* are the owner's words and are kept verbatim, but
 production has no Stripe, Algolia or Resend keys: checkout says that payments are unavailable
 (**DEV-62**), search says the same, and no email is sent. Nobody can be charged until `TODO.md` §4 is
-done. The notice is a warning, so the safe direction is the one it errs in — it over-warns rather than
-under-warns — and the sentences become true as those keys are added. `TODO.md` §13 records that, and
-that the notice should be removed if the shop ever stops being a demonstration.
+done. The two sentences are not equally safe, and sweep 1 was right to separate them: *"you will be
+charged"* warns about a shop that does not take money yet, which errs in the safe direction, while
+*"all features work"* is a reassurance that is not true today and errs in the other. Both stand because
+they are the owner's words and both become true as those keys are added; `TODO.md` §13 says so in front
+of the owner, and says how to remove the notice if the shop stops being a demonstration.
+
+### 1.44.5 Sweep 1
+
+An independent read of the change found seven defects, no high-severity one, and confirmed what did
+not need reporting: the store cannot mismatch on hydration, StrictMode leaves one `storage` listener,
+reduced motion is already global, the dialog surface is 17.10:1, and at 320px it reflows (WCAG 1.4.10).
+
+- **Focus was dropped on `<body>` when Continue closed the notice** — the WCAG 2.4.3 defect
+  `shell/overlay-context.tsx` records finding in a browser, reintroduced. Radix's modal handler
+  prevents the default restore and focuses a `Dialog.Trigger` this dialog does not have. The notice now
+  hands focus to `<main id="main-content">`, which the layout already makes focusable for the skip
+  link. A component test and the E2E test both assert it; removing the handler fails the component one.
+- **The E2E check that the notice stays closed proved nothing.** It waited for the server-rendered
+  footer, and the notice only ever appears after hydration, so it passed against the pre-hydration DOM.
+  It now waits for the stored key before asserting the absence.
+- **A test-only export shipped in `src/`.** `resetDemoNoticeForTests` is gone; the test re-imports the
+  module with `vi.resetModules()` instead.
+- **`data-slot="demo-notice"` silently replaced `DialogContent`'s shared `dialog-content` marker.**
+  Nothing reads it; the prop is removed rather than left as a trap for a later sweep over that slot.
+- **Three documentation errors:** `docs/SECURITY.md` named the component rather than the module that
+  owns the key; `docs/TESTING.md`'s component-file count was incremented from a number that was already
+  stale (10 files, and `site-footer` was missing from the list); and `TODO.md` §13's *"removing it is
+  one line"* would have left an unused import and a failing test — the build would have gone red on an
+  owner following it. It now names every deletion.
+- **`app/global-not-found.tsx`** renders its own shell and had no notice, so a visit that began on an
+  unmatched URL was unwarned for that one page. It mounts the notice too.
 
 ### 1.44.4 What was verified
 

@@ -4,6 +4,7 @@ import { SiteFooter } from '@/components/layout/site-footer'
 import { SiteHeader } from '@/components/layout/site-header'
 import { NewsletterSignup } from '@/components/newsletter/newsletter-signup'
 import { CartDrawer } from '@/components/shell/cart-drawer'
+import { DemoNotice } from '@/components/shell/demo-notice'
 import { ShellOverlayProvider } from '@/components/shell/overlay-context'
 import { SearchOverlay } from '@/components/shell/search-overlay'
 import { PageContainer } from '@/components/layout/page-container'
@@ -94,6 +95,9 @@ export default async function GlobalNotFound() {
 
           <SearchOverlay />
           <CartDrawer cart={cart} items={navigation.primary} />
+
+          {/* DEV-86: this document renders its own shell, so it needs the notice too. */}
+          <DemoNotice />
         </ShellOverlayProvider>
       </body>
     </html>

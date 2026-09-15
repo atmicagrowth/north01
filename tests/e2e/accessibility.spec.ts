@@ -52,6 +52,7 @@ import {
   addFirstAvailableVariantToBag,
   CART_COPY,
   DEMO_NOTICE_COPY,
+  DEMO_NOTICE_KEY,
   expect,
   NAME,
   openFirstProduct,
@@ -415,8 +416,18 @@ test.describe('DEV-86 — the demonstration notice a first visit sees', () => {
     await notice.getByRole('button', { name: DEMO_NOTICE_COPY.continue }).click()
     await expect(notice).toBeHidden()
 
+    /* Focus is handed to the page, not dropped on `<body>` — see `shell/overlay-context.tsx`. */
+    await expect(page.locator('#main-content')).toBeFocused()
+
     await page.goto(ROUTE.shop)
     await waitForShell(page)
+
+    /*
+     * The notice only ever appears **after** hydration, and the footer `waitForShell` waits for is
+     * server-rendered — so this assertion has to wait for something only the client can do, or it
+     * would pass against the pre-hydration DOM and prove nothing.
+     */
+    await page.waitForFunction((key) => window.localStorage.getItem(key) !== null, DEMO_NOTICE_KEY)
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
   })
 })

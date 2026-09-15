@@ -45,7 +45,7 @@ import { expect, test } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
 
 import { CART_COPY } from '@/lib/cart/rules'
-import { DEMO_NOTICE_COPY } from '@/lib/demo-notice'
+import { DEMO_NOTICE_COPY, DEMO_NOTICE_KEY } from '@/lib/demo-notice'
 import { SEARCH_COPY, SEARCH_PATH } from '@/lib/catalog/search'
 import { LOOK_COPY } from '@/lib/lookbook/rules'
 import { utilityNav } from '@/lib/navigation/utility'
@@ -77,6 +77,7 @@ export { expect, test }
 export {
   CART_COPY,
   DEMO_NOTICE_COPY,
+  DEMO_NOTICE_KEY,
   LOOK_COPY,
   REVIEW_COPY,
   REVIEW_SECTION_COPY,

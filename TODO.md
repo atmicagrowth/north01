@@ -331,8 +331,11 @@ Two things to know:
   tells the customer payments are unavailable; search is off (§8) and no email is sent (§2). The
   notice warns about the shop you will have once those keys exist, which is the safe direction to be
   wrong in. It needs no change when you add them.
-- **Removing it is one line.** Delete `<DemoNotice />` from `src/app/(frontend)/layout.tsx` when the
-  shop stops being a demonstration. The sentence about it in the privacy notice (Site Settings →
-  Policies, *Cookies and device storage*) goes at the same time.
+- **Removing it** when the shop stops being a demonstration is four deletions, and the build fails if
+  you stop after the first: `<DemoNotice />` **and its import** in `src/app/(frontend)/layout.tsx` and
+  in `src/app/global-not-found.tsx`, the `DEV-86` test block at the end of
+  `tests/e2e/accessibility.spec.ts` with `tests/components/demo-notice.test.tsx`, and the
+  `storageState` block in `playwright.config.ts`. The sentence about it in the privacy notice (Site
+  Settings → Policies, *Cookies and device storage*) goes at the same time.
 
 The words are yours: change them in `src/lib/demo-notice.ts`.
