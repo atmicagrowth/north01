@@ -3,13 +3,12 @@ import type Stripe from 'stripe'
 
 import {
   countWebhookDelivery,
-  eventRowRecordFor,
   isUniqueViolation,
   reclaimWebhookDelivery,
 } from '@/lib/checkout/events'
 import { courierFor } from '@/lib/email/courier'
 import type { TaxTransactionClient } from '@/lib/tax/transactions'
-import { afterStripeEvent } from '@/lib/checkout/after-stripe-event'
+import { settleStripeEvent } from '@/lib/checkout/after-stripe-event'
 import { applyStripeEvent, type SessionFacts } from '@/lib/checkout/fulfil'
 import {
   decideDuplicateDelivery,
@@ -74,6 +73,11 @@ import { getPayloadClient } from '@/lib/payload'
  * call to Algolia. All three are `afterStripeEvent` (`lib/checkout/after-stripe-event.ts`), which
  * starts them together so none waits on another, and which `pnpm verify:webhook` runs as this route
  * does, with the courier and the Stripe client this route passes swapped for stubs.
+ *
+ * **It is registered before the `stripe-events` row is written** (the lost-side-effect review), by
+ * `settleStripeEvent` in the same module. Registered after it, a failed row write left a committed
+ * payment with no tax record and no stock refresh, and the redelivery — answered `alreadyFinal` — does
+ * neither. Next runs `after()` work on an error response too, so now that write costs only a retry.
  *
  * ### `force-dynamic`, because a cached webhook is not a webhook
  */
@@ -240,62 +244,21 @@ export async function POST(request: Request): Promise<Response> {
       session,
     })
 
-    if (outcome.outcome === 'orderMissing') {
-      /* Possibly captured money with no order behind it. See the docblock's status list. */
-      payload.logger.error({
-        eventId: event.id,
-        eventType: event.type,
-        msg:
-          `A Stripe event named order ${outcome.reference}, which does not exist; nothing was ` +
-          'applied. If the event moved money, reconcile it in Stripe.',
-        orderReference: outcome.reference,
-      })
-      reportFailure(
-        new Error('A Stripe event named an order that does not exist.'),
-        'stripe.webhook.orderMissing',
-        { eventType: event.type, orderReference: outcome.reference },
-      )
-    }
-
-    if (outcome.outcome === 'mismatch') {
-      /*
-       * Money may have moved for something this order no longer describes. Not applied, not retried,
-       * and not quiet: the row, the log and the alert all carry the reason.
-       */
-      payload.logger.error({
-        eventId: event.id,
-        msg: `A Stripe session did not match its order, and nothing was applied: ${outcome.reason}`,
-        orderId: outcome.orderId,
-      })
-      reportFailure(
-        new Error(`Stripe session mismatch: ${outcome.reason}`),
-        'stripe.webhook.mismatch',
-        {
-          eventType: event.type,
-          orderId: outcome.orderId,
-        },
-      )
-    }
-
-    await payload.update({
-      collection: 'stripe-events',
-      data: {
-        ...(outcome.orderId === null ? {} : { order: outcome.orderId }),
-        ...eventRowRecordFor(outcome),
-      },
-      id: eventRowId,
-      overrideAccess: true,
-    })
-
     /*
-     * §17.1d: the email was queued with the state change; this only delivers it — beside the tax
-     * record and the stock-figure refresh. See `afterStripeEvent`.
+     * The outcome has committed. `settleStripeEvent` registers the after-response work **first** — §17.1d's
+     * email delivery, the tax record and the stock-figure refresh (`afterStripeEvent`) — and only then
+     * raises the `orderMissing` / `mismatch` alerts and writes the `stripe-events` row, so a failed
+     * bookkeeping write can no longer skip work a redelivery would never redo. See it for why.
      */
-    after(() =>
-      afterStripeEvent(payload, event.id, outcome, {
+    await settleStripeEvent(
+      payload,
+      { id: event.id, rowId: eventRowId, type: event.type },
+      outcome,
+      {
         courier: () => courierFor(payload),
+        schedule: after,
         taxClient: () => stripeClient() as TaxTransactionClient,
-      }),
+      },
     )
 
     return new Response('OK', { status: 200 })

@@ -440,9 +440,10 @@ export interface ProductVariant {
    */
   compareAtPriceMinor?: number | null;
   /**
-   * How many of this exact colour and size are in the warehouse. 0 shows the size as sold out; it can never go below 0. This number goes down by itself when an order is paid for — never reduce it by hand to account for a sale, or that sale is counted twice. Type the real counted figure here after a delivery or a stock take.
+   * How many of this exact colour and size are in the warehouse. 0 shows the size as sold out; it can never go below 0. This number goes down by itself when an order is paid for — never reduce it by hand to account for a sale, or that sale is counted twice. Type the real counted figure here after a delivery or a stock take. Saving without changing it keeps whatever the stock is by then; if you change it and a sale has changed it since you opened the page, the save is refused so you can recount.
    */
   inventoryQuantity: number;
+  stockWhenOpened?: number | null;
   /**
    * Uncheck to withdraw this colour and size from sale without deleting it.
    */
@@ -2474,6 +2475,7 @@ export interface ProductVariantsSelect<T extends boolean = true> {
   priceMinor?: T;
   compareAtPriceMinor?: T;
   inventoryQuantity?: T;
+  stockWhenOpened?: T;
   active?: T;
   image?: T;
   weightGrams?: T;

@@ -3,6 +3,7 @@ import type { PayloadRequest, Where } from 'payload'
 
 import { catalogIndexName, createWriteClient, saveProductRecords } from '@/lib/catalog/algolia'
 import { collectProductRecords } from '@/lib/catalog/indexer'
+import { reportFailure } from '@/lib/observability/report'
 
 /**
  * **Plan §12.1b's "reindex on structural changes", closed.**
@@ -96,14 +97,17 @@ async function reindexWhere(payload: Payload, where: Where, req?: PayloadRequest
     payload.logger.info(`Re-indexed ${records.length} product(s) after a taxonomy rename.`)
   } catch (error) {
     /*
-     * Warn and return. The write has already committed, so failing here would report failure for a
-     * change that happened — the same argument `revalidateTags.ts` and `syncSearchIndex.ts` both
-     * make. `pnpm reindex` is the documented recovery, and `pnpm reindex:check` finds the drift.
+     * Warn, report and return. Failing here would report failure for a change that happened — the
+     * same argument `revalidateTags.ts` and `syncSearchIndex.ts` both make. `pnpm reindex` is the
+     * documented recovery, and `pnpm reindex:check` finds the drift — but only for somebody who knows
+     * to run it, so the failure also goes to Sentry as `search.taxonomyReindex` (the lost-side-effect
+     * review): until then a rename that never reached the index was a warning in a log.
      */
     payload.logger.warn(
       { err: error },
       'Renamed, but the search index was not updated for the affected products. Run `pnpm reindex`.',
     )
+    reportFailure(error, 'search.taxonomyReindex')
   }
 }
 

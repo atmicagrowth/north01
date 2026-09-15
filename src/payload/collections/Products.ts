@@ -8,6 +8,7 @@ import { publishingFields, seoField } from '../fields/seo'
 import { slugField } from '../fields/slug'
 import { validateRequiredUpload } from '../fields/required'
 import { cascadeDelete } from '../hooks/cascadeDelete'
+import { lockRowsBeforeWrite } from '../hooks/lockRowsForWrite'
 import { revalidateCollection, revalidateCollectionDelete } from '../hooks/revalidateTags'
 import { syncSearchIndexAfterChange, syncSearchIndexAfterDelete } from '../hooks/syncSearchIndex'
 
@@ -136,8 +137,9 @@ const explainUnsellable = async ({
  * rendering it for anyone holding the link, and a merchandiser can switch off the last colour of a
  * garment without unpublishing it first. Refusing that save would make the ordinary way to retire a
  * line impossible. It is also what keeps this hook off `syncProductDerived`'s path — that hook
- * writes `{ derived }` and never a status, so it can never look like a transition and can never
- * roll back a variant save.
+ * writes the `derived` columns and never a status (with raw SQL since the concurrency review, so it
+ * does not reach this hook at all), so it can never look like a transition and can never roll back a
+ * variant save.
  *
  * **Duplicate slips past it, and that is the better outcome.** Payload's duplicate is a `create`
  * that hands the hook the *source* document as `originalDoc` (`collections/operations/create.js`),
@@ -318,6 +320,27 @@ export const Products: CollectionConfig = {
 
   hooks: {
     /**
+     * **A product save reads the row only once it holds the row's lock** — the concurrency review of
+     * 2026-09-15.
+     *
+     * `derived` is written by `syncProductDerived` with a raw `UPDATE` of its four columns — after
+     * every variant save, and after every paid sale (`refreshDerivedStock`). A Payload save of the
+     * product refills `derived` (closed to the browser by `nobodyField`) from its own unlocked read and
+     * writes every column back, so a refresh that committed between that read and that write was
+     * undone: the card's stock figure went back to before the sale, and a `priceFromMinor` could go back
+     * to `null` and take the product out of the shop. Locking first makes the save wait for the refresh
+     * and read what it wrote. The form window cannot reach `derived` — the browser's copy is dropped by
+     * field access and refilled from the locked row.
+     *
+     * Updates only: a permanent delete cascades into the variants first (`beforeDelete` below), and a
+     * variant save locks its variant and then this product, so locking the product before that cascade
+     * would be the opposite order. See `hooks/lockRowsForWrite.ts`.
+     */
+    beforeOperation: [
+      lockRowsBeforeWrite({ collection: 'products', table: 'products', update: 'NO KEY UPDATE' }),
+    ],
+
+    /**
      * The publish guardrail, §28.1d. `beforeValidate` rather than `beforeChange` so the refusal
      * arrives alongside Payload's own field errors in one response, and because it runs after the
      * field pass — the pass in which the `derived` group's access rule strips whatever the browser
@@ -332,11 +355,14 @@ export const Products: CollectionConfig = {
      * `syncSearchIndexAfterChange` keeps the Algolia record in step, and `revalidateCollection`
      * expires the two caches a product save can invalidate.
      *
-     * It fires on *every* product write, including the ones `syncProductDerived` performs on the
-     * product's behalf whenever a variant changes — `recalculateProductDerived` always calls
-     * `payload.update`, with no equality check to skip it. That is exactly what is wanted: a variant
-     * going out of stock or changing colour changes the product's facets, and routing all of it
-     * through the product means one synchronisation path rather than two that can disagree.
+     * It fires on every Payload write of a product. **`syncProductDerived` no longer makes one** — since
+     * the concurrency review of 2026-09-15 it writes only the `derived` columns with a raw `UPDATE`,
+     * because a whole-product `payload.update` rewrote `status` and `deletedAt` from its own read and
+     * could re-publish or un-trash a product an editor had just withdrawn. It calls **these two hooks
+     * itself** afterwards, with the product's id, so a variant going out of stock or changing colour
+     * still reaches the index and the caches through the same two functions. A hook added here that
+     * must also run when only `derived` changes has to be added there too; both of these read nothing
+     * from the hook's arguments but the product id and `req`.
      *
      * **`home` is here now, and Phase 10 deliberately left it out.** `revalidateTags.ts` recorded the
      * reason — a product rail is *"a 300-second-stale merchandising surface by design"* — and named
@@ -725,10 +751,10 @@ export const Products: CollectionConfig = {
        * (`fields/hooks/beforeValidate/promise.js`). So a product save simply leaves this group
        * alone, which is what "derived" was always supposed to mean.
        *
-       * `syncProductDerived` is unaffected. Field access is evaluated only when `overrideAccess` is
-       * false, and its `payload.update` is a Local API call with the default `overrideAccess: true`
-       * — the same door `Media.cloudinaryVersion` uses. This is not a *lock*: it is a statement
-       * about who owns the column, and the owner is the variant table.
+       * `syncProductDerived` is unaffected: it writes these four columns with a raw `UPDATE`, past
+       * Payload entirely (the concurrency review of 2026-09-15 — see `beforeOperation` above for the
+       * lock that stops a product save writing an older copy back). This is not a *lock*: it is a
+       * statement about who owns the column, and the owner is the variant table.
        */
       access: { create: nobodyField, update: nobodyField },
 

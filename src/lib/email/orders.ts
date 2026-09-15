@@ -36,10 +36,16 @@ function money(minor: null | number | undefined, currency: string, locale: strin
  * `SiteSettings.defaultLocale` is the shop's own, and an order carries no locale of its own — there
  * is one storefront and one currency per order. A read failure falls back rather than failing the
  * message, because a confirmation formatted in the wrong locale is enormously better than none.
+ *
+ * **The read takes `req`** (owner follow-up sweep 2). Both callers run inside the payment or refund
+ * transaction, which already holds the order, variant and promotion rows; without `req` this read
+ * asked the pool for a *second* connection while holding them. With every other connection waiting
+ * on those same rows, it could only end at the pool's 15-second connection timeout — swallowed
+ * below — and every payment for that product or code queued behind it.
  */
-async function shopLocale(payload: Payload): Promise<string> {
+async function shopLocale(payload: Payload, req?: PayloadRequest): Promise<string> {
   const settings = await payload
-    .findGlobal({ depth: 0, overrideAccess: true, slug: 'site-settings' })
+    .findGlobal({ depth: 0, overrideAccess: true, req, slug: 'site-settings' })
     .catch(() => null)
 
   return settings && typeof settings.defaultLocale === 'string' ? settings.defaultLocale : 'en-US'
@@ -82,7 +88,7 @@ export async function queueOrderConfirmation(
     where: { order: { equals: orderId } },
   })
 
-  const locale = await shopLocale(payload)
+  const locale = await shopLocale(payload, req)
   const currency = String(order.currency)
 
   const data: EmailData['orderConfirmation'] = {
@@ -201,7 +207,7 @@ export async function queueRefundMessage(
     return { outcome: 'error', reason: 'The order has no address to send to.' }
   }
 
-  const locale = await shopLocale(payload)
+  const locale = await shopLocale(payload, req)
 
   return enqueueEmail(
     payload,

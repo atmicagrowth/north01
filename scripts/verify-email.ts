@@ -21,6 +21,7 @@
  * applies: they create and delete orders, customers and message rows.
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
@@ -344,12 +345,75 @@ const created: {
 }[] = []
 
 const cleanup = async () => {
+  /* `trash: true` is the permanent delete — trashed rows included, which `trash: false` skips. */
   for (const doc of [...created].reverse()) {
     await payload
-      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
+      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: true })
       .catch(() => undefined)
   }
 }
+
+/**
+ * **What an aborted run left behind**, removed before this run starts.
+ *
+ * `cleanup` runs in `finally`, which a killed process never reaches, so its orders, lines and queued
+ * messages stayed — and a stranded `pending` row is one the real drain would later try to deliver.
+ * Everything here is named with something only this harness writes: `N1-EM-` order numbers, the
+ * `verify-email-` address, `EM-<9 digits>` line SKUs, and the seven `verify-<section>-<9 digits>`
+ * dedupe keys sections E–K claim. Every foreign key here is `ON DELETE SET NULL`, so a row orphaned by
+ * a half-finished cleanup is matched by its own name, not only through its order.
+ */
+async function clearAbortedRuns(): Promise<void> {
+  const idsOf = async (query: ReturnType<typeof sql>) =>
+    ((await payload.db.drizzle.execute(query)).rows as { id: number | string }[]).map((row) =>
+      Number(row.id),
+    )
+
+  const purge = async (
+    collection: 'email-messages' | 'order-items' | 'orders',
+    ids: number[],
+  ): Promise<void> => {
+    if (ids.length === 0) return
+
+    const { errors } = await payload.delete({
+      collection,
+      overrideAccess: true,
+      trash: true,
+      where: { id: { in: ids } },
+    })
+
+    if (errors.length > 0) {
+      throw new Error(
+        `verify-email could not clear an aborted run's ${collection}: ${JSON.stringify(errors)}`,
+      )
+    }
+  }
+
+  const orders = await idsOf(sql`SELECT "id" FROM "orders" WHERE "order_number" LIKE 'N1-EM-%'`)
+  const orderList =
+    orders.length > 0
+      ? sql.join(
+          orders.map((id) => sql`${id}`),
+          sql`, `,
+        )
+      : sql`NULL`
+
+  await purge(
+    'email-messages',
+    await idsOf(sql`SELECT "id" FROM "email_messages"
+      WHERE "to" LIKE 'verify-email-%'
+         OR "dedupe_key" ~ '^verify-(claim|race|deliver|fail|ceiling|suppress|throw)-[0-9]{9}$'
+         OR "order_id" IN (${orderList})`),
+  )
+  await purge(
+    'order-items',
+    await idsOf(sql`SELECT "id" FROM "order_items"
+      WHERE "order_id" IN (${orderList}) OR "sku" ~ '^EM-[0-9]{9}$'`),
+  )
+  await purge('orders', orders)
+}
+
+await clearAbortedRuns()
 
 const suffix = Date.now().toString().slice(-9)
 
@@ -917,10 +981,43 @@ try {
 
     created.push({ collection: 'email-messages', id: queued.id })
 
+    /*
+     * **The drain sees only this run's rows.** `drainEmails` takes the oldest owed messages in the
+     * whole queue, and this database is shared — other harnesses and the E2E suite queue real rows in
+     * it, sometimes at the same moment. Unscoped, this section delivered *their* pending messages
+     * through a fake transport and marked them sent. The instance handed to the drain narrows its one
+     * `find` to the ids this run created; the claim, the render and the record go straight through.
+     */
+    const ownMessageIds = created
+      .filter((doc) => doc.collection === 'email-messages')
+      .map((doc) => doc.id)
+
+    const scopedPayload = new Proxy(payload, {
+      get(target, property) {
+        if (property === 'find') {
+          return (args: Parameters<Payload['find']>[0]) =>
+            target.find({
+              ...args,
+              where: { and: [args.where ?? {}, { id: { in: ownMessageIds } }] },
+            } as never)
+        }
+
+        const value: unknown = Reflect.get(target, property)
+
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+
     const { transport } = fakeTransport('ok')
-    const tally = await drainEmails(payload, courierWith(transport), { limit: 50 })
+    const tally = await drainEmails(scopedPayload, courierWith(transport), { limit: 50 })
 
     check('M: the drain delivers what is owed', tally.sent >= 1, JSON.stringify(tally))
+
+    check(
+      'M: …and attempts no row this run did not queue',
+      tally.attempted <= ownMessageIds.length,
+      `${tally.attempted} attempted of ${ownMessageIds.length} own`,
+    )
 
     check(
       'M: …and leaves nothing pending behind it',

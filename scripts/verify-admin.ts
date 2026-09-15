@@ -238,11 +238,98 @@ const created: {
 }[] = []
 
 const cleanup = async () => {
-  for (const doc of [...created].reverse()) {
+  /*
+   * **The dispatch and delivery notices go first.** Section A walks an order to `shipped` and then
+   * `delivered`, and `queueOrderEmails` queues a message for each. `email_messages.order` is `ON DELETE
+   * SET NULL`, so deleting the order alone left both rows `pending` with no order — every run, passing
+   * or not — for the next real drain to deliver.
+   */
+  const orderIds = created.filter((doc) => doc.collection === 'orders').map((doc) => doc.id)
+
+  if (orderIds.length > 0) {
     await payload
-      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
+      .delete({
+        collection: 'email-messages',
+        overrideAccess: true,
+        trash: true,
+        where: { order: { in: orderIds } },
+      })
       .catch(() => undefined)
   }
+
+  /* `trash: true` is the permanent delete — trashed rows included, which `trash: false` skips. */
+  for (const doc of [...created].reverse()) {
+    await payload
+      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: true })
+      .catch(() => undefined)
+  }
+}
+
+/**
+ * **What an aborted run left behind**, removed before this run starts.
+ *
+ * `cleanup` only knows what *this* run created, and a killed run never reaches its `finally` — so it
+ * left an admin account whose password is in this file, a live 10% discount code and a published
+ * product. Every fixture here carries a name nothing else in the repository writes: the
+ * `verify-admin-` email and slug prefix, `N1-ADM-` order numbers, `ADM-<9 digits>-` SKUs and
+ * `ADM<9 digits>` promotion codes. Those are what is cleared, children before parents.
+ */
+async function clearAbortedRuns(): Promise<void> {
+  const idsOf = async (query: unknown) =>
+    ((await drizzle.execute(query)).rows as { id: number | string }[]).map((row) => Number(row.id))
+
+  const purge = async (
+    collection:
+      'email-messages' | 'orders' | 'product-variants' | 'products' | 'promotions' | 'users',
+    ids: number[],
+  ): Promise<void> => {
+    if (ids.length === 0) return
+
+    const { errors } = await payload.delete({
+      collection,
+      overrideAccess: true,
+      trash: true,
+      where: { id: { in: ids } },
+    })
+
+    if (errors.length > 0) {
+      throw new Error(
+        `verify-admin could not clear an aborted run's ${collection}: ${JSON.stringify(errors)}`,
+      )
+    }
+  }
+
+  const orders = await idsOf(sql`SELECT "id" FROM "orders" WHERE "order_number" LIKE 'N1-ADM-%'`)
+  const orderList =
+    orders.length > 0
+      ? sql.join(
+          orders.map((id) => sql`${id}`),
+          sql`, `,
+        )
+      : sql`NULL`
+
+  await purge(
+    'email-messages',
+    await idsOf(sql`SELECT "id" FROM "email_messages"
+      WHERE "to" LIKE 'verify-admin-%' OR "order_id" IN (${orderList})`),
+  )
+  await purge('orders', orders)
+  await purge(
+    'promotions',
+    await idsOf(sql`SELECT "id" FROM "promotions" WHERE "code" ~ '^ADM[0-9]{9}[A-Z]*$'`),
+  )
+  await purge(
+    'product-variants',
+    await idsOf(sql`SELECT "id" FROM "product_variants" WHERE "sku" ~ '^ADM-[0-9]{9}-'`),
+  )
+  await purge(
+    'products',
+    await idsOf(sql`SELECT "id" FROM "products" WHERE "slug" LIKE 'verify-admin-%'`),
+  )
+  await purge(
+    'users',
+    await idsOf(sql`SELECT "id" FROM "users" WHERE "email" LIKE 'verify-admin-%'`),
+  )
 }
 
 /* -------------------------------------------------------------------------------------------------
@@ -365,7 +452,7 @@ const ILLEGAL_STEPS: Record<
 }
 
 try {
-  await cleanup()
+  await clearAbortedRuns()
 
   /* ---------------------------------------------------------------- staff, and only staff ---- */
 

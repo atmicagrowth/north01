@@ -34,6 +34,7 @@
  * script can reach.
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
@@ -1026,10 +1027,59 @@ const payload: Payload = await getPayload({ config })
 const created: { collection: 'categories' | 'product-variants' | 'products'; id: number }[] = []
 
 const cleanup = async () => {
+  /* `trash: true` is the permanent delete — trashed rows included, which the default skips. */
   for (const doc of [...created].reverse()) {
     await payload
-      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true })
+      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: true })
       .catch(() => undefined)
+  }
+}
+
+/**
+ * **What an aborted run left behind**, removed before this run starts.
+ *
+ * A killed run never reaches `cleanup`, and what it strands is loud: published products at
+ * `sortOrder: 0` that head `/shop` for the E2E suite, and — because they were written through the CLI
+ * and never reached Algolia — rows that make section H's engine comparison fail on every later run.
+ * Every fixture here is named `verify-<state>-<13-digit stamp>`, its SKUs `VERIFY-<STATE>-<stamp>-`
+ * and its category `verify-<stamp>`; nothing else in the repository writes those shapes, so exactly
+ * they are cleared, children before parents.
+ */
+{
+  const idsOf = async (query: ReturnType<typeof sql>) =>
+    ((await payload.db.drizzle.execute(query)).rows as { id: number | string }[]).map((row) =>
+      Number(row.id),
+    )
+
+  for (const [collection, query] of [
+    [
+      'product-variants',
+      sql`SELECT "id" FROM "product_variants"
+        WHERE "sku" ~ '^VERIFY-(LIVE|DRAFT|SCHEDULED|WITHDRAWN|SOLDOUT|HIDDEN)-[0-9]{13}(-|$)'`,
+    ],
+    [
+      'products',
+      sql`SELECT "id" FROM "products"
+        WHERE "slug" ~ '^verify-(live|draft|scheduled|withdrawn|soldout)-[0-9]{13}$'`,
+    ],
+    ['categories', sql`SELECT "id" FROM "categories" WHERE "slug" ~ '^verify-[0-9]{13}$'`],
+  ] as const) {
+    const ids = await idsOf(query)
+
+    if (ids.length === 0) continue
+
+    const { errors } = await payload.delete({
+      collection,
+      overrideAccess: true,
+      trash: true,
+      where: { id: { in: ids } },
+    })
+
+    if (errors.length > 0) {
+      throw new Error(
+        `verify-catalog could not clear an aborted run's ${collection}: ${JSON.stringify(errors)}`,
+      )
+    }
   }
 }
 

@@ -6,6 +6,7 @@ import { isAdmin, isAdminField, isStaff, nobody, nobodyField, ownedByCustomer } 
 import { addressFields } from '../fields/address'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
+import { lockRowsBeforeWrite } from '../hooks/lockRowsForWrite'
 import { enforceOrderTransitions } from '../hooks/orderTransitions'
 import { queueOrderEmails } from '../hooks/queueOrderEmails'
 
@@ -924,6 +925,43 @@ export const Orders: CollectionConfig = {
   ],
 
   hooks: {
+    /**
+     * **An order save reads the row only once it holds the row's lock** — the concurrency review of
+     * 2026-09-15.
+     *
+     * Every payment fact on this table is written by `lib/checkout/fulfil.ts` with a conditional raw
+     * `UPDATE`: the payment claim (`paymentStatus`, `paidAt`, `stripePaymentIntentId`, and
+     * `fulfillmentStatus` back to `unfulfilled`), the refund claim (`refundedMinor`, `refundedAt`), the
+     * other status transitions, and the two holds (`fulfilmentHold`, `shortfall`). A Payload save —
+     * an editor adding a tracking number — read the row unlocked, refilled all of those (they are
+     * `nobodyField`) from that read, and wrote every column back. `enforceOrderTransitions` locked the
+     * row, but only after that read and only when the save moved the fulfilment status, and it never
+     * copied the live values back. So a webhook that committed in between was undone: an order Stripe
+     * had been paid for went back to `pending_payment` with no `paidAt` and no payment intent, a refund
+     * disappeared, a stock-shortfall hold was cleared.
+     *
+     * Locking here, before Payload reads, makes the save wait for the webhook and read what it wrote;
+     * field access then refills the payment columns from that read, so the admin form's stale copy of
+     * them never reaches the row. The lock is decided by the access rule, so a REST caller locks only
+     * rows it may write (`hooks/lockRowsForWrite.ts`).
+     *
+     * **`FOR UPDATE`, and orders only.** The strength `orderTransitions.ts` already takes, so nothing
+     * upgrades a lock it holds. Lock order: `fulfil.ts` takes orders → variants → promotions → carts →
+     * the email row; `pending-order.ts` takes its advisory lock → orders; the bag merge and the
+     * retention sweep take orders → carts. An order save takes the order and then, in `afterChange`,
+     * inserts an email row — never a variant, promotion or bag — so it closes no cycle with any of
+     * them. A permanent delete is locked the same way: it takes the order first and its lines after,
+     * which is the payment's order too.
+     */
+    beforeOperation: [
+      lockRowsBeforeWrite({
+        collection: 'orders',
+        delete: 'UPDATE',
+        table: 'orders',
+        update: 'UPDATE',
+      }),
+    ],
+
     /**
      * §18.1b: *"Do not let arbitrary transitions happen from the admin UI."* The rules are in
      * `lib/orders/rules.ts`; this is what makes every write obey them, including one that never goes

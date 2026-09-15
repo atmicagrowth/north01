@@ -57,6 +57,7 @@
     "scan:secrets": "payload run scripts/scan-secrets.ts",
     "verify:security": "payload run scripts/verify-security.ts",
     "verify:admin": "payload run scripts/verify-admin.ts",
+    "verify:concurrency": "payload run scripts/verify-concurrency.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:unit": "vitest run --project unit",

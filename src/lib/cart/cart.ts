@@ -269,6 +269,10 @@ async function resolveCart(
      * run keeps filling an ownerless cart that vanishes with their cookies, and the next sign-in
      * treats it as a guest bag all over again.
      *
+     * The claim is a Payload update, so it locks the bag before it reads it (`Carts.ts`,
+     * `beforeOperation`): a payment converting this bag at the same moment is waited for, and the
+     * claim cannot write `active` back over `converted`.
+     *
      * The claim happens on `create` and nowhere else, because `create` is the flag that says this
      * request is a decision. A read still just reads — see the module docblock. (An earlier version
      * of this comment said "claimed" while the code only returned it, which is the mismatch Phase
@@ -1089,6 +1093,11 @@ type TxHandle = { execute: (query: unknown) => Promise<{ rows?: unknown[] }> }
  *    takes them in (`fulfil.ts` claims the order, then converts the bag), so the two queue instead of
  *    deadlocking. Nothing that holds an order or a bag lock waits for the checkout lock afterwards
  *    (preflight takes it first, the payment and the sweep never), so taking it first cannot deadlock.
+ *
+ * Copying the guest's code takes a fourth lock, on **the customer's bag**: every Payload update of a
+ * bag locks it before reading it (`Carts.hooks.beforeOperation`, the concurrency review of
+ * 2026-09-15), so a payment converting that bag cannot be undone by the copy. A payment holds nothing
+ * this transaction holds while it waits for that bag, so the fourth lock closes no cycle.
  *
  * **The orders are read again once the bag's lock is granted, and the decision is made on that read**
  * (sweep 1's recheck of S03). Step 2 locks only the orders that existed when it ran: an order inserted

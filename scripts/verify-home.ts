@@ -994,10 +994,34 @@ const created: { collection: 'campaigns' | 'products'; id: number }[] = []
 const cleanup = async () => {
   for (const { collection, id } of created.reverse()) {
     try {
-      await payload.delete({ collection, id, overrideAccess: true, trash: false })
+      /* `trash: true` is the permanent delete — trashed rows included, which `trash: false` skips. */
+      await payload.delete({ collection, id, overrideAccess: true, trash: true })
     } catch {
       // Already gone — a test may have deleted it deliberately.
     }
+  }
+}
+
+/*
+ * **What an aborted run left behind**, removed before this run starts. Every slug below is fixed and
+ * unique, so a single run killed before its `finally` made every later run crash on its first create.
+ * They are this harness's alone — nothing else in the repository writes a `verify-home-` slug.
+ */
+for (const [collection, slugs] of [
+  ['campaigns', [`${PREFIX}-published`, `${PREFIX}-draft`, `${PREFIX}-scheduled`]],
+  ['products', [`${PREFIX}-no-variants`, `${PREFIX}-draft-new`]],
+] as const) {
+  const { errors } = await payload.delete({
+    collection,
+    overrideAccess: true,
+    trash: true,
+    where: { slug: { in: [...slugs] } },
+  })
+
+  if (errors.length > 0) {
+    throw new Error(
+      `verify-home could not clear an aborted run's ${collection}: ${JSON.stringify(errors)}`,
+    )
   }
 }
 

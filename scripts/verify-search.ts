@@ -11,6 +11,10 @@
  * check when it is not. The **D-10** guard applies — this creates and deletes documents, so it
  * refuses to run anywhere but the development database `DATABASE_PUSH_TARGET` names.
  *
+ * Section O, from the lost-side-effect review, goes back to real documents after the live section: the
+ * daily cron's scheduled-drop step (`lib/catalog/scheduled-index.ts`) must select exactly the published
+ * products whose `publishedAt` passed in its window. It asserts the selection, never an index write.
+ *
  * `lib/catalog/catalog.ts` is deliberately not imported: it is `server-only`. Every rule this asserts
  * lives in `search.ts`, `suggest.ts`, `query.ts`, `resolve.ts` or `record.ts`, which is what made them
  * assertable at all.
@@ -33,6 +37,11 @@ import {
 } from '../src/lib/env.core'
 import { catalogIndexName, createSearchClient } from '../src/lib/catalog/algolia'
 import { collectProductRecords } from '../src/lib/catalog/indexer'
+import {
+  findScheduledDrops,
+  isScheduledDropDue,
+  syncScheduledDrops,
+} from '../src/lib/catalog/scheduled-index'
 import {
   CATALOG_MAX_PAGE,
   CATALOG_PAGE_SIZE,
@@ -1182,6 +1191,123 @@ try {
       'N: skipped — algolia is not configured, and the storefront degrades rather than failing',
       true,
       'set the three ALGOLIA variables to run the live section',
+    )
+  }
+
+  /* =================================================================================================
+   * O — Scheduled drops reach the index when their time comes (the lost-side-effect review)
+   * ============================================================================================== */
+
+  /*
+   * A product saved with a future `publishedAt` is left out of the index at the save, and nothing saved
+   * it again — so a drop appeared in `/shop` and never in search. The daily cron now selects every
+   * published product whose time passed in the last 26 hours and syncs each one. What is asserted here
+   * is the **selection**, against real rows: the index write is the save hook's own sync, which refuses
+   * to run outside Next (the tripwire after the cleanup still checks nothing reached the index).
+   *
+   * The run's "now" is 30 days ahead, so the window holds these fixtures and nothing else — a seed or
+   * another harness run publishes products stamped with today's date, which a real "now" would select.
+   */
+  {
+    const dropNow = new Date(Date.now() + 30 * 86_400_000)
+    const HOUR = 3_600_000
+
+    const drops = [
+      { due: true, label: 'an hour before the run', offset: -HOUR, status: 'published' },
+      {
+        due: true,
+        label: '25 hours before — a late previous run',
+        offset: -25 * HOUR,
+        status: 'published',
+      },
+      { due: true, label: 'at the run’s own instant', offset: 0, status: 'published' },
+      { due: false, label: 'a minute after the run', offset: 60_000, status: 'published' },
+      {
+        due: false,
+        label: 'at the window’s start — the previous run’s',
+        offset: -26 * HOUR,
+        status: 'published',
+      },
+      { due: false, label: 'two days before', offset: -48 * HOUR, status: 'published' },
+      { due: false, label: 'a draft an hour before', offset: -HOUR, status: 'draft' },
+    ] as const
+
+    const fixtures: {
+      due: boolean
+      id: number
+      label: string
+      publishedAt: string
+      status: string
+    }[] = []
+
+    for (const [index, drop] of drops.entries()) {
+      const publishedAt = new Date(dropNow.getTime() + drop.offset).toISOString()
+
+      const doc = await payload.create({
+        collection: 'products',
+        data: {
+          name: `Verify Drop ${stamp}-${index}`,
+          publishedAt,
+          slug: `vs-product-${stamp}-drop-${index}`,
+          sortOrder: 0,
+          status: drop.status,
+        } as never,
+        overrideAccess: true,
+      })
+
+      created.push({ collection: 'products', id: doc.id })
+      fixtures.push({
+        due: drop.due,
+        id: doc.id,
+        label: drop.label,
+        publishedAt,
+        status: drop.status,
+      })
+    }
+
+    const fixtureIds = new Set(fixtures.map((fixture) => fixture.id))
+    const expected = fixtures.filter((fixture) => fixture.due).map((fixture) => fixture.id)
+    const selection = await findScheduledDrops(payload, dropNow)
+    const selected = selection.ids.filter((id) => fixtureIds.has(id))
+
+    check(
+      'O: **the step selects exactly the published products whose time passed in the window**',
+      JSON.stringify([...selected].sort()) === JSON.stringify([...expected].sort()) &&
+        !selection.more,
+      fixtures
+        .map((fixture) => `${fixture.label}: ${selected.includes(fixture.id) ? 'selected' : 'not'}`)
+        .join('; '),
+    )
+
+    check(
+      'O: …and Postgres and the pure predicate agree on every fixture',
+      fixtures.every(
+        (fixture) =>
+          isScheduledDropDue(fixture, dropNow) === selection.ids.includes(fixture.id) &&
+          isScheduledDropDue(fixture, dropNow) === fixture.due,
+      ),
+    )
+
+    const synced: number[] = []
+
+    const outcome = await syncScheduledDrops(
+      payload,
+      (_payload, productId) => {
+        synced.push(productId)
+
+        return Promise.resolve('written')
+      },
+      dropNow,
+    )
+
+    check(
+      'O: the cron step syncs each selected product once, and says how many it indexed',
+      JSON.stringify(synced.filter((id) => fixtureIds.has(id)).sort()) ===
+        JSON.stringify([...expected].sort()) &&
+        !outcome.failed &&
+        outcome.due === synced.length &&
+        outcome.indexed === synced.length,
+      JSON.stringify(outcome),
     )
   }
 } finally {

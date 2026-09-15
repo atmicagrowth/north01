@@ -1,15 +1,21 @@
+import { sql } from '@payloadcms/db-postgres'
 import type {
   CollectionAfterChangeHook,
   CollectionAfterDeleteHook,
   Payload,
   PayloadRequest,
 } from 'payload'
+import { createLocalReq } from 'payload'
+
+import { transactionOf } from './lockRowsForWrite'
+import { revalidateCollection } from './revalidateTags'
+import { syncSearchIndexAfterChange } from './syncSearchIndex'
 
 /**
  * Keeps `products.derived` in step with the variants beneath it.
  *
  * The reasoning for the cache existing at all is in `Products.ts`; this file is the mechanism, and
- * it has four properties worth stating because each one is a bug that was designed out rather than
+ * it has five properties worth stating because each one is a bug that was designed out rather than
  * discovered:
  *
  * 1. **It recomputes rather than adjusts.** The hook does not add the new price to a running minimum
@@ -27,20 +33,36 @@ import type {
  *    S01), which runs after the payment transaction has **committed** its raw-SQL stock decrement, so
  *    there is nothing uncommitted left to miss.
  *
- * 3. **It cannot recurse, and it must not try to prove that with a `context` flag.** Updating a
- *    product fires the *product's* hooks, and products have no `afterChange` — so there is no cycle.
- *    A defensive flag would be worse than useless: Payload's `createLocalReq` mutates the request it
- *    is handed rather than cloning it, so any `context` passed to a nested call is latched onto the
- *    caller's request permanently. See the note at the `payload.update` below.
+ * 3. **It writes the four `derived` columns and nothing else** — the concurrency review of
+ *    2026-09-15. It used to write through `payload.update('products')`, and a Payload update rewrites
+ *    *every* column of the row from the operation's own read. So a refresh after a sale whose read
+ *    preceded an editor's unpublish or move to the trash, and whose write followed it, put back
+ *    `status: published` and `deletedAt: null` — re-publishing or un-trashing a product somebody had
+ *    just withdrawn, from a background job nobody was watching. The write is now one raw `UPDATE` of
+ *    those four columns and `updated_at` (on the caller's transaction when there is one), so it cannot
+ *    carry any other column, stale or not. `pnpm verify:concurrency` section D holds the race open.
  *
- * 4. **It rethrows, and the first version of it did not.** The intent was that a variant save which
+ *    It also no longer runs the product's validation and hooks to store a cache: a product that a later
+ *    rule would refuse, or one in the trash, still gets its figure refreshed, where before the refresh
+ *    failed — and inside a variant save, took the save down with it.
+ *
+ * 4. **It does what the product's `afterChange` hooks did, explicitly.** Those were the reason a
+ *    variant change reached the search index and the storefront caches: `syncSearchIndexAfterChange`
+ *    and `revalidateCollection('catalog', 'home')`. Both are called here after the write, with the
+ *    product's id and the request. Without a caller's transaction the `UPDATE` has already committed,
+ *    so **no row lock is held across the Algolia call** — the Payload update this replaced held the
+ *    product row for the length of that network round trip. Inside a variant save it runs in that
+ *    save's transaction, exactly as the hooks did: that transaction holds the variant and product rows
+ *    until the save commits, and the index read has to see the uncommitted variant. (The index half is
+ *    skipped outside Next — `NEXT_RUNTIME` — as for every CLI write; `pnpm reindex` rebuilds it.)
+ *
+ * 5. **It rethrows, and the first version of it did not.** The intent was that a variant save which
  *    succeeded should not be reported as failed because a cache refresh did not — the variants are
  *    the source of truth and the cache is reconstructible. That reasoning is sound and the mechanism
- *    made it false: every Payload operation ends `catch (error) { await killTransaction(req); throw }`,
- *    and `killTransaction` rolls the *caller's* transaction back and deletes `req.transactionID`. By
- *    the time this catch block runs the variant's own write is already gone, so swallowing the error
- *    reported success for a save that did not happen — silent data loss, which is strictly worse than
- *    a failed request. The error is logged for the product ID and then rethrown.
+ *    made it false: inside a transaction a failed statement aborts the transaction, and the caller's
+ *    Payload operation then ends `catch (error) { await killTransaction(req); throw }`. Swallowing the
+ *    error here would report success for a save that did not happen — silent data loss, which is
+ *    strictly worse than a failed request. The error is logged for the product ID and then rethrown.
  *
  * **What counts as active.** `active === true` and not in the trash. Payload's `find` already
  * excludes trashed documents unless asked, so soft-deleting a variant removes it from the aggregate
@@ -67,6 +89,9 @@ type VariantRow = {
   compareAtPriceMinor?: number | null
   inventoryQuantity?: number | null
 }
+
+/** What `Products.hooks.afterChange` runs; see point 4 above. */
+const revalidateProductCaches = revalidateCollection('catalog', 'home')
 
 export const recalculateProductDerived = async ({
   payload,
@@ -130,30 +155,55 @@ export const recalculateProductDerived = async ({
       }
     }
 
-    /**
-     * **No `context` flag here, deliberately.** Passing one would be the obvious defensive move and
-     * it is the bug: `createLocalReq` does not build an isolated request, it *mutates* the one it is
-     * given — `req.context = { ...req.context, ...context }` on the same object, verified by running
-     * it. A flag set here would therefore latch onto the caller's request for the rest of the
-     * operation, and a bulk variant edit shares one request across every matched row: the first
-     * variant would refresh its product and every later one would skip.
-     *
-     * Nothing needs suppressing anyway. Updating a product fires the *product's* hooks, and neither
-     * of them writes: Phase 11 added `afterChange` to `products`, and it does two things — push a
-     * record to Algolia and expire a cache tag. Neither touches Postgres, so there is still no cycle
-     * to break.
-     *
-     * (This paragraph said products had *no* `afterChange` until Phase 11 gave them one. The
-     * conclusion held; the premise did not, and a docblock nothing executes is exactly the artefact
-     * Phase 10's audit found wrong nine times.)
+    /*
+     * The caller's transaction when it has one (point 2), otherwise a pool connection, where the
+     * statement commits on its own and releases the row at once (point 4). `updated_at` moves as it
+     * did under `payload.update`, because the sitemap's `lastModified` and the admin list's order read
+     * it and a sold-out size is a change to the product page. Zero rows means the product is gone — a
+     * permanent delete — and there is nothing to index or revalidate.
      */
-    await payload.update({
-      collection: 'products',
-      id: productId,
+    const connection =
+      (await transactionOf(req, payload)) ??
+      (payload.db.drizzle as unknown as NonNullable<Awaited<ReturnType<typeof transactionOf>>>)
+
+    const written = await connection.execute(
+      sql`UPDATE "products"
+          SET "derived_price_from_minor" = ${derived.priceFromMinor},
+              "derived_price_to_minor" = ${derived.priceToMinor},
+              "derived_compare_at_from_minor" = ${derived.compareAtFromMinor},
+              "derived_inventory_total" = ${derived.inventoryTotal},
+              "updated_at" = now()
+          WHERE "id" = ${Number(productId)}`,
+    )
+
+    if ((written.rowCount ?? 0) === 0) {
+      return
+    }
+
+    /**
+     * The hooks read `req.payload` and the logger from the request, and a caller may pass the bare
+     * `{ transactionID }` the checkout code builds, so the request is completed the way every Local
+     * API call completes it — `payload.find` above already did this to the same object.
+     *
+     * **No `context` flag on this request, deliberately.** `createLocalReq` does not build an isolated
+     * request, it *mutates* the one it is given — `req.context = { ...req.context, ...context }` on
+     * the same object, verified by running it — and a bulk variant edit shares one request across
+     * every matched row. A flag set here would latch for the rest of the operation. Nothing needs
+     * suppressing anyway: neither hook below writes to Postgres, so there is no cycle to break.
+     */
+    const hookReq = await createLocalReq(req ? { req } : {}, payload)
+    const hookArgs = {
+      collection: payload.collections.products.config,
+      context: hookReq.context,
       data: { derived },
-      depth: 0,
-      req,
-    })
+      doc: { derived, id: Number(productId) },
+      operation: 'update',
+      previousDoc: { id: Number(productId) },
+      req: hookReq,
+    } as unknown as Parameters<CollectionAfterChangeHook>[0]
+
+    await syncSearchIndexAfterChange(hookArgs)
+    await revalidateProductCaches(hookArgs)
   } catch (error) {
     /*
      * The second sentence is true only inside a transaction. Called without one (after a payment has
@@ -163,7 +213,7 @@ export const recalculateProductDerived = async ({
     payload.logger.error({
       err: error,
       msg: req?.transactionID
-        ? `Could not refresh derived price/stock for product ${String(productId)}. Payload has already rolled the enclosing transaction back, so the write that triggered this did not happen either.`
+        ? `Could not refresh derived price/stock for product ${String(productId)}. The enclosing transaction is rolled back with it, so the write that triggered this did not happen either.`
         : `Could not refresh derived price/stock for product ${String(productId)}. Nothing was rolled back; the cached figure stays as it was until the product or one of its variants is next saved.`,
     })
 

@@ -109,9 +109,10 @@ anything else, including when no secret is set. Daily is the one schedule every 
 a more frequent expression fails the deployment on Hobby. On Pro, tighten it (`*/15 * * * *`).
 
 **The retention sweep** (Phase 34, audit R1-27; extended 2026-09-11) is the second cron:
-`GET /api/carts/sweep` daily at 03:30 UTC. Same secret, same 401. It runs **two** rules from the one
-request, and answers `{"carts": {...}, "orders": {...}}`, each with `deleted`, `more` (the batch was
-full, so more waits for tomorrow) and `failed`:
+`GET /api/carts/sweep` daily at 03:30 UTC. Same secret, same 401. It runs **two** retention rules and,
+since the lost-side-effect review, a **third step** that is not retention (below), from the one
+request, and answers `{"carts": {...}, "orders": {...}, "scheduledDrops": {...}}`. `carts` and `orders`
+each carry `deleted`, `more` (the batch was full, so more waits for tomorrow) and `failed`:
 
 - up to 200 `active` bags past their `expiresAt`, and their lines — `converted` bags are order
   history and are never touched;
@@ -127,6 +128,17 @@ full, so more waits for tomorrow) and `failed`:
   The delete re-checks the whole rule under a row lock, so an order paid, held or touched a moment
   before it is left alone. See `lib/cart/sweep.ts` and `docs/SECURITY.md` §4.
 
+The third step, **scheduled drops**, runs after both sweeps: every published product whose
+`publishedAt` passed in the last 26 hours (up to 200) is synced to the search index through the save
+hook's own sync (`lib/catalog/scheduled-index.ts`). A product saved with a future date is left out of
+the index at that save, and nothing else ever saved it again, so a drop appeared in `/shop` and never
+in search. `scheduledDrops` carries `due` (selected), `indexed` (written — below `due` when Algolia is
+not configured or a write failed, each reported `search.indexWrite`), `failed` (the selection threw,
+reported `search.scheduledDrops`) and `more`. The window is 26 hours rather than 24 because a Hobby cron
+fires anywhere inside its hour, so two runs can be about 25 hours apart; a product synced by two runs
+is written identically twice. A day the cron does not run at all is not caught up: `pnpm reindex:check`
+finds the drop and `pnpm reindex` fixes it (`docs/SEARCH.md` §6).
+
 The 30 days clear a Checkout Session (31 minutes) and the settlement time of ACH, Bacs and SEPA
 (up to about three weeks, counted from the `completed` event). **Before enabling a payment method
 that stays payable for longer** in the Stripe Dashboard (a voucher or bank-transfer method), revisit
@@ -139,7 +151,8 @@ The route keeps its `carts` path, which is historical: two daily crons is the Ho
 a third scheduled job would need Pro, and sharing this route was cheaper than renaming the path the
 `vercel.json` cron entry calls (`docs/COMMERCE.md` §3 and `docs/SECURITY.md` §4 also name it; no
 customer-facing text does). A step that throws is logged, sent to Sentry and reported as `failed`
-without stopping the other.
+without stopping the others; the scheduled-drop step goes last so that a slow index write can never
+hold a deletion back inside the function's duration limit.
 
 Both routes share `lib/security/cron-auth.ts`, so they cannot disagree about what counts as Vercel.
 

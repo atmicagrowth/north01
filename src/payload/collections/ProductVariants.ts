@@ -1,4 +1,6 @@
+import { sql } from '@payloadcms/db-postgres'
 import type {
+  CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
   NumberFieldSingleValidation,
@@ -7,10 +9,18 @@ import type {
 import { ValidationError } from 'payload'
 
 import { COLOR_FAMILY_OPTIONS } from '@/lib/catalog/colors'
+import {
+  decideStockEdit,
+  readSubmittedNumber,
+  STOCK_WHEN_OPENED,
+  stockChangedCopy,
+  type StockEditDecision,
+} from '@/lib/concurrency/stale-writes'
 
 import { isAdmin, isStaff, publishedOn } from '../access'
 import { minorUnits } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
+import { lockRowsForWrite, transactionOf, type WriteArgs } from '../hooks/lockRowsForWrite'
 import {
   syncProductDerivedAfterChange,
   syncProductDerivedAfterDelete,
@@ -150,6 +160,107 @@ const refuseFakeSale: CollectionBeforeValidateHook = ({ data, originalDoc, req }
   })
 }
 
+/**
+ * **An admin save cannot put back stock a sale has already taken** — the concurrency review of
+ * 2026-09-15.
+ *
+ * A paid order takes its stock with a raw `UPDATE … SET inventory_quantity = inventory_quantity - n`
+ * inside the payment transaction (`lib/checkout/fulfil.ts`). A Payload save of the same variant — a
+ * price change, a new swatch — used to undo it in either of two ways, and each left a sold size with
+ * stock it no longer had, so the next customer could pay for a garment that is not there, and nothing
+ * would put that order on a `stockShortfall` hold:
+ *
+ * 1. **The operation window.** Payload reads the row without a lock, refills the unsent Stock from
+ *    that read, and writes every column back. A decrement that committed between the read and the
+ *    write was overwritten. Closed by locking the rows before the read (`hooks/lockRowsForWrite.ts`):
+ *    the save now waits for the payment to commit and reads the decremented figure.
+ * 2. **The form window.** The admin form posts Stock with the value it had when the page was opened,
+ *    so a sale any time before Save was undone by a save that never touched Stock. No lock reaches
+ *    that. So the form also carries {@link STOCK_WHEN_OPENED} — the stock it was opened with, in a
+ *    hidden virtual field — and `decideStockEdit` compares the two against the locked row: unchanged
+ *    Stock keeps the live figure; a changed Stock is written only if the live figure is still the one
+ *    the editor saw, and is otherwise refused with a message on the Stock field.
+ *
+ * **Callers that send no opened-with value** — the seed, scripts, harnesses, a REST client — are
+ * taken at their word: an `inventoryQuantity` they send is a count and is written, one they do not
+ * send is refilled from the locked row. See `decideStockEdit` for the whole rule.
+ *
+ * The decision is made here rather than in a later hook because only here is the raw request still
+ * visible: by `beforeValidate`, Payload has refilled an unsent {@link STOCK_WHEN_OPENED} from the row,
+ * and "not sent" can no longer be told apart from "sent, and equal". Keeping the live figure means
+ * removing Stock from the request, so the post-lock read refills it — for every matched row of a bulk
+ * edit as well as for one.
+ */
+const guardStockAgainstStaleWrites: CollectionBeforeOperationHook = async ({
+  args,
+  operation,
+  req,
+}) => {
+  if (operation !== 'update') {
+    return args
+  }
+
+  const writeArgs = args as WriteArgs
+
+  const ids = await lockRowsForWrite(req, {
+    args: writeArgs,
+    collection: 'product-variants',
+    operation: 'update',
+    strength: 'NO KEY UPDATE',
+    table: 'product_variants',
+  })
+
+  const data = writeArgs.data
+
+  if (typeof data !== 'object' || data === null || !(STOCK_WHEN_OPENED in data)) {
+    return args
+  }
+
+  const sent = data as Record<string, unknown>
+  const submitted = readSubmittedNumber(sent.inventoryQuantity)
+  const loaded = readSubmittedNumber(sent[STOCK_WHEN_OPENED])
+
+  let decisions: StockEditDecision[] = [decideStockEdit({ live: null, loaded, submitted })]
+
+  if (ids.length > 0 && submitted !== null && loaded !== null && submitted !== loaded) {
+    const connection =
+      (await transactionOf(req)) ??
+      (req.payload.db.drizzle as unknown as NonNullable<Awaited<ReturnType<typeof transactionOf>>>)
+
+    const { rows } = await connection.execute(
+      sql`SELECT "id", "inventory_quantity" FROM "product_variants"
+          WHERE "id" IN (${sql.join(
+            ids.map((id) => sql`${id}`),
+            sql`, `,
+          )})`,
+    )
+
+    const live = (rows ?? []) as { inventory_quantity: null | number | string }[]
+
+    decisions = live.map((row) =>
+      decideStockEdit({ live: readSubmittedNumber(row.inventory_quantity), loaded, submitted }),
+    )
+  }
+
+  const conflict = decisions.find((decision) => decision.kind === 'conflict')
+
+  if (conflict) {
+    throw new ValidationError({
+      collection: 'product-variants',
+      errors: [{ label: 'Stock', message: stockChangedCopy(conflict), path: 'inventoryQuantity' }],
+      req,
+    })
+  }
+
+  if (decisions.some((decision) => decision.kind === 'keepLive')) {
+    const { inventoryQuantity: _unchanged, ...rest } = sent
+
+    return { ...args, data: rest }
+  }
+
+  return args
+}
+
 export const ProductVariants: CollectionConfig = {
   slug: 'product-variants',
 
@@ -225,6 +336,12 @@ export const ProductVariants: CollectionConfig = {
   indexes: [{ fields: ['product', 'color', 'size'], unique: true }],
 
   hooks: {
+    /**
+     * The row lock and the stock rule — see `guardStockAgainstStaleWrites` above. Deletes are not
+     * locked: a delete writes no stale stock, and locking a variant before its delete cascades into
+     * order lines would add a lock-order inversion with checkout (`hooks/lockRowsForWrite.ts`).
+     */
+    beforeOperation: [guardStockAgainstStaleWrites],
     beforeValidate: [refuseFakeSale],
     afterChange: [syncProductDerivedAfterChange],
     /**
@@ -424,7 +541,39 @@ export const ProductVariants: CollectionConfig = {
          * sale twice and quietly under-sell the line for the rest of its life.
          */
         description:
-          'How many of this exact colour and size are in the warehouse. 0 shows the size as sold out; it can never go below 0. This number goes down by itself when an order is paid for — never reduce it by hand to account for a sale, or that sale is counted twice. Type the real counted figure here after a delivery or a stock take.',
+          'How many of this exact colour and size are in the warehouse. 0 shows the size as sold out; it can never go below 0. This number goes down by itself when an order is paid for — never reduce it by hand to account for a sale, or that sale is counted twice. Type the real counted figure here after a delivery or a stock take. Saving without changing it keeps whatever the stock is by then; if you change it and a sale has changed it since you opened the page, the save is refused so you can recount.',
+      },
+    },
+    {
+      /**
+       * **The stock this page was opened with** — the form half of `guardStockAgainstStaleWrites`.
+       *
+       * `virtual: true`: no column and no migration (the adapter skips virtual fields when it builds
+       * the schema and when it writes — `@payloadcms/drizzle` `schema/traverseFields.js` and
+       * `transform/write/traverseFields.js`). Filled from `inventoryQuantity` on every read, so the
+       * edit view's form state holds it, and the form posts it back beside Stock on save; a save's
+       * response re-reads it, so the next save carries the figure that save left behind.
+       *
+       * `admin.hidden` rather than the field-level `hidden`: the latter would drop it from the form
+       * state (`@payloadcms/ui` skips fields for which `fieldIsHiddenOrDisabled` is true) and from API
+       * responses, and then nothing would carry it. With `admin.hidden` it is rendered as a hidden
+       * input and submitted like any other field. It does appear in API reads, read-only, as the stock
+       * that read found.
+       */
+      name: STOCK_WHEN_OPENED,
+      type: 'number',
+      virtual: true,
+      admin: {
+        disableListColumn: true,
+        disableListFilter: true,
+        hidden: true,
+      },
+      hooks: {
+        afterRead: [
+          ({ siblingData }) =>
+            (siblingData as { inventoryQuantity?: null | number } | undefined)?.inventoryQuantity ??
+            null,
+        ],
       },
     },
     {

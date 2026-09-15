@@ -1,10 +1,14 @@
 import { randomBytes } from 'crypto'
 
 import type { CollectionConfig } from 'payload'
+import { ValidationError } from 'payload'
+
+import { CONVERTED_BAG_COPY, reopensConvertedBag } from '@/lib/concurrency/stale-writes'
 
 import { isAdmin, isAdminField, isStaff, ownedByCustomer } from '../access'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY } from '../fields/money'
 import { cascadeDelete } from '../hooks/cascadeDelete'
+import { lockRowsBeforeWrite } from '../hooks/lockRowsForWrite'
 
 /**
  * A bag. Plan §6.1k gives the fields — session token, optional customer, currency, status,
@@ -168,6 +172,56 @@ export const Carts: CollectionConfig = {
   ],
 
   hooks: {
+    /**
+     * **A write to a bag cannot reopen one a payment has converted** — the concurrency review of
+     * 2026-09-15.
+     *
+     * The payment converts the bag with a raw `UPDATE "carts" SET "status" = 'converted'`
+     * (`lib/checkout/fulfil.ts`). Four Local API writes change the same row without mentioning the
+     * status — a signed-in shopper claiming a guest bag (`resolveCart`, and `mergeGuestBag`'s claim
+     * path, in `lib/cart/cart.ts`), the guest's code copied in a merge, and applying or clearing a
+     * code (`lib/promotions/promotions.ts`) — and each of them read the row unlocked, refilled
+     * `status` from that read, and wrote it back. One that straddled a payment wrote `active` over
+     * `converted`: a paid bag open again for new lines and a second checkout.
+     *
+     * The lock is taken here rather than by making those four writes conditional, because it covers
+     * every writer at once — the admin panel and any later caller too — and it composes with the
+     * merge's own locks: the merge already holds the checkout advisory lock, the guest bag's orders and
+     * the guest bag, and this adds the customer's bag, which no payment holds while waiting on any of
+     * those (a payment takes orders → variants → promotions → carts). `FOR NO KEY UPDATE`, the lock
+     * the write itself takes, so adding a line to the bag — a key-share lock — does not queue behind
+     * it. Updates only; see `hooks/lockRowsForWrite.ts` for why deletes are not.
+     */
+    beforeOperation: [
+      lockRowsBeforeWrite({ collection: 'carts', table: 'carts', update: 'NO KEY UPDATE' }),
+    ],
+
+    /**
+     * **…and the form window: `converted` is history.** The lock makes an unsent status refill from
+     * the converted row. A request that *sends* `active` — the admin form posts the status it was
+     * opened with — is refused instead of obeyed, whoever sends it (`reopensConvertedBag`). Decided
+     * against `originalDoc`, which the lock above makes the live row.
+     */
+    beforeChange: [
+      ({ data, operation, originalDoc, req }) => {
+        if (
+          operation === 'update' &&
+          reopensConvertedBag({
+            from: (originalDoc as { status?: unknown } | undefined)?.status,
+            to: (data as { status?: unknown } | undefined)?.status,
+          })
+        ) {
+          throw new ValidationError({
+            collection: 'carts',
+            errors: [{ label: 'Status', message: CONVERTED_BAG_COPY, path: 'status' }],
+            req,
+          })
+        }
+
+        return data
+      },
+    ],
+
     /**
      * `cart-items.cart` is required, so it is `NOT NULL` with `ON DELETE SET NULL` — deleting a cart
      * with lines in it fails on a not-null violation unless the lines go first. See

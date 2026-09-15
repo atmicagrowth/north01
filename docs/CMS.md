@@ -35,7 +35,7 @@ first (`trash: true`), recoverable by an admin. A trashed customer is **not** er
 | Admin group | Collection | What it is |
 |---|---|---|
 | Catalogue | **Products** | The merchandising record: name, description, media, categories, collections, size guide, SEO. Price, SKU and stock are on variants. The `derived` group (price range, compare-at, total stock) is written by the server |
-| | **Product variants** | The unit a customer buys: SKU, colour, size, `priceMinor`, `compareAtPriceMinor`, `inventoryQuantity`, `active`, image, parcel dimensions. Stock cannot go below zero (database check) |
+| | **Product variants** | The unit a customer buys: SKU, colour, size, `priceMinor`, `compareAtPriceMinor`, `inventoryQuantity`, `active`, image, parcel dimensions. Stock cannot go below zero (database check). Stock you did not change is kept at whatever it is when you save (§10, *Correct a stock count*) |
 | | **Categories** | Shop taxonomy. Has `status`; a draft parent does not hide its children |
 | | **Size guides** | Measurement tables |
 | Editorial | **Collections** | A merchandising page with editorial blocks, at `/collections/<slug>` |
@@ -213,7 +213,7 @@ Orders are created by checkout and marked paid **only by the signature-verified 
 
 | Staff can change | Server-written, read-only |
 |---|---|
-| `fulfillmentStatus`: unfulfilled → processing → shipped → delivered, or cancelled before dispatch | `paymentStatus`, `orderNumber`, customer, email, cart, every amount, promotion and code, shipping method and estimate, Stripe ids, `taxCalculationId`, `paidAt`, `refundedAt`, `refundedMinor`, `fulfilmentHold`, `shortfall` |
+| `fulfillmentStatus`: unfulfilled → processing → shipped → delivered, or cancelled before dispatch (unpaid orders — a paid one is refunded in Stripe) | `paymentStatus`, `orderNumber`, customer, email, cart, every amount, promotion and code, shipping method and estimate, Stripe ids, `taxCalculationId`, `paidAt`, `refundedAt`, `refundedMinor`, `fulfilmentHold`, `shortfall` |
 | `carrier`, `trackingNumber`, `trackingUrl` | `shippedAt`, `deliveredAt` (set by the transition) |
 | Shipping and billing address snapshots — **admin only** | order items: every snapshot field and the order link (`freezeOrderLines`) |
 
@@ -228,6 +228,19 @@ cleared automatically.
 `shipped` needs a carrier **and** a tracking number. **Refunds are made in the Stripe dashboard**;
 the webhook records them and emails the customer. There is no refund button in the admin.
 
+**A paid order is not cancelled from the admin.** Cancelling one would record a cancellation while
+the money stays taken, so the save is refused with a message pointing at Stripe: refund there. A
+refunded order is already settled and will not be picked. Unpaid orders cancel as before.
+
+**Saving an order never undoes what Stripe reported while it was open.** Every save waits for a
+webhook writing the same order to finish, then keeps its payment status, `paidAt`, payment intent,
+refund and hold — none of those can be typed, so the page's stale copy of them is ignored. What is
+decided against the order as it is at that moment, not as the page showed it, is the fulfilment move:
+a page opened on an unpaid checkout, cancelled after the payment landed, is refused as above. Reload
+and look again. (Mechanism: `Orders.hooks.beforeOperation` and `src/payload/hooks/lockRowsForWrite.ts`;
+the same lock protects a code's `timesUsed` and a bag's `converted` status, and a product's
+`derived` figures.)
+
 Changing an order to `shipped` or `delivered` **queues** the customer email; it is delivered by the
 next drain — the next Stripe webhook, the daily cron, or `POST /api/email/drain` from a staff session
 ([`EMAIL.md`](EMAIL.md) §5).
@@ -237,7 +250,7 @@ next drain — the next Stripe webhook, the daily cron, or `POST /api/email/drai
 | Saved | Storefront cache (`revalidateTag`) | Search index (Algolia) |
 |---|---|---|
 | Product (save or delete) | `catalog`, `home` | re-synced (`syncSearchIndex`) |
-| Product variant | `syncProductDerived` rewrites the product's derived price and stock, which runs the product's hooks: `catalog`, `home`. A finalised payment re-derives the stock of every product it sold too, after the webhook's response (`refreshDerivedStock`, COMMERCE.md §8.4), because the stock decrement saves no variant | re-synced, through the product |
+| Product variant | `syncProductDerived` rewrites the product's derived price and stock (those four columns only — it cannot republish or restore a product) and then runs the product's two after-save hooks itself: `catalog`, `home`. A finalised payment re-derives the stock of every product it sold too, after the webhook's response (`refreshDerivedStock`, COMMERCE.md §8.4), because the stock decrement saves no variant | re-synced, through the product |
 | Category | `catalog`, `shell`, `navigation` | products renamed in the index (`syncTaxonomyRename`) |
 | Collection | `catalog` | products re-synced |
 | Campaign | `home` | — |
@@ -274,6 +287,14 @@ hotspots, place hotspots by percentage for desktop and mobile, publish.
 
 **Create a discount code.** Promotions → code, type, value, dates, limits → switch `active` on.
 `liveNow` confirms it is live.
+
+**Correct a stock count.** Product variants → open → type the counted figure in *Stock* → save. Do
+not subtract sales — a paid order has already taken its units. A save that leaves *Stock* untouched
+keeps the current figure even if a sale happened while the page was open, so editing a price never
+puts sold stock back. If you changed *Stock* and a sale has moved it since you opened the page, the
+save is refused (*Stock for this size changed while you were editing*): reload, recount, save again.
+Scripts and the API that send a stock number without the page's hidden opened-with value
+(`stockWhenOpened`) set it as sent.
 
 **Ship an order.** Orders → open → enter carrier and tracking number → set fulfilment to
 *processing*, then *shipped* → save. The customer's dispatch email is queued (§8).

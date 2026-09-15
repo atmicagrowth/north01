@@ -765,11 +765,31 @@ const payload: Payload = await getPayload({ config })
 const PREFIX = 'verify-shell'
 const created: number[] = []
 
+const FIXTURE_SLUGS = [`${PREFIX}-published`, `${PREFIX}-draft`, `${PREFIX}-scheduled`]
+
 async function cleanup() {
   for (const id of created) {
     await payload
-      .delete({ collection: 'collections', id, overrideAccess: true, trash: false })
+      .delete({ collection: 'collections', id, overrideAccess: true, trash: true })
       .catch(() => undefined)
+  }
+}
+
+/*
+ * **What an aborted run left behind**, removed before this run starts. The three fixture slugs are
+ * fixed and unique, so one run killed before its `finally` made every later run fail on its first
+ * create. Nothing else in the repository writes a `verify-shell-` slug.
+ */
+{
+  const { errors } = await payload.delete({
+    collection: 'collections',
+    overrideAccess: true,
+    trash: true,
+    where: { slug: { in: FIXTURE_SLUGS } },
+  })
+
+  if (errors.length > 0) {
+    throw new Error(`verify-shell could not clear an aborted run: ${JSON.stringify(errors)}`)
   }
 }
 
@@ -854,7 +874,15 @@ try {
    * state rather than `null` — a root holding one empty paragraph. This writes exactly that into
    * `privacyPolicy`, reads it back through Payload, and checks the stored value is still a truthy
    * object that nonetheless reads as unpublished: the case a truthiness check got wrong, which left
-   * a blank privacy page with the footer still linking to it. The original is restored in `finally`.
+   * a blank privacy page with the footer still linking to it.
+   *
+   * **The write happens inside a transaction that is always rolled back, never committed.** It used
+   * to be committed and then "restored" in `finally` from a snapshot — and a run killed between the
+   * two left the seeded privacy notice emptied. The next run then snapshotted the *emptied* document
+   * as the original and restored that, so the text was gone for good. Now nobody else ever sees the
+   * emptied value: the rollback in `finally` discards it, and a killed process's open transaction is
+   * aborted by Postgres when its connection drops. There is no snapshot to restore, so an empty value
+   * found at the start can never be written back over anything.
    */
   const originalPrivacy = rawSettings.privacyPolicy ?? null
   const emptiedByAdmin = {
@@ -878,14 +906,27 @@ try {
     },
   }
 
+  const transactionID = await payload.db.beginTransaction()
+
+  if (transactionID === null) {
+    throw new Error('verify-shell could not open the transaction the emptied-field check runs in')
+  }
+
+  const inTransaction = { transactionID } as Parameters<typeof payload.updateGlobal>[0]['req']
+
   try {
     await payload.updateGlobal({
       slug: 'site-settings',
       data: { privacyPolicy: emptiedByAdmin as never },
       overrideAccess: true,
+      req: inTransaction,
     })
 
-    const emptied = await payload.findGlobal({ slug: 'site-settings', depth: 0 })
+    const emptied = await payload.findGlobal({
+      slug: 'site-settings',
+      depth: 0,
+      req: inTransaction,
+    })
 
     check(
       'live: an emptied privacy notice is stored as a truthy document, and reads as unpublished',
@@ -904,18 +945,17 @@ try {
         .join(', ') === (liveLegal.terms ? '/legal/terms' : ''),
     )
   } finally {
-    await payload.updateGlobal({
-      slug: 'site-settings',
-      data: { privacyPolicy: originalPrivacy as never },
-      overrideAccess: true,
-    })
+    await payload.db.rollbackTransaction(transactionID)
   }
 
   const restored = await payload.findGlobal({ slug: 'site-settings', depth: 0 })
 
   check(
-    'live: the privacy notice is restored after the emptied-field check',
+    'live: the privacy notice is untouched after the emptied-field check — the write was rolled back',
     JSON.stringify(restored.privacyPolicy ?? null) === JSON.stringify(originalPrivacy),
+    liveLegal.privacy
+      ? ''
+      : 'site-settings.privacyPolicy had no text before this run started — reseed to restore it',
   )
 
   /*

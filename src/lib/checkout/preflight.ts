@@ -286,6 +286,18 @@ export async function runPreflight(
  * the session was paid a moment ago — refuses with the same reason a failed session creation gives,
  * because proceeding without knowing is exactly the rewrite this exists to prevent.
  */
+/**
+ * **Bounded Stripe calls while the bag's checkout lock is held** (owner follow-up sweep 2).
+ *
+ * `retirePriorSession` runs inside `upsertPendingOrder`'s transaction, which holds a pool connection
+ * and the per-bag advisory lock. With the client's defaults — an 80-second timeout and two retries —
+ * a slow Stripe could pin that connection for minutes, and a handful of re-attempts would exhaust the
+ * pool for every other request on the instance, the webhook included. Eight seconds and one retry
+ * bound the hold; a call that still fails refuses the checkout with the ordinary Stripe-failure copy,
+ * and the customer tries again.
+ */
+const PRIOR_SESSION_REQUEST = { maxNetworkRetries: 1, timeout: 8_000 } as const
+
 async function retirePriorSession(
   payload: Payload,
   orderId: number,
@@ -294,7 +306,7 @@ async function retirePriorSession(
 ): Promise<null | PreflightFailure> {
   try {
     const stripe = stripeClient()
-    const prior = await stripe.checkout.sessions.retrieve(sessionId)
+    const prior = await stripe.checkout.sessions.retrieve(sessionId, {}, PRIOR_SESSION_REQUEST)
 
     const decision = decidePriorSession({
       orderStatus,
@@ -307,7 +319,7 @@ async function retirePriorSession(
     }
 
     if (decision === 'expire') {
-      await stripe.checkout.sessions.expire(sessionId)
+      await stripe.checkout.sessions.expire(sessionId, {}, PRIOR_SESSION_REQUEST)
     }
 
     return null

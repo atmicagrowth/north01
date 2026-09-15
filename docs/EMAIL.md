@@ -88,7 +88,13 @@ sent are kept *"for now with no fixed deletion date"*. A decision here changes t
 ### Statuses and retries (`rules.ts`)
 
 - `pending` is **not a lock**. A row a crashed sender left `pending` is retried.
-- `failed` is retried up to `MAX_DELIVERY_ATTEMPTS` = **3**, then left for a person.
+- `failed` is retried up to `MAX_DELIVERY_ATTEMPTS` = **3**, then left for a person. **The failure that
+  uses the last attempt is reported** to Sentry as `email.deliveryExhausted` (message id, kind and
+  attempts; no address) and logged as *"will not be retried"* — whether the provider refused, the
+  template could not render, or the data was not retained (`deliverEmail`, `send.ts`; the
+  lost-side-effect review). Until then the only trace was the row, and the webhook's log line said
+  *"the drain will retry it"* for every undelivered message, including a suppressed one, which is never
+  retried; it now says which is which. `tests/unit/email-final-attempt.test.ts`.
 - A drain skips a row attempted in the last **5 minutes** (`RETRY_BACKOFF_MS`, `send.ts`), so one
   request cannot spend the whole retry budget.
 - `sent` and `suppressed` are terminal. **Suppression cannot be undone**, and nothing in the
@@ -122,6 +128,18 @@ number first (`planFulfillmentChange`, `src/lib/orders/rules.ts`).
 **An email never undoes what it reports** (§19.1d). The webhook catches email errors, logs them and
 reports them (`reportFailure(error, 'stripe.webhook.email')`); the order hook catches, so a queue
 error cannot roll back a dispatch.
+
+**…but a queue write that already rolled the dispatch back fails the save** (the lost-side-effect
+review). The hook's queue write is a Local API `create` inside the order's transaction, and Payload
+kills that transaction when any such write fails. `enqueueEmail` returns `{ outcome: 'error' }`, and the
+hook used to log it and return — so the admin saw the order saved as shipped while the status, the
+tracking number and the email had all been rolled back. `queueOrderEmails` now checks, as `queueOnce`
+does for the payment's confirmation, that the transaction is still alive after queueing; if it is not,
+it throws a public `APIError` (*"The order was not saved … Save it again."*) and reports
+`orders.fulfilmentEmail`. A refusal that left the transaction standing (no address, say) is logged and
+reported under the same area, and the transition stands. It also reads the dedupe key first, with the
+transaction's `req`, so an already-queued message is skipped rather than refused by the unique index —
+a refusal would itself end the transaction. `tests/unit/order-email-queue.test.ts`.
 
 ## 5. The drain — four ways the queue is emptied
 

@@ -6,6 +6,7 @@ import { ValidationError } from 'payload'
 import type { PaymentStatus } from '@/lib/checkout/rules'
 import type { FulfillmentStatus } from '@/lib/orders/rules'
 
+import { PAID_CANCELLATION_COPY, refusesPaidCancellation } from '@/lib/concurrency/stale-writes'
 import { FULFILLMENT_COPY, planFulfillmentChange } from '@/lib/orders/rules'
 
 /**
@@ -58,6 +59,14 @@ import { FULFILLMENT_COPY, planFulfillmentChange } from '@/lib/orders/rules'
  * confirmed payment, so an unpaid cancellation has nothing to return; and a *paid* cancellation is a
  * refund, which is a decision with money attached and belongs with the refund path rather than as a
  * silent side effect of a select box. Recorded rather than forgotten — see §1.23.
+ *
+ * ### …and since the concurrency review, the panel does not cancel a paid order at all
+ *
+ * The same reasoning, carried to the select box itself: a paid (or refunded) order moved to
+ * `cancelled` by the admin panel or the REST API is refused with `PAID_CANCELLATION_COPY`
+ * (`lib/concurrency/stale-writes.ts`, `refusesPaidCancellation`). It is decided against the locked
+ * row, so it also refuses the stale form — a page opened on an unpaid checkout, cancelled after the
+ * payment landed. The Local API is exempt; see that function for why.
  */
 export const enforceOrderTransitions: CollectionBeforeChangeHook = async ({
   data,
@@ -140,6 +149,16 @@ export const enforceOrderTransitions: CollectionBeforeChangeHook = async ({
     })
   }
 
+  if (refusesPaidCancellation({ payment, to, viaLocalApi: req.payloadAPI === 'local' })) {
+    throw new ValidationError({
+      collection: 'orders',
+      errors: [
+        { label: 'Fulfilment status', message: PAID_CANCELLATION_COPY, path: 'fulfillmentStatus' },
+      ],
+      req,
+    })
+  }
+
   /*
    * §18.1c's timestamps, written by the transition rather than typed beside it. A `shippedAt` a person
    * can set independently of `fulfillmentStatus` is a date that will eventually disagree with it.
@@ -193,6 +212,13 @@ type LiveOrder = {
  * `originalDoc` — the pre-sweep behaviour, which is still correct for everything except a race. Every
  * Payload write on this adapter runs in a transaction, so that path is a safety net rather than a
  * plan.
+ *
+ * **Since the concurrency review of 2026-09-15 the lock is already held when this runs.**
+ * `Orders.hooks.beforeOperation` takes the same `FOR UPDATE` before Payload reads the row, because a
+ * lock taken here came after that read and did nothing for the columns the read had already refilled
+ * — the payment facts a webhook writes. `originalDoc` is therefore the live row too. This statement
+ * stays: it re-reads the row on the lock this transaction holds, which costs one round trip, and it
+ * keeps the decision correct for any path that reaches this hook without the collection's lock.
  */
 async function lockOrder(req: PayloadRequest, id: number): Promise<LiveOrder | null> {
   const transactionID = req?.transactionID

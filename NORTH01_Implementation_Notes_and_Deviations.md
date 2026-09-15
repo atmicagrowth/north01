@@ -9643,6 +9643,176 @@ table. The owner approved stopping those processes. Every run since sets `lock_t
 | Browser check | unchanged: legal pages, footer, sitemap, returns address, the sweep's 401/200, no overflow, no page errors |
 | `scan:secrets` | clean, 500 tracked files |
 
+### 1.43.9 Sweep 2
+
+The sweep hunted the kinds of defect sweep 1 had exposed, across the whole codebase:
+
+- whole-row writes from a stale read — S02's shape — outside `customers`
+- after-response work that can be lost without anyone knowing
+- lock order, and transactions that hold a pool connection while they wait for another or for the network
+- guards that nothing tests
+- fixtures a killed harness run leaves behind
+
+A session limit stopped the workflow part-way, so the stale-write and lost-work hunts were re-run as
+single read-only agents. Every code fix carries a regression shown to fail with the fix reverted
+(every reverted file was restored byte-for-byte), except L2's two request options, which nothing tests.
+The harness fixes were proved by killing runs instead.
+
+**Stale whole-row writes — S02's shape was in four more collections.** Read in Payload 3.88's source:
+
+- an update reads the row without a lock;
+- it refills every field the request leaves out from that read — including `update: nobodyField`
+  fields, whose key is deleted and then refilled rather than left out;
+- the Postgres adapter writes every column.
+
+The admin form also posts every field as it was when the page was opened. So a Payload write that
+straddles a raw SQL write puts the old value back — and for a field staff can edit, the window is the
+whole time the form was open.
+
+- **A — saving a variant in the admin put back stock a payment had already taken** (high). A sold-out
+  size became buyable, and the second sale was finalised with no shortfall hold.
+  - Variant updates now lock the row before Payload reads it.
+  - A hidden virtual field, `stockWhenOpened`, carries the stock the form was opened with. Stock sent
+    unchanged keeps the live figure. A changed Stock is written only if the live figure still matches
+    what the page loaded; otherwise the save is refused on the Stock field.
+  - A caller that does not send the opened-with value (Local API, REST) has its explicit count written.
+  - The hidden field's round trip through the admin form was confirmed from Payload's source, not in a
+    browser.
+- **B — an admin order save during a webhook could undo "paid" or a refund** (high). A charged order
+  went back to `pending_payment` with no payment intent — so the 30-day sweep would later delete it —
+  or a refunded one back to `paid`.
+  - Order updates and deletes now lock the row first (`FOR UPDATE`, the strength `orderTransitions`
+    already takes), and the payment columns are refilled from the locked row.
+  - A paid or refunded order moved to `cancelled` is refused **for REST and admin requests only**.
+    Local API writes may still do it: `verify:admin` A3 does, and `lib/orders/rules.ts` allows
+    cancellation until dispatch. Widening it is one line in `refusesPaidCancellation`.
+- **C — saving a promotion while it was being redeemed lost one use**, so a code could pass its limit
+  by one. Promotion updates lock.
+- **D — a stock refresh could republish a product an admin had just unpublished or trashed.**
+  `recalculateProductDerived` now writes only the derived columns and `updated_at` with one raw
+  `UPDATE`, then runs the index sync and the `catalog` / `home` revalidation itself. Product updates
+  also lock, so an admin product save cannot write back an older derived figure.
+- **E — a shopper's own bag action during their payment could reopen the paid bag**, inviting a second
+  charge. Cart updates lock, and any caller moving a `converted` bag back to active is refused.
+
+**The lock** is one helper, `hooks/lockRowsForWrite.ts`, ported from `Customers.ts` (which keeps its
+own copy):
+
+- A `beforeOperation` hook works out which rows the access rule lets the write touch and locks them by
+  id, in id order, before Payload reads.
+- Only a Local API call with `overrideAccess: true` is trusted with its whole `where`. An anonymous REST
+  request locks nothing.
+- `FOR NO KEY UPDATE`, the lock the write itself takes, so inserting bag or order lines does not queue
+  behind it. Orders use `FOR UPDATE`.
+- Deletes of variants, products, promotions and carts are not locked. A delete writes no stale value,
+  and locking the parent first would widen a deadlock window with checkout, whose cascades reach rows a
+  payment holds.
+- The lock order stays acyclic: a payment takes orders → variants → promotions → carts → email rows;
+  preflight the checkout lock → orders; the merge and the bag sweep orders → carts; an admin order save
+  the order, then an email row.
+
+**Lost side effects.**
+
+- **A failed event-row write after a real payment skipped the tax record and the stock refresh for
+  good.** The route wrote the `stripe-events` row before scheduling the after-response work. If that
+  write threw, Stripe's retry saw `alreadyFinal` and did neither, and nothing on the order shows a
+  missing tax transaction. `settleStripeEvent` (`lib/checkout/after-stripe-event.ts`) now schedules
+  `afterStripeEvent` first, then raises the mismatch and missing-order alerts, then writes the row. A
+  redelivery repeats nothing: the email claim is compare-and-set, the tax call has an idempotency key,
+  and the refresh is a recompute.
+- **A failed shipped or delivered email silently rolled back the staff member's status change**, while
+  the admin showed it saved. `queueOrderEmails` now checks the transaction is still alive; if not, the
+  save is refused with a message to save again. Every failure is reported as `orders.fulfilmentEmail`.
+  It checks the dedupe key first, so an already-queued message does not fail the save.
+- **A scheduled product never reached search.** A product with a future `publishedAt` is left out of
+  the index, and nothing wrote to it when the time came, so `/shop` showed it and search never did. The
+  daily retention cron has a third step, `syncScheduledDrops` (`lib/catalog/scheduled-index.ts`):
+  products whose `publishedAt` passed in the last 26 hours are re-synced, 200 per run. Twenty-six
+  because a Hobby cron fires anywhere in its hour; syncing a product twice is harmless. The route returns
+  `{ carts, orders, scheduledDrops }`.
+- **Search-index write failures were only logged.** They are reported: `search.indexWrite`,
+  `search.taxonomyReindex`, `search.indexWriter`.
+- **An email that used its last delivery attempt raised no alert.** It is reported as
+  `email.deliveryExhausted`.
+
+**Locks and the connection pool.**
+
+- **L1 — the payment transaction took a second pool connection while holding its row locks.**
+  `shopLocale` read site settings without `req`. With ten webhooks queued on one popular variant or
+  code, the holder waited for an eleventh connection until the 15-second pool timeout, swallowed the
+  error and carried on. Under that load it could take one payment per 15 seconds for that item, with
+  every other request on the instance waiting too. The read now runs on the transaction's connection
+  (`tests/unit/payment-locks.test.ts`).
+  §1.43.8's unexplained stall had this signature — 15 seconds, then success — but it was never
+  reproduced, so this is a plausible cause, not a proven one.
+- **L2 — preflight held its transaction and the bag's checkout lock across two Stripe calls** at the
+  client's defaults: 80 seconds and two retries each. Retrieving and expiring the prior session now use
+  an 8-second timeout and one retry; a failure refuses the checkout with the ordinary Stripe copy.
+- **L4 — two payments could deadlock**, because stock was decremented in bag-line order. Decrements
+  are sorted by variant id (`planStockDecrements`); `tests/unit/payment-locks.test.ts` fails without it.
+- **Accepted, recorded:**
+  - L3: a password-reset request holds that customer's row across the Resend call. It blocks only that
+    customer's own writes, at most once per five-minute cooldown.
+  - L5: the Algolia write is awaited inside the product-update transaction. Production has no Algolia
+    keys yet (TODO.md §8); revisit if admin saves slow down once it does.
+  - L6: the sign-in merge takes second connections for availability and catalogue settings while
+    holding its locks. Sign-in only.
+
+**Guards nothing tested.** `verify:access` gained 18 checks, each shown to fail with its guard removed:
+
+- REST sign-in, forgot-password and reset-password are refused (audit R1-15).
+- A customer's own REST password or email change is refused; an admin's succeeds (§34.1d).
+- An admin password change ends every session (R1-13).
+- A signed-in customer is refused Payload's lock and preference collections (R1-18).
+- The `maxQuantityPerLine` restore moved into a `finally`.
+
+Still untested, and recorded rather than closed. Each is correct today and would only fail after a
+later edit:
+
+- the logout action's server-side session revocation
+- the retention cron route's `CRON_SECRET` gate (checked by hand, §1.43.7 and below)
+- `queueOrderEmails`'s registration on orders (the hook itself now has unit tests)
+- `removeAddressAction`'s inline ownership clause
+- the webhook route's signature check, which only E2E flow 7 exercises, and flow 7 has skipped in
+  every recorded run
+- the email drain route's staff and cron gates
+
+Rejected: Payload's `csrf` wiring, the Turnstile calls in the public-form actions, and the review
+action's `isReviewableProduct` call.
+
+**Harness debris.**
+
+- `verify:email` section M drained the whole shared queue through a fake transport, marking other rows
+  `sent` without sending them. Its drain now sees only this run's rows.
+- `verify:admin` left shipped and delivered email rows behind on every passing run, and its leading
+  cleanup did nothing: a killed run left an admin account whose password is in the repository, a live
+  10% code and a published product.
+- `verify:shell`, killed at the wrong moment, could erase the seeded privacy notice. The emptied notice
+  is now written inside a transaction that is always rolled back, so no other connection ever sees it.
+- `verify:product`, `verify:catalog`, `verify:home`, `verify:orders` and `verify:reviews` now clear an
+  aborted run first, matching only their own anchored fixture names. Cleanups that meet trashed rows use
+  `trash: true`, and `verify:orders` tracks its live promotion.
+- Kill tests: each fixed harness was killed mid-run, left its fixtures, and the next run removed them
+  and passed.
+- **Not changed:** six more writing harnesses — `verify:account` among them — still have no
+  start-of-run cleanup, so a killed run can still leave published products, live codes or paid orders
+  in the test database. Low: the next run of those harnesses is unaffected.
+
+**Residuals carried forward:** sweep 1's accepted ones stand, including two recomputes of one
+product's cached stock racing, which can leave the display figure one sale high until the next write.
+
+**What was verified** (local Postgres, re-seeded):
+
+| Check | Result |
+|---|---|
+| `typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
+| Migrations | no schema change (`stockWhenOpened` is virtual — no column); `migrate:create --skip-empty` writes nothing; `payload-types.ts` regenerated |
+| `pnpm test:run` | **1,149** tests in 43 files (was 1,079 in 36) |
+| All 23 `verify:*` | pass. New: `verify:concurrency` **35** — a race regression for each of A–E. Raised: `verify:access` 102 (was 84), `verify:webhook` 105 (100; section V, and U3/U6 re-aimed at the raw refresh), `verify:search` 213 (210; section O), `verify:email` 102 (101) |
+| Playwright E2E | **43 passed, 0 failed, 14 skipped** |
+| Browser check | unchanged from §1.43.8; the sweep answers 401 without the secret and `{carts, orders, scheduledDrops}` with it |
+| `scan:secrets` | clean, 504 tracked files |
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -11875,5 +12045,6 @@ either. The role help text in `Users.ts` was corrected to say so.
 | Plan §37 — acceptance record | 2026-09-11 | Notes **§1.42**. Every gate code can meet is met; the rest are owner accounts and settings (TODO.md). |
 | Owner follow-up — contact address, legal pages, 30-day retention | 2026-09-13 | Notes **§1.43**, **DEV-85**. One migration (`phase_37_legal_pages`). Contact `admin@micagrowth.com`; privacy notice and terms (an unreviewed draft, shown only once published); unpaid orders deleted after 30 days of inactivity, never while held; analytics privacy hardening. Verified on a throwaway local Postgres because the Neon dev branch rejects its password. |
 | Owner follow-up — sweep 1 | 2026-09-14 | Notes **§1.43.8**. No migration. A pattern sweep of the review's five defect classes across the codebase: 20 confirmed, 8 rejected. A sale now re-derives catalogue stock; sign-in merges defer while a guest checkout can still take money; customer writes lock the rows access allows and sign-in detects an overtaken read; the reset cooldown is one conditional UPDATE; twelve copy claims the code did not back were corrected. Every fix has a regression shown to fail when reverted. |
+| Owner follow-up — sweep 2 | 2026-09-15 | Notes **§1.43.9**. No migration. Five defect classes hunted: Payload's whole-row writes from a stale read (a variant save could restore sold stock, an order save could undo a payment or refund, a promotion save lose a use, a stock refresh republish a product, a bag action reopen a paid bag) — now row locks before Payload reads, plus an opened-with stock check; after-response work lost when the event-row write failed; scheduled products never indexed; a second pool connection and unbounded Stripe calls inside held locks, and a decrement-order deadlock; 18 untested security guards now tested; nine harness-debris fixes. Every fix has a regression shown to fail when reverted. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

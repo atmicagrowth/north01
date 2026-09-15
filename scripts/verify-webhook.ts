@@ -25,6 +25,10 @@
  * calls and section U runs with stub couriers and tax clients: the refresh must happen through it, and
  * the tax record and the refresh must each finish while the other is still stuck.
  *
+ * **The lost-side-effect review** added section V: `settleStripeEvent`, the route's sequence once an
+ * event has been applied, must register the after-response work before it writes the `stripe-events`
+ * row, so a row write that throws after a committed payment still records the tax and refreshes stock.
+ *
  * The **D-10** guard applies: it creates and deletes orders, variants, carts, promotions and events.
  */
 
@@ -1690,8 +1694,13 @@ try {
 
     /*
      * **A refresh that fails cannot touch the payment, and does not stop the others.** One product's
-     * update is made to throw; the order is already paid, the call returns normally, and the other
+     * refresh is made to throw; the order is already paid, the call returns normally, and the other
      * product in the same order is still refreshed.
+     *
+     * The failure is injected on the read of that product's active variants — the first thing
+     * `recalculateProductDerived` does for it. It used to be injected on `payload.update('products')`,
+     * which the refresh no longer calls since the concurrency review (the write is one raw `UPDATE`), so
+     * that injection stopped reaching anything and the check failed for a refresh that had not failed.
      */
     const broken = await makeStock(5, 'u3')
     const healthy = await makeStock(5, 'u4')
@@ -1707,10 +1716,24 @@ try {
 
     const flaky = Object.create(payload) as Payload
 
-    flaky.update = ((args: { collection: string; id?: unknown }) =>
-      args.collection === 'products' && args.id === broken.product.id
-        ? Promise.reject(new Error('Injected: the product could not be written.'))
-        : payload.update(args as never)) as never
+    /* `recalculateProductDerived` reads `{ and: [{ product: { equals: id } }, { active: … }] }`. */
+    const readsVariantsOf = (where: unknown, productId: number) =>
+      JSON.stringify(where ?? {}).includes(`{"product":{"equals":${productId}}}`)
+
+    let injected = 0
+
+    flaky.find = ((args: { collection: string; where?: unknown }) => {
+      if (
+        args.collection === 'product-variants' &&
+        readsVariantsOf(args.where, broken.product.id)
+      ) {
+        injected += 1
+
+        return Promise.reject(new Error('Injected: the product’s variants could not be read.'))
+      }
+
+      return payload.find(args as never)
+    }) as never
 
     const threw = await refreshDerivedStock(flaky, brokenOutcome).then(
       () => false,
@@ -1719,7 +1742,8 @@ try {
 
     check(
       'U: **a failed refresh never throws** — the route’s after-response work carries on',
-      !threw,
+      !threw && injected === 1,
+      `${threw ? 'threw' : 'returned'}, injection reached ${injected} time(s)`,
     )
 
     check(
@@ -1875,8 +1899,22 @@ try {
       await running
     }
 
-    /* ---- U6: a refresh stuck on a slow index write does not hold the tax record back */
+    /* ---- U6: a refresh stuck on its product write does not hold the tax record back */
     {
+      /*
+       * The product write is held back by a real row lock: a transaction this script owns takes
+       * `SELECT … FOR UPDATE` on the product, so the refresh's raw `UPDATE` queues behind it — what an
+       * editor's save (the products' update lock) or a slow index write inside one looks like from here.
+       * It used to be held back by wrapping `payload.update('products')`, which the refresh no longer
+       * calls since the concurrency review, so the wrapper gated nothing and the check failed.
+       *
+       * `blockedBehind` waits until Postgres itself reports the `UPDATE` queued behind the lock, so the
+       * tax record is judged while the refresh is provably stuck. The tax ceiling is 30 s, below the
+       * harness's 60 s `lock_timeout`: a sequential implementation must still be stuck when it is judged,
+       * not freed by the timeout just as the ceiling expires.
+       */
+      const TAX_WHILE_LOCKED_CEILING_MS = 30_000
+
       const sold = await makeStock(4, 'u7')
       const routed = await makeOrder(
         [{ productId: sold.product.id, quantity: 1, variantId: sold.variant.id }],
@@ -1886,52 +1924,243 @@ try {
 
       const routedOutcome = await pay(routed, `pi_wh_u6_${suffix}`)
 
-      /* The product write — where the Algolia upsert happens under Next — hangs until released. */
-      let releaseProduct: () => void = () => undefined
-      const productGate = new Promise<void>((resolve) => {
-        releaseProduct = resolve
-      })
+      const lockID = await payload.db.beginTransaction()
 
-      const slowIndex = Object.create(payload) as Payload
+      if (lockID === null) {
+        throw new Error('U6: could not begin the transaction that holds the product row.')
+      }
 
-      slowIndex.update = (async (args: { collection: string; id?: unknown }) => {
-        if (args.collection === 'products' && args.id === sold.product.id) {
-          await productGate
+      const lockHandle = (
+        payload.db as unknown as {
+          sessions: Record<
+            string,
+            { db: { execute: (query: unknown) => Promise<{ rows: unknown[] }> } }
+          >
         }
+      ).sessions[String(lockID)]!.db
 
-        return payload.update(args as never)
-      }) as never
+      const lockPid = Number(
+        (
+          (await lockHandle.execute(sql`SELECT pg_backend_pid() AS "pid"`)).rows[0] as {
+            pid: number
+          }
+        ).pid,
+      )
+
+      await lockHandle.execute(
+        sql`SELECT "id" FROM "products" WHERE "id" = ${sold.product.id} FOR UPDATE`,
+      )
+
+      let released = false
+
+      const releaseLock = async () => {
+        if (!released) {
+          released = true
+          await payload.db.commitTransaction(lockID)
+        }
+      }
+
+      /** Whether some other backend is waiting on a lock the held transaction owns. */
+      const blockedBehind = async (timeoutMs: number) =>
+        eventually(async () => {
+          const { rows } = await payload.db.drizzle.execute(
+            sql`SELECT count(*)::int AS "waiting" FROM pg_stat_activity WHERE ${lockPid} = ANY(pg_blocking_pids(pid))`,
+          )
+
+          return (rows[0] as { waiting: number }).waiting > 0
+        }, timeoutMs)
 
       const tax = { called: false }
 
-      const running = afterStripeEvent(slowIndex, `evt_wh_u6_${suffix}`, routedOutcome, {
-        courier: noCourier,
-        taxClient: taxClientFor(() => {
-          tax.called = true
+      try {
+        const running = afterStripeEvent(payload, `evt_wh_u6_${suffix}`, routedOutcome, {
+          courier: noCourier,
+          taxClient: taxClientFor(() => {
+            tax.called = true
 
-          return Promise.resolve({ id: `tax_wh_u6_${suffix}` })
-        }),
-      })
+            return Promise.resolve({ id: `tax_wh_u6_${suffix}` })
+          }),
+        })
 
-      const taxWhileRefreshStuck = await eventually(() => tax.called)
-      const stillStale = (await derivedOf(sold.product.id)) === 4
-      const poolAtDecision = poolNow()
+        const writeQueued = await blockedBehind(TAX_WHILE_LOCKED_CEILING_MS)
+        const taxWhileRefreshStuck = await eventually(() => tax.called, TAX_WHILE_LOCKED_CEILING_MS)
+        const stillQueued = await blockedBehind(1_000)
+        const stillStale = (await derivedOf(sold.product.id)) === 4
+        const poolAtDecision = poolNow()
 
-      releaseProduct()
-      await running
+        await releaseLock()
+        await running
+
+        check(
+          'U: **the tax record does not wait for the refresh** — recorded while the product write was queued on a row lock',
+          writeQueued && taxWhileRefreshStuck && stillQueued && stillStale,
+          `write ${writeQueued ? 'queued' : 'never queued'}, tax ${taxWhileRefreshStuck ? 'recorded while the write was stuck' : 'not recorded while the write was stuck'}, ${stillQueued ? 'still queued' : 'no longer queued'}, derived then ${stillStale ? 'still 4' : 'already moved'}, ${poolAtDecision}`,
+        )
+      } finally {
+        await releaseLock()
+      }
 
       check(
-        'U: **the tax record does not wait for the refresh** — recorded while the product write was still stuck',
-        taxWhileRefreshStuck && stillStale,
-        `tax ${taxWhileRefreshStuck ? 'recorded while the write was stuck' : 'not recorded until the write was released'}, derived then ${stillStale ? 'still 4' : 'already moved'}, ${poolAtDecision}`,
-      )
-
-      check(
-        'U: …and the stuck refresh still lands once the write is released',
+        'U: …and the stuck refresh still lands once the lock is released',
         (await derivedOf(sold.product.id)) === 3,
         String(await derivedOf(sold.product.id)),
       )
     }
+  }
+
+  /* ====================================== V — a failed row write after a payment loses no after-response work */
+  {
+    /*
+     * The lost-side-effect review. The route wrote the `stripe-events` row and only then registered its
+     * after-response work, so a row write that threw after a committed payment answered 500 with nothing
+     * registered — and the redelivery, answered `alreadyFinal`, records no tax and refreshes no stock.
+     * `settleStripeEvent` is the route's sequence now. Here its row write is made to throw (the
+     * `Object.create(payload)` injection section U uses), and `schedule` keeps what the route hands to
+     * `after()`, so it can be run the way Next runs it: after the failed response.
+     */
+    const { settleStripeEvent } = await import('../src/lib/checkout/after-stripe-event')
+
+    const derivedStockOf = async (productId: number) =>
+      Number(
+        (
+          await payload.findByID({
+            collection: 'products',
+            depth: 0,
+            id: productId,
+            overrideAccess: true,
+          })
+        ).derived?.inventoryTotal ?? Number.NaN,
+      )
+
+    const taxCalls: { calculation: string; reference: string }[] = []
+
+    const settleDeps = (scheduled: (() => Promise<void>)[]) => ({
+      courier: () => Promise.resolve(null),
+      schedule: (work: () => Promise<void>) => {
+        scheduled.push(work)
+      },
+      taxClient: () => ({
+        tax: {
+          transactions: {
+            createFromCalculation: (params: { calculation: string; reference: string }) => {
+              taxCalls.push(params)
+
+              return Promise.resolve({ id: `tax_wh_v_${suffix}_${taxCalls.length}` })
+            },
+          },
+        },
+      }),
+    })
+
+    const sold = await makeStock(2, 'v')
+    const order = await makeOrder(
+      [{ productId: sold.product.id, quantity: 2, variantId: sold.variant.id }],
+      'V',
+      { taxCalculationId: `taxcalc_wh_v_${suffix}` },
+    )
+
+    const eventRow = await payload.create({
+      collection: 'stripe-events',
+      data: {
+        attempts: 1,
+        eventId: `evt_wh_v_${suffix}`,
+        receivedAt: new Date().toISOString(),
+        status: 'received',
+        type: 'checkout.session.completed',
+      },
+      overrideAccess: true,
+    })
+
+    created.push({ collection: 'stripe-events', id: eventRow.id })
+
+    const event = { id: eventRow.eventId, rowId: eventRow.id, type: 'checkout.session.completed' }
+    const outcome = await pay(order, `pi_wh_v_${suffix}`)
+
+    const brokenBookkeeping = Object.create(payload) as Payload
+
+    brokenBookkeeping.update = ((args: { collection: string }) =>
+      args.collection === 'stripe-events'
+        ? Promise.reject(new Error('Injected: the stripe-events row could not be written.'))
+        : payload.update(args as never)) as never
+
+    const scheduled: (() => Promise<void>)[] = []
+
+    const thrown = await settleStripeEvent(
+      brokenBookkeeping,
+      event,
+      outcome,
+      settleDeps(scheduled),
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    )
+
+    check(
+      'V: the fixture — the payment committed, and then the row write threw (the route answers 500)',
+      outcome.outcome === 'finalised' &&
+        thrown instanceof Error &&
+        (await statusOf(order.id)).payment === 'paid',
+      `${outcome.outcome}, ${thrown instanceof Error ? thrown.message : 'nothing thrown'}`,
+    )
+
+    check(
+      'V: **the after-response work was registered anyway** — before the row write, not after it',
+      scheduled.length === 1,
+      `${scheduled.length} registered`,
+    )
+
+    const stockBeforeWork = await derivedStockOf(sold.product.id)
+
+    /* Next runs `after()` work once the response is sent, error responses included. */
+    for (const work of scheduled) await work()
+
+    check(
+      'V: **…and running it after the 500 records the tax transaction** the redelivery never would',
+      taxCalls.length === 1 &&
+        taxCalls[0]?.calculation === `taxcalc_wh_v_${suffix}` &&
+        taxCalls[0]?.reference === order.orderNumber,
+      JSON.stringify(taxCalls),
+    )
+
+    check(
+      'V: **…and refreshes the cached stock figure** — sold out',
+      stockBeforeWork === 2 && (await derivedStockOf(sold.product.id)) === 0,
+      `${stockBeforeWork} → ${await derivedStockOf(sold.product.id)}`,
+    )
+
+    /* The redelivery, as the route runs it: the catch marked the row failed; Stripe retries; reclaim. */
+    await payload.update({
+      collection: 'stripe-events',
+      data: { error: 'Injected: the stripe-events row could not be written.', status: 'failed' },
+      id: eventRow.id,
+      overrideAccess: true,
+    })
+
+    const reclaimed = await reclaimWebhookDelivery(payload, eventRow.id)
+    const replay = await pay(order, `pi_wh_v_${suffix}`)
+    const replayScheduled: (() => Promise<void>)[] = []
+
+    await settleStripeEvent(payload, event, replay, settleDeps(replayScheduled))
+
+    for (const work of replayScheduled) await work()
+
+    const settledRow = await payload.findByID({
+      collection: 'stripe-events',
+      depth: 0,
+      id: eventRow.id,
+      overrideAccess: true,
+    })
+
+    check(
+      'V: the redelivery is `alreadyFinal`, settles the row `processed`, and its own after-response work repeats nothing',
+      reclaimed &&
+        replay.outcome === 'alreadyFinal' &&
+        settledRow.status === 'processed' &&
+        taxCalls.length === 1 &&
+        (await derivedStockOf(sold.product.id)) === 0 &&
+        (await stockOf(sold.variant.id)) === 0,
+      `${reclaimed ? 'reclaimed' : 'not reclaimed'}, ${replay.outcome}, row ${settledRow.status}, ${taxCalls.length} tax call(s), stock ${await stockOf(sold.variant.id)}`,
+    )
   }
 } finally {
   await cleanup()

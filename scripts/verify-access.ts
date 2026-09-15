@@ -43,9 +43,12 @@ if (!developmentDatabase.ok) {
 
 const {
   createLocalReq,
+  forgotPasswordOperation,
   getPayload,
+  loginOperation,
   logoutOperation,
   refreshOperation,
+  resetPasswordOperation,
   updateByIDOperation,
   updateOperation,
 } = await import('payload')
@@ -208,6 +211,40 @@ function settlesWithin(operation: Promise<unknown>, ms = 5_000): Promise<boolean
 
 const payload: Payload = await getPayload({ config })
 
+/**
+ * A request shaped exactly as Payload's REST handlers make it: `payloadAPI: 'REST'` and no
+ * `overrideAccess`. The guards under test key on `payloadAPI`, so this is the REST door without an
+ * HTTP server in front of it.
+ */
+async function restReq(user?: TypedUser) {
+  const req = await createLocalReq(user ? { user } : {}, payload)
+
+  req.payloadAPI = 'REST'
+
+  return req
+}
+
+/** A customer's stored sessions, read past access control and hidden-field stripping. */
+async function sessionsOf(id: number) {
+  return (
+    (
+      await payload.findByID({
+        collection: 'customers',
+        id,
+        overrideAccess: true,
+        showHiddenFields: true,
+      })
+    ).sessions ?? []
+  )
+}
+
+/** Whether a customer token still resolves to a user. */
+async function authenticates(token: string | undefined) {
+  return (
+    (await payload.auth({ headers: new Headers({ Authorization: `JWT ${token}` }) })).user !== null
+  )
+}
+
 async function makeCustomer(tag: string) {
   return payload.create({
     collection: 'customers',
@@ -250,6 +287,17 @@ async function cleanup() {
   await payload.delete({
     collection: 'carts',
     where: { 'customer.email': { like: PREFIX } },
+    overrideAccess: true,
+  })
+  // The R1-18 checks' lock and preference rows, including any a refused write failed to refuse.
+  await payload.delete({
+    collection: 'payload-locked-documents',
+    where: { globalSlug: { like: PREFIX } },
+    overrideAccess: true,
+  })
+  await payload.delete({
+    collection: 'payload-preferences',
+    where: { key: { like: PREFIX } },
     overrideAccess: true,
   })
   await payload.delete({
@@ -729,31 +777,35 @@ try {
    * rather than a global "no".
    */
   const settingsBefore = await payload.findGlobal({ slug: 'site-settings', overrideAccess: true })
-  const editorAttempt = await payload.updateGlobal({
-    slug: 'site-settings',
-    data: { maxQuantityPerLine: 99 },
-    overrideAccess: false,
-    user: editorUser,
-  })
-  check(
-    'an editor cannot change a commerce setting',
-    editorAttempt.maxQuantityPerLine === settingsBefore.maxQuantityPerLine,
-    `became ${String(editorAttempt.maxQuantityPerLine)}`,
-  )
 
-  const adminAttempt = await payload.updateGlobal({
-    slug: 'site-settings',
-    data: { maxQuantityPerLine: 99 },
-    overrideAccess: false,
-    user: adminUser,
-  })
-  check('an admin can change a commerce setting', adminAttempt.maxQuantityPerLine === 99)
+  // The restore is in a `finally`: a throw between the two writes must not leave the shop's limit at 99.
+  try {
+    const editorAttempt = await payload.updateGlobal({
+      slug: 'site-settings',
+      data: { maxQuantityPerLine: 99 },
+      overrideAccess: false,
+      user: editorUser,
+    })
+    check(
+      'an editor cannot change a commerce setting',
+      editorAttempt.maxQuantityPerLine === settingsBefore.maxQuantityPerLine,
+      `became ${String(editorAttempt.maxQuantityPerLine)}`,
+    )
 
-  await payload.updateGlobal({
-    slug: 'site-settings',
-    data: { maxQuantityPerLine: settingsBefore.maxQuantityPerLine },
-    overrideAccess: true,
-  })
+    const adminAttempt = await payload.updateGlobal({
+      slug: 'site-settings',
+      data: { maxQuantityPerLine: 99 },
+      overrideAccess: false,
+      user: adminUser,
+    })
+    check('an admin can change a commerce setting', adminAttempt.maxQuantityPerLine === 99)
+  } finally {
+    await payload.updateGlobal({
+      slug: 'site-settings',
+      data: { maxQuantityPerLine: settingsBefore.maxQuantityPerLine },
+      overrideAccess: true,
+    })
+  }
 
   await denied('an admin cannot delete their own staff account', () =>
     payload.delete({ collection: 'users', id: admin.id, overrideAccess: false, user: adminUser }),
@@ -954,22 +1006,8 @@ try {
     const racer = await makeCustomer('racer')
     const racerUser = asUser(racer, 'customers')
 
-    const sessionsOf = async (id: number) =>
-      (
-        await payload.findByID({
-          collection: 'customers',
-          id,
-          overrideAccess: true,
-          showHiddenFields: true,
-        })
-      ).sessions ?? []
-
     const signIn = (password = PASSWORD) =>
       payload.login({ collection: 'customers', data: { email: racerEmail, password } })
-
-    const authenticates = async (token: string | undefined) =>
-      (await payload.auth({ headers: new Headers({ Authorization: `JWT ${token}` }) })).user !==
-      null
 
     const reEnable = () =>
       payload.update({
@@ -1258,14 +1296,6 @@ try {
       overrideAccess: true,
       req: holdingForRest.req,
     })
-
-    const restReq = async (user?: TypedUser) => {
-      const req = await createLocalReq(user ? { user } : {}, payload)
-
-      req.payloadAPI = 'REST'
-
-      return req
-    }
 
     const racerRestUser = racerUser
 
@@ -1562,6 +1592,311 @@ try {
       sql`DELETE FROM "payload_kv" WHERE "key" = ${`${CUSTOMER_REVISION_KEY_PREFIX}${lonely.id}`}`,
     )
   }
+
+  /* ---- §34, R1-15 and §34.1d: the REST auth doors, and who may change a credential ---- */
+
+  {
+    const customers = payload.collections.customers
+    const SELF_PASSWORD = 'A-self-chosen-passphrase-for-verify-7'
+    const ADMIN_PASSWORD = 'An-admin-set-passphrase-for-verify-5'
+
+    const signInAs = (email: string, password: string) =>
+      payload.login({ collection: 'customers', data: { email, password } })
+
+    /*
+     * Each group below has its own customer, so a guard that fails to refuse changes only its own
+     * group's account, and the harness still reaches the report and names what broke.
+     *
+     * `beforeOperation` refuses these three to anything but the Local API. Each call would succeed
+     * without that guard: the credentials are right, the reset token is live and its password meets
+     * the policy, and the address exists. The reset runs before forgot-password so a forgot-password
+     * that got through cannot replace the token first. `disableEmail` is not something the guard
+     * reads; it only keeps a guard that failed to refuse from trying to send mail.
+     */
+    await makeCustomer('gatekeeper')
+
+    const gatekeeperEmail = `${PREFIX}-gatekeeper@example.test`
+    const liveToken = await payload.forgotPassword({
+      collection: 'customers',
+      data: { email: gatekeeperEmail },
+      disableEmail: true,
+    })
+
+    await denied(
+      '§34 R1-15: **`POST /api/customers/login` is refused**, even with the right password',
+      async () =>
+        loginOperation({
+          collection: customers,
+          data: { email: gatekeeperEmail, password: PASSWORD },
+          req: await restReq(),
+        }),
+      ['Forbidden'],
+    )
+
+    await denied(
+      '§34 R1-15: **`POST /api/customers/reset-password` is refused**, with a live token and a valid password',
+      async () =>
+        resetPasswordOperation({
+          collection: customers,
+          data: { password: SELF_PASSWORD, token: String(liveToken) },
+          req: await restReq(),
+        }),
+      ['Forbidden'],
+    )
+
+    await denied(
+      '§34 R1-15: **`POST /api/customers/forgot-password` is refused** for a real address',
+      async () =>
+        forgotPasswordOperation({
+          collection: customers,
+          // Payload's generated type demands a `password` the operation never reads; the handler sends none.
+          data: { email: gatekeeperEmail } as never,
+          disableEmail: true,
+          req: await restReq(),
+        }),
+      ['Forbidden'],
+    )
+
+    await allowed(
+      '§34 R1-15: …while the Local API sign-in the storefront uses still works, on the unchanged password',
+      () => signInAs(gatekeeperEmail, PASSWORD),
+    )
+
+    /* §34.1d: a customer's own row, through REST — credentials refused, the profile still editable. */
+
+    const keyholder = await makeCustomer('keyholder')
+    const keyholderEmail = `${PREFIX}-keyholder@example.test`
+    const keyholderUser = asUser(keyholder, 'customers')
+
+    await denied(
+      "§34.1d: **a customer's own REST `PATCH` of a new password is refused** — a stolen cookie is not a takeover",
+      async () =>
+        updateByIDOperation({
+          collection: customers,
+          data: { password: SELF_PASSWORD },
+          id: keyholder.id,
+          req: await restReq(keyholderUser),
+        }),
+      ['Forbidden'],
+    )
+
+    await denied(
+      "§34.1d: **a customer's own REST `PATCH` of a new sign-in email is refused**",
+      async () =>
+        updateByIDOperation({
+          collection: customers,
+          data: { email: `${PREFIX}-keyholder-hijacked@example.test` },
+          id: keyholder.id,
+          req: await restReq(keyholderUser),
+        }),
+      ['Forbidden'],
+    )
+
+    const afterSelfEdits = await payload.findByID({
+      collection: 'customers',
+      id: keyholder.id,
+      overrideAccess: true,
+    })
+    const oldPasswordOutcome = await outcomeOf(signInAs(keyholderEmail, PASSWORD))
+
+    check(
+      '§34.1d: …neither landed — the email is unchanged and the old password still signs in',
+      afterSelfEdits.email === keyholderEmail && oldPasswordOutcome === 'done',
+      `${afterSelfEdits.email}, sign-in ${oldPasswordOutcome}`,
+    )
+
+    // The account form sends the address back unchanged, so the unchanged email rides along here.
+    const ownEdit = await outcomeOf(
+      updateByIDOperation({
+        collection: customers,
+        data: { email: keyholderEmail, firstName: 'Keyholder' },
+        id: keyholder.id,
+        req: await restReq(keyholderUser),
+      }),
+    )
+    const edited = await payload.findByID({
+      collection: 'customers',
+      id: keyholder.id,
+      overrideAccess: true,
+    })
+
+    check(
+      "§34.1d: a customer's own REST edit of `firstName`, with their email sent back unchanged, still succeeds",
+      ownEdit === 'done' && edited.firstName === 'Keyholder',
+      `${ownEdit}, firstName ${edited.firstName}`,
+    )
+
+    /* An admin sets the password — and every session on the account ends (Phase 36, R1-13). */
+
+    const supported = await makeCustomer('supported')
+    const supportedEmail = `${PREFIX}-supported@example.test`
+
+    await signInAs(supportedEmail, PASSWORD)
+
+    const heldCookie = await signInAs(supportedEmail, PASSWORD)
+    const sessionsBeforeReset = (await sessionsOf(supported.id)).length
+
+    const adminSetPassword = await outcomeOf(
+      updateByIDOperation({
+        collection: customers,
+        data: { password: ADMIN_PASSWORD },
+        id: supported.id,
+        req: await restReq(adminUser),
+      }),
+    )
+    const sessionsAfterReset = (await sessionsOf(supported.id)).length
+    const heldCookieLives = await authenticates(heldCookie.token)
+
+    check(
+      "R1-13: **an admin setting a customer's password ends every session on that account**",
+      adminSetPassword === 'done' &&
+        sessionsBeforeReset > 0 &&
+        sessionsAfterReset === 0 &&
+        !heldCookieLives,
+      `${adminSetPassword}; ${sessionsBeforeReset} session(s) before, ${sessionsAfterReset} after; old cookie ${heldCookieLives ? 'still authenticates' : 'refused'}`,
+    )
+
+    await allowed(
+      "§34.1d: an admin's REST edit can set a customer's password — the new one signs in",
+      () => signInAs(supportedEmail, ADMIN_PASSWORD),
+    )
+
+    const keptCookie = await signInAs(supportedEmail, ADMIN_PASSWORD)
+    const sessionsBeforeProfileEdit = (await sessionsOf(supported.id)).length
+    const adminProfileEdit = await outcomeOf(
+      updateByIDOperation({
+        collection: customers,
+        data: { firstName: 'Supported' },
+        id: supported.id,
+        req: await restReq(adminUser),
+      }),
+    )
+    const sessionsAfterProfileEdit = (await sessionsOf(supported.id)).length
+
+    check(
+      'R1-13: …while an admin profile edit that sets no password keeps the sessions',
+      adminProfileEdit === 'done' &&
+        sessionsBeforeProfileEdit > 0 &&
+        sessionsAfterProfileEdit === sessionsBeforeProfileEdit &&
+        (await authenticates(keptCookie.token)),
+      `${adminProfileEdit}; ${sessionsBeforeProfileEdit} session(s) before, ${sessionsAfterProfileEdit} after`,
+    )
+
+    const movedEmail = `${PREFIX}-supported-moved@example.test`
+    const adminSetEmail = await outcomeOf(
+      updateByIDOperation({
+        collection: customers,
+        data: { email: movedEmail },
+        id: supported.id,
+        req: await restReq(adminUser),
+      }),
+    )
+    const moved = await payload.findByID({
+      collection: 'customers',
+      id: supported.id,
+      overrideAccess: true,
+    })
+
+    check(
+      "§34.1d: an admin's REST edit can change a customer's sign-in email",
+      adminSetEmail === 'done' && moved.email === movedEmail,
+      `${adminSetEmail}, email ${moved.email}`,
+    )
+  }
+
+  /* ---- §34.1d, R1-18: Payload's own collections are staff-only, set in `onInit` ---- */
+
+  /*
+   * `restrictInternalCollections` runs from the real config's `onInit`, which `getPayload` above
+   * called. Without it both collections answer `Boolean(user)`, which a signed-in customer satisfies:
+   * every refusal below would be a success. Mallory is still an active customer here.
+   */
+  await denied(
+    'R1-18: **a signed-in customer cannot read `payload-locked-documents`**',
+    () =>
+      payload.find({
+        collection: 'payload-locked-documents',
+        overrideAccess: false,
+        user: malloryUser,
+      }),
+    ['Forbidden'],
+  )
+
+  await denied(
+    'R1-18: **a signed-in customer cannot create a `payload-locked-documents` row**',
+    () =>
+      payload.create({
+        collection: 'payload-locked-documents',
+        data: {
+          globalSlug: `${PREFIX}-customer-lock`,
+          user: { relationTo: 'customers', value: mallory.id },
+        },
+        overrideAccess: false,
+        user: malloryUser,
+      }),
+    ['Forbidden'],
+  )
+
+  await denied(
+    'R1-18: **a signed-in customer cannot read `payload-preferences`**',
+    () =>
+      payload.find({ collection: 'payload-preferences', overrideAccess: false, user: malloryUser }),
+    ['Forbidden'],
+  )
+
+  await denied(
+    'R1-18: **a signed-in customer cannot create a `payload-preferences` row**',
+    () =>
+      payload.create({
+        collection: 'payload-preferences',
+        data: {
+          key: `${PREFIX}-customer-preference`,
+          user: { relationTo: 'customers', value: mallory.id },
+          value: { planted: true },
+        },
+        overrideAccess: false,
+        user: malloryUser,
+      }),
+    ['Forbidden'],
+  )
+
+  await allowed(
+    'R1-18: …while staff can read and create `payload-locked-documents` rows',
+    async () => {
+      await payload.find({
+        collection: 'payload-locked-documents',
+        overrideAccess: false,
+        user: editorUser,
+      })
+      await payload.create({
+        collection: 'payload-locked-documents',
+        data: {
+          globalSlug: `${PREFIX}-staff-lock`,
+          user: { relationTo: 'users', value: editor.id },
+        },
+        overrideAccess: false,
+        user: editorUser,
+      })
+    },
+  )
+
+  await allowed('R1-18: …and read and create their own `payload-preferences`', async () => {
+    await payload.find({
+      collection: 'payload-preferences',
+      overrideAccess: false,
+      user: editorUser,
+    })
+    await payload.create({
+      collection: 'payload-preferences',
+      data: {
+        key: `${PREFIX}-staff-preference`,
+        user: { relationTo: 'users', value: editor.id },
+        value: { verified: true },
+      },
+      overrideAccess: false,
+      user: editorUser,
+    })
+  })
 
   /* ---- Password policy, on every path ---- */
 

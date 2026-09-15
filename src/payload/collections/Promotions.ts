@@ -8,6 +8,7 @@ import { type PromotionFailure, validatePromotion } from '@/lib/promotions/rules
 import { isAdmin, isStaff, nobodyField } from '../access'
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, minorUnits } from '../fields/money'
 import { normaliseCode } from '../fields/slug'
+import { lockRowsBeforeWrite } from '../hooks/lockRowsForWrite'
 
 /**
  * Discount codes. Plan §6.1l lists the fields and ends with the sentence that governs everything
@@ -174,6 +175,32 @@ export const Promotions: CollectionConfig = {
     create: isStaff,
     update: isStaff,
     delete: isAdmin,
+  },
+
+  hooks: {
+    /**
+     * **A promotion save cannot put back a redemption count** — the concurrency review of 2026-09-15.
+     *
+     * `timesUsed` moves only inside the payment transaction, as `times_used = times_used + 1` guarded
+     * by the usage limit (`lib/checkout/fulfil.ts`). An editor's save of the same code — a new end
+     * date, a corrected description — read the row unlocked, refilled `timesUsed` (it is
+     * `nobodyField`) from that read, and wrote it back. A redemption that committed in between was
+     * lost from the count, so a code limited to N uses could be honoured N + 1 times, and more with
+     * each overlap. Locking before the read makes the save wait for the payment and refill the
+     * counted figure. The form cannot reach it: field access drops the browser's copy.
+     *
+     * Updates only. A delete writes no count, and it clears `orders.promotion` and `carts.promotion`
+     * (`ON DELETE SET NULL`) — rows a payment locks before it counts the code — so locking the
+     * promotion first would stretch that lock-order inversion over the whole operation. See
+     * `hooks/lockRowsForWrite.ts`.
+     */
+    beforeOperation: [
+      lockRowsBeforeWrite({
+        collection: 'promotions',
+        table: 'promotions',
+        update: 'NO KEY UPDATE',
+      }),
+    ],
   },
 
   fields: [

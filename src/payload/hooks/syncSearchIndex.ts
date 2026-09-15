@@ -9,6 +9,7 @@ import {
 } from '@/lib/catalog/algolia'
 import { syncProductToIndex } from '@/lib/catalog/indexer'
 import type { ProductIndexRecord } from '@/lib/catalog/record'
+import { reportFailure } from '@/lib/observability/report'
 
 /**
  * **The line between "a merchandiser saved a product" and "a filter finds it."**
@@ -26,9 +27,11 @@ import type { ProductIndexRecord } from '@/lib/catalog/record'
  * migration, the seed and all five verification harnesses, none of which need a search index.
  *
  * So the import is dynamic and inside a `try`. Under Next it resolves and the credentials are the
- * guarded ones; under the CLI it throws, the `catch` logs at debug, and the write proceeds without
- * touching the index. That asymmetry is deliberate and is why `pnpm reindex` exists: a CLI write — a
- * seed, a backfill, a bulk script — leaves the index untouched, and the rebuild is how it catches up.
+ * guarded ones; under the CLI it is never attempted — the `NEXT_RUNTIME` guard in `sync` returns first
+ * (it once threw there and the `catch` logged at debug; `sync` says why that changed), and the write
+ * proceeds without touching the index. That asymmetry is deliberate and is why `pnpm reindex` exists:
+ * a CLI write — a seed, a backfill, a bulk script — leaves the index untouched, and the rebuild is how
+ * it catches up.
  *
  * **It can use neither the guarded module statically nor the unguarded one at all.** `env.server` is
  * unavailable under the CLI, and `env.core` is banned by `eslint.config.mjs` outside four named
@@ -77,7 +80,17 @@ async function resolveIndexWriter(): Promise<IndexWriter | null> {
   }
 }
 
-async function sync(payload: Payload, productId: number, req?: PayloadRequest): Promise<void> {
+/**
+ * What one sync did: `written` (the index now matches Postgres for the product), `failed` (a write or
+ * the writer failed, logged and reported), or `skipped` (a CLI process, or no Algolia configured).
+ */
+export type IndexSyncResult = 'failed' | 'skipped' | 'written'
+
+async function sync(
+  payload: Payload,
+  productId: number,
+  req?: PayloadRequest,
+): Promise<IndexSyncResult> {
   /**
    * **The index is written from the application, never from a CLI script.**
    *
@@ -111,28 +124,50 @@ async function sync(payload: Payload, productId: number, req?: PayloadRequest): 
       'Search index not updated — a CLI write does not sync. `pnpm reindex` rebuilds it.',
     )
 
-    return
+    return 'skipped'
   }
 
   try {
     const writer = await resolveIndexWriter()
 
     if (!writer) {
-      return
+      return 'skipped'
     }
 
-    await syncProductToIndex(payload, writer, productId, req)
+    return (await syncProductToIndex(payload, writer, productId, req)) ? 'written' : 'failed'
   } catch (error) {
     /*
-     * Reached under the CLI, where `@/lib/env.server` cannot resolve at all. Logged at debug rather
-     * than warn: it is the expected state for `pnpm seed`, `pnpm migrate` and every harness, and a
-     * warning there would be noise on a healthy run.
+     * **Only a Next process reaches this** — the `NEXT_RUNTIME` guard above returns first everywhere
+     * else. It used to be described as the CLI's expected state and logged at debug, which was true
+     * before that guard existed; under Next it means the server environment or the write client could
+     * not be built, and every product save is then missing from search. So it is a warning, and it is
+     * reported as `search.indexWriter` (the lost-side-effect review). It still never throws: the
+     * product write it follows is not undone for a derived store.
      */
-    payload.logger.debug(
+    payload.logger.warn(
       { err: error, productId },
-      'Search index not updated — no server environment in this process. `pnpm reindex` rebuilds it.',
+      'Search index not updated — the index writer could not be created. `pnpm reindex` rebuilds it.',
     )
+    reportFailure(error, 'search.indexWriter', { productId })
+
+    return 'failed'
   }
+}
+
+/**
+ * **One product, synced outside a collection hook** — for the daily cron's scheduled-drop step
+ * (`lib/catalog/scheduled-index.ts`), which has a product id and no save to hang a hook on.
+ *
+ * It is `sync` itself, not a second path to the index: the same `NEXT_RUNTIME` refusal, the same guarded
+ * credentials, the same `syncProductToIndex`. That is what makes the cron write — it runs inside Next,
+ * where the guard lets it through — and what keeps a harness that imports the step from writing
+ * fixtures to a shared index. No `req`: the cron holds no transaction.
+ */
+export function syncProductSearchIndex(
+  payload: Payload,
+  productId: number,
+): Promise<IndexSyncResult> {
+  return sync(payload, productId)
 }
 
 /**

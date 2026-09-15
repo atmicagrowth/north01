@@ -176,6 +176,52 @@ outside it:
    rename; anything else is `reindex:check`'s job to find.
 3. **Recovery** — the index is derived, so it is always reconstructible.
 
+### Scheduled drops — synced by the daily cron
+
+A product can be `published` with a `publishedAt` in the future. `/shop` honours that at query time
+(`publishedProductWhere`), so the drop appears there the moment its time passes; the index cannot,
+because a record is built when the product is **saved**, and at that save `buildProductRecord` leaves a
+future-dated product out. Until the lost-side-effect review nothing saved it again, so a drop stayed
+missing from search and from the Algolia-only filters until someone edited it or ran `pnpm reindex`.
+
+The daily Vercel Cron request (`GET /api/carts/sweep`, DEPLOYMENT.md §7) now runs a third step after the
+retention sweep, `syncScheduledDrops` in `src/lib/catalog/scheduled-index.ts`:
+
+- It selects up to 200 **published** products whose `publishedAt` is in the last **26 hours** and not
+  after the run's own start (`scheduledDropWhere`, the same rule as the pure `isScheduledDropDue`).
+- It syncs each through `syncProductSearchIndex` — the save hook's own `sync`, so the same
+  `NEXT_RUNTIME` refusal, the same guarded credentials and the same `syncProductToIndex`. The cron runs
+  inside Next, so it writes; a harness importing the step does not.
+- **Why 26 hours.** A Hobby cron fires anywhere inside its scheduled hour, so two daily runs can be about
+  25 hours apart; a 24-hour window would skip a drop in the gap. The overlap re-syncs a product the
+  previous run already did, which is harmless: a sync rebuilds the record from Postgres and upserts it
+  by `objectID`, so the second write is the first one again.
+- **What it cannot cover:** a day on which the cron did not run at all (Vercel does not retry a failed
+  invocation), or more than 200 drops in one window (`more: true`). `pnpm reindex:check` finds those;
+  `pnpm reindex`, or saving the product, fixes them.
+- The route's JSON carries `scheduledDrops: { due, indexed, failed, more }`. `indexed` below `due` means
+  Algolia is not configured there or a write failed (reported, below); `failed` means the selection
+  threw, and is reported as `search.scheduledDrops`. The step never throws and runs after the sweep, so
+  it cannot stop a deletion.
+
+`tests/unit/scheduled-index.test.ts` covers the window and the predicate; `pnpm verify:search` section O
+proves against real rows that the step selects exactly the products whose time passed in the window.
+
+### Failures are reported, not only logged
+
+Every index write catches its failure so a derived store can never fail a committed edit, and since the
+lost-side-effect review each also goes to Sentry through `reportFailure` (only when
+`NEXT_PUBLIC_SENTRY_DSN` is set):
+
+| Area | Where | Means |
+|---|---|---|
+| `search.indexWrite` | `syncProductToIndex` (`lib/catalog/indexer.ts`) | One product's record could not be saved or deleted. It is stale until its next save or `pnpm reindex` |
+| `search.indexWriter` | `sync` (`payload/hooks/syncSearchIndex.ts`) | Under Next, the environment or the write client could not be built, so no product save reaches the index. Logged at warn (it was debug, from when only the CLI reached it) |
+| `search.taxonomyReindex` | `syncTaxonomyRename.ts` | A category or collection rename did not reach its products' records |
+| `search.scheduledDrops` | `lib/catalog/scheduled-index.ts` | The cron could not select the day's scheduled drops |
+
+`tests/unit/search-index-reporting.test.ts` proves each is reported and none throws.
+
 The index name is derived from `appEnv` and there is deliberately **no** `ALGOLIA_INDEX_NAME`
 variable: a name that can be set by hand can be set to production by hand.
 

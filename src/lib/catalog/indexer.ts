@@ -1,5 +1,7 @@
 import type { Payload, PayloadRequest, Where } from 'payload'
 
+import { reportFailure } from '@/lib/observability/report'
+
 import {
   buildProductRecord,
   withAncestors,
@@ -327,14 +329,20 @@ export async function collectProductRecords(
  * argument `revalidateTags.ts` makes, and the one `syncProductDerived` deliberately inverts because
  * *that* one runs inside the transaction and can lose the write itself. A search index is a derived
  * store; it is reconstructible with `pnpm reindex`, and the next save on the same product fixes it
- * anyway. The failure is logged with the product id so it is not merely swallowed.
+ * anyway. The failure is logged with the product id so it is not merely swallowed, and — since the
+ * lost-side-effect review — reported as `search.indexWrite`: a warning in a log nobody reads left a
+ * product missing from search, or a sold-out one still filterable as in stock, with nobody told.
+ *
+ * Resolves `true` when the index now matches Postgres for this product and `false` when the write
+ * failed, so a caller that is not a hook — the daily cron's scheduled-drop step
+ * (`lib/catalog/scheduled-index.ts`) — can count what it actually wrote.
  */
 export async function syncProductToIndex(
   payload: Payload,
   credentials: Credentials,
   productId: number,
   req?: PayloadRequest,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const { excludedIds, records } = await collectProductRecords(payload, {
       req,
@@ -344,7 +352,7 @@ export async function syncProductToIndex(
     if (records.length > 0) {
       await credentials.saveRecord(records[0] as ProductIndexRecord)
 
-      return
+      return true
     }
 
     /*
@@ -354,10 +362,15 @@ export async function syncProductToIndex(
      */
     void excludedIds
     await credentials.deleteRecord(productId)
+
+    return true
   } catch (error) {
     payload.logger.warn(
       { err: error, productId },
       'Saved, but the search index was not updated. Filters may be briefly stale; `pnpm reindex` rebuilds it.',
     )
+    reportFailure(error, 'search.indexWrite', { productId })
+
+    return false
   }
 }

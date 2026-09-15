@@ -15,6 +15,7 @@
  * never while it is scheduled, withdrawn, a draft or in the trash.
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
@@ -186,10 +187,82 @@ const created: {
 }[] = []
 
 const cleanup = async () => {
+  /*
+   * `trash: true` — permanently delete, **trashed rows included**. With `trash: false` Payload's delete
+   * filters to non-trashed rows and throws NotFound on a trashed one, which the `catch` swallowed — so
+   * the product section G moves to the trash leaked whenever a throw came before its own delete.
+   */
   for (const doc of [...created].reverse()) {
     await payload
-      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
+      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: true })
       .catch(() => undefined)
+  }
+}
+
+/**
+ * **What an aborted run left behind**, removed before this run starts.
+ *
+ * A killed run never reaches `cleanup`, and it strands published, sellable products and customer
+ * accounts with a known password. Every fixture is named with something only this harness writes —
+ * `review-fixture-` slugs, `RV-`/`RV2-<9 digits>` SKUs, `N1-RV-` orders and `verify-reviews-`
+ * addresses — so those are cleared, with the reviews that hang off them, children before parents.
+ */
+{
+  const idsOf = async (query: ReturnType<typeof sql>) =>
+    ((await payload.db.drizzle.execute(query)).rows as { id: number | string }[]).map((row) =>
+      Number(row.id),
+    )
+
+  const list = (ids: number[]) =>
+    ids.length > 0
+      ? sql.join(
+          ids.map((id) => sql`${id}`),
+          sql`, `,
+        )
+      : sql`NULL`
+
+  const products = list(
+    await idsOf(sql`SELECT "id" FROM "products" WHERE "slug" LIKE 'review-fixture-%'`),
+  )
+  const customers = list(
+    await idsOf(sql`SELECT "id" FROM "customers" WHERE "email" LIKE 'verify-reviews-%'`),
+  )
+  const orders = list(
+    await idsOf(sql`SELECT "id" FROM "orders" WHERE "order_number" LIKE 'N1-RV-%'`),
+  )
+
+  for (const [collection, query] of [
+    [
+      'reviews',
+      sql`SELECT "id" FROM "reviews"
+        WHERE "product_id" IN (${products}) OR "customer_id" IN (${customers})`,
+    ],
+    [
+      'order-items',
+      sql`SELECT "id" FROM "order_items"
+        WHERE "order_id" IN (${orders}) OR "sku" ~ '^RV2?-[0-9]{9}$'`,
+    ],
+    ['orders', sql`SELECT "id" FROM "orders" WHERE "id" IN (${orders})`],
+    ['product-variants', sql`SELECT "id" FROM "product_variants" WHERE "sku" ~ '^RV-[0-9]{9}-'`],
+    ['products', sql`SELECT "id" FROM "products" WHERE "id" IN (${products})`],
+    ['customers', sql`SELECT "id" FROM "customers" WHERE "id" IN (${customers})`],
+  ] as const) {
+    const ids = await idsOf(query)
+
+    if (ids.length === 0) continue
+
+    const { errors } = await payload.delete({
+      collection,
+      overrideAccess: true,
+      trash: true,
+      where: { id: { in: ids } },
+    })
+
+    if (errors.length > 0) {
+      throw new Error(
+        `verify-reviews could not clear an aborted run's ${collection}: ${JSON.stringify(errors)}`,
+      )
+    }
   }
 }
 
@@ -550,7 +623,7 @@ try {
       `in trash: ${inTrash.totalDocs}`,
     )
 
-    /* `cleanup` deletes with `trash: false`, which skips a trashed row — so this one goes now. */
+    /* Removed now; `cleanup` (which deletes with `trash: true`) is the backstop if a throw comes first. */
     await payload.delete({
       collection: 'products',
       id: trashed.id,

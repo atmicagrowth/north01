@@ -255,7 +255,20 @@ export function planStockDecrements(lines: StockLine[]): StockOutcome {
     }
   }
 
-  return { decrements: short.length > 0 ? [] : decrements, ok: short.length === 0, short }
+  /*
+   * **Ascending variant id** (owner follow-up sweep 2). Each decrement locks its variant row until the
+   * payment commits. In bag-line order, one payment for A then B and another for B then A each held
+   * the row the other wanted: Postgres broke the deadlock by aborting one, and that webhook failed
+   * until Stripe retried it. One global order makes that cycle impossible.
+   */
+  const byVariant = (a: { variantId: number }, b: { variantId: number }) =>
+    a.variantId - b.variantId
+
+  return {
+    decrements: short.length > 0 ? [] : decrements.sort(byVariant),
+    ok: short.length === 0,
+    short: short.sort(byVariant),
+  }
 }
 
 /* -------------------------------------------------------------------------------------------------

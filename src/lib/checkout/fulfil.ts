@@ -881,10 +881,12 @@ async function finalisePaidOrder(
  *
  * **Through `recalculateProductDerived`, the mechanism an admin edit uses** (`hooks/
  * syncProductDerived.ts`). It re-reads every active variant and rebuilds the figure rather than
- * subtracting, so running it twice, or late, gives the same answer; and its `payload.update` on the
- * product fires `Products.afterChange` — the search-index sync and the `catalog` / `home` cache
- * revalidation — so the index and the cached pages learn about the sale the same way. (The index half
- * is skipped outside Next, as it is for every CLI write; `pnpm reindex` builds from this column.)
+ * subtracting, so running it twice, or late, gives the same answer. It writes only the four `derived`
+ * columns with one raw `UPDATE` (a Payload update would rewrite the whole product from its own read
+ * and could republish one an admin had just unpublished — owner follow-up sweep 2), then runs the
+ * search-index sync and the `catalog` / `home` cache revalidation itself, so the index and the cached
+ * pages learn about the sale the same way. (The index half is skipped outside Next, as it is for every
+ * CLI write; `pnpm reindex` builds from this column.)
  *
  * **After the commit, with no `req`, and after the route's response** — run by `afterStripeEvent`
  * (`after-stripe-event.ts`) alongside the email delivery and the tax record, waiting on neither and

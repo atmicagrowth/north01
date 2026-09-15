@@ -21,6 +21,7 @@
  * customer who happened to pick a combination that works proves nothing about the one that does not.
  */
 
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload } from 'payload'
 
 import config from '../src/payload.config'
@@ -620,10 +621,48 @@ const payload: Payload = await getPayload({ config })
 const created: { collection: 'product-variants' | 'products'; id: number }[] = []
 
 const cleanup = async () => {
+  /* `trash: true` is the permanent delete — trashed rows included, which `trash: false` skips. */
   for (const doc of [...created].reverse()) {
     await payload
-      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: false })
+      .delete({ collection: doc.collection, id: doc.id, overrideAccess: true, trash: true })
       .catch(() => undefined)
+  }
+}
+
+/**
+ * **What an aborted run left behind**, removed before this run starts.
+ *
+ * The fixture below is a published product at `sortOrder: 0`, so one that outlives a killed run heads
+ * `/shop` — and the E2E search flow picks the first product in the shop and searches for a name the
+ * index never held. It is named with a slug (`vp-<digits>`) and SKUs (`VP-<digits>-`) nothing else in
+ * the repository writes, so those are cleared, variants before their product.
+ */
+{
+  const idsOf = async (query: ReturnType<typeof sql>) =>
+    ((await payload.db.drizzle.execute(query)).rows as { id: number | string }[]).map((row) =>
+      Number(row.id),
+    )
+
+  for (const [collection, query] of [
+    ['product-variants', sql`SELECT "id" FROM "product_variants" WHERE "sku" ~ '^VP-[0-9]{1,6}-'`],
+    ['products', sql`SELECT "id" FROM "products" WHERE "slug" ~ '^vp-[0-9]{1,6}$'`],
+  ] as const) {
+    const ids = await idsOf(query)
+
+    if (ids.length === 0) continue
+
+    const { errors } = await payload.delete({
+      collection,
+      overrideAccess: true,
+      trash: true,
+      where: { id: { in: ids } },
+    })
+
+    if (errors.length > 0) {
+      throw new Error(
+        `verify-product could not clear an aborted run's ${collection}: ${JSON.stringify(errors)}`,
+      )
+    }
   }
 }
 

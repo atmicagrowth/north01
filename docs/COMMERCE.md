@@ -434,12 +434,30 @@ Steps 6 and 7 run on both the normal and the oversold path.
 
 ### 8.4 After the response
 
-The `stripe-events` row is marked `processed` (or `ignored`) first, then **200** is returned. Work that
-must not delay Stripe runs in Next's `after()`, as `afterStripeEvent` (`lib/checkout/after-stripe-event.ts`,
-with the courier and the Stripe client passed in by the route). Its three steps are **started together
-and awaited with `Promise.allSettled`**, so none waits on another and each reports its own failure (the
-recheck of S01: run in sequence, a slow Algolia behind the refresh held the tax record back, and a
-platform that ends `after()` at the function's duration limit could lose it unlogged):
+Once `applyStripeEvent` resolves, the route hands the outcome to `settleStripeEvent`
+(`lib/checkout/after-stripe-event.ts`), which does three things **in this order**:
+
+1. **Registers the after-response work** — `afterStripeEvent`, with the courier and the Stripe client
+   the route passes in — with Next's `after()`.
+2. Raises the `orderMissing` / `mismatch` alerts (§8.2).
+3. Marks the `stripe-events` row `processed` (or `ignored`). The route then returns **200**.
+
+**The order is the fix for a lost side effect** (the lost-side-effect review). The work used to be
+registered after the row write, and by then the payment has committed; if that write threw, the route's
+catch marked the row `failed` and answered 500 with nothing registered. Stripe's retry reclaimed the
+row, the paid claim matched no row, and the outcome was `alreadyFinal` — which records no tax
+transaction and refreshes no stock figure — so both were lost for good. Next runs `after()` work even
+when the response is an error (`next/dist/docs/01-app/03-api-reference/04-functions/after.md`), so a
+failed row write now costs a 500 and a redelivery, and the redelivery repeats nothing: its
+`alreadyFinal` names no email and skips the tax record and the refresh; every email delivery claims its
+row with a compare-and-set on `attempts`; the tax call carries an idempotency key and a reference Stripe
+will not record twice; and the refresh is a recompute. `pnpm verify:webhook` section V makes the row
+write throw after a real payment and runs the registered work.
+
+The three after-response steps are **started together and awaited with `Promise.allSettled`**, so none
+waits on another and each reports its own failure (the recheck of S01: run in sequence, a slow Algolia
+behind the refresh held the tax record back, and a platform that ends `after()` at the function's
+duration limit could lose it unlogged):
 
 - **Deliver** the email rows the transaction already queued — the confirmation, or a refund message
   (one per new cumulative amount; the dedupe key includes it) — and log a failed delivery. Then an
@@ -457,7 +475,9 @@ platform that ends `after()` at the function's duration limit could lose it unlo
   moved stock. It never throws; a failure is logged and reported `checkout.derivedStock`.
 
 Nothing in `after()` can change the order or the response. A failed delivery stays on its
-`email-messages` row, which the drain retries — see EMAIL.md. Nothing else here is retried: if the
+`email-messages` row, which the drain retries until the message has had three attempts; the failure
+that uses the last one is reported `email.deliveryExhausted` — see EMAIL.md. Nothing else here is
+retried: if the
 `after()` work never runs or is cut short, a tax transaction not yet recorded is found only by
 reconciling Stripe Tax, and a refresh not yet done leaves the product's cached figure at its pre-sale
 value until its next save — a Stripe redelivery is answered `alreadyFinal`, which refreshes nothing.
@@ -512,7 +532,8 @@ tab). Cancelling does not restock.
 | Stripe unconfigured | Checkout page declines; preflight `stripeUnconfigured`; tax deferred; webhook 503 | `stripe.ts`, `preflight.ts`, `tax/provider.ts`, `route.ts` |
 | Stripe down at checkout | Session create (2 SDK retries) fails → the order stays `checkout_started`, the customer sees the `stripeUnconfigured` sentence, reported `checkout.createSession`. Retiring the prior session fails → refused the same way | `session.ts`, `preflight.ts` |
 | Tax slow or failing | 5 s timeout, no retry → `unavailable` → `taxUnavailable`; reported `tax.stripe`. Never charged as zero | `tax/provider.ts` |
-| Email slow or failing | Runs after the 200, beside the tax record and the stock refresh and holding neither up; the order is unaffected; `email-messages` row retried by the drain and the daily cron | `lib/checkout/after-stripe-event.ts`, DEPLOYMENT.md §7 |
+| Email slow or failing | Runs after the 200, beside the tax record and the stock refresh and holding neither up; the order is unaffected; `email-messages` row retried by the drain and the daily cron, up to three attempts, the last failure reported `email.deliveryExhausted` | `lib/checkout/after-stripe-event.ts`, `lib/email/send.ts`, DEPLOYMENT.md §7 |
+| `stripe-events` row write fails after a payment | The after-response work is already registered, so the tax record and the stock refresh still run; 500, the redelivery is `alreadyFinal` and repeats nothing (§8.4) | `after-stripe-event.ts` `settleStripeEvent` |
 | Webhook delayed | Success page shows "Confirming your payment"; the order is `pending_payment` until the event arrives. The 31-minute session expiry does not affect a completed payment | `confirmation-copy.ts` |
 | Webhook duplicated | Unique `eventId` → acknowledge / 409 / reprocess (§8.1); conditional claims make a reprocess change nothing | `route.ts`, `events.ts`, `fulfil.ts` |
 | Two payments race for the last unit | The second finalisation finds no stock → paid + `stockShortfall`, no partial decrement | `fulfil.ts` |
@@ -537,6 +558,7 @@ Unit tests (`pnpm test:unit`, Vitest, no database):
 | Success-page copy by status; the line item's description sentence | `tests/unit/checkout-confirmation.test.ts` |
 | The Checkout Session parameters: the order number in the description, one line item at the total, the id in metadata and URLs, the claim | `tests/unit/checkout-session.test.ts` (Stripe client mocked) |
 | Fulfilment machine, frozen line fields, displayed status | `tests/unit/order-state.test.ts` |
+| The shipped / delivered email's queue write: a save whose transaction it ended fails visibly; a refusal is reported | `tests/unit/order-email-queue.test.ts` |
 
 Harnesses (`pnpm verify:<name>`, `payload run`). Sections that write data are guarded by **D-10**: they
 refuse to run anywhere but the development database `DATABASE_PUSH_TARGET` names.
@@ -547,7 +569,7 @@ refuse to run anywhere but the development database `DATABASE_PUSH_TARGET` names
 | `scripts/verify-promotions.ts` | §15.1a checks and §15.1c edge cases; section G: the normalised unique index; section H: per-customer counting, including a pending order on an expired, still-active bag (S20) |
 | `scripts/verify-shipping.ts` | §16 rate shape, validation, edge cases and the tax boundary (mostly pure) |
 | `scripts/verify-checkout.ts` | State machine, preflight vocabulary, stock plan; section F: **real offline signature verification** with `generateTestHeaderString`; G2: concurrent attempts on one bag, and (S15) the customer-facing order number each attempt returns, kept on reuse; H: the refusal copy, including `alreadyPaid` promising only the confirmation (S07) |
-| `scripts/verify-webhook.ts` | `applyStripeEvent` against real orders, variants and stock: both barriers, the transaction, the inventory race, `stripe-events` bookkeeping; sections M–S vary one session fact at a time; G separates `orderMissing` from `noOrder`; T proves every claim that changes an order sets `updated_at`, and a superseded claim does not; U (S01) proves `refreshDerivedStock` sets each product's `derived.inventoryTotal` to the sum of its active variants' stock after a sale, only for `finalised`, idempotently, and that one product's failed refresh neither throws nor stops the others; then runs the route's `afterStripeEvent` with stub dependencies — it refreshes the figure and records the tax, the refresh finishes while the tax record is stuck, and the tax record while the refresh is stuck; C (S06) proves the confirmation queued for a held order carries `data.onHold: true`, on the plain and the savepoint paths. It first removes what an aborted run left behind, by the fixture prefixes only this script uses |
+| `scripts/verify-webhook.ts` | `applyStripeEvent` against real orders, variants and stock: both barriers, the transaction, the inventory race, `stripe-events` bookkeeping; sections M–S vary one session fact at a time; G separates `orderMissing` from `noOrder`; T proves every claim that changes an order sets `updated_at`, and a superseded claim does not; U (S01) proves `refreshDerivedStock` sets each product's `derived.inventoryTotal` to the sum of its active variants' stock after a sale, only for `finalised`, idempotently, and that one product's failed refresh neither throws nor stops the others; then runs the route's `afterStripeEvent` with stub dependencies — it refreshes the figure and records the tax, the refresh finishes while the tax record is stuck, and the tax record while the refresh is stuck; V (the lost-side-effect review) makes `settleStripeEvent`'s row write throw after a real payment, proves the after-response work was registered anyway and records the tax and refreshes the figure, and that the reclaimed redelivery settles the row and repeats neither; C (S06) proves the confirmation queued for a held order carries `data.onHold: true`, on the plain and the savepoint paths. It first removes what an aborted run left behind, by the fixture prefixes only this script uses |
 | `scripts/verify-orders.ts` | Fulfilment transitions and line immutability, measured as rejected writes against the database. Section **M**, the retention sweep: its own fixtures only, aged with raw SQL to 1997–2000 and swept at a fixed clock (`SWEEP_NOW` = 2000-03-01) — the 30-day window, the batch bound, trashed rows, paid and refunded never taken, a `paymentMismatch` hold kept, a null hold taken, a webhook claim restarting the clock — and **permanently deletes** those fixtures, clearing leftovers of an aborted run first. Section **M2** (S04), the bag sweep: a rival transaction locks an order and then converts its expired bag while the sweep waits on that order; the converted bag survives, no deadlock, and only the genuinely expired bag is counted |
 
 **Not verified anywhere:** a live `stripe.checkout.sessions.create`, a live Stripe Tax calculation, and

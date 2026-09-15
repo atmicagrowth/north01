@@ -5,6 +5,7 @@ import type { EmailData } from '@/emails/messages'
 import type { DeliveryEnv, EmailKind, EmailStatus, Transport } from './rules'
 
 import { renderEmail } from '@/emails/messages'
+import { reportFailure } from '@/lib/observability/report'
 import {
   isRetryable,
   MAX_DELIVERY_ATTEMPTS,
@@ -216,6 +217,11 @@ export type DeliverOutcome =
  * loser sees zero rows and stops.
  *
  * The same statement also enforces `MAX_DELIVERY_ATTEMPTS`, so the ceiling cannot be raced past.
+ *
+ * **A failure that uses the last attempt is reported** (the lost-side-effect review). Such a message is
+ * `failed` for good — no drain will look at it again — and until then that was a row in the admin and a
+ * log line elsewhere promising a retry that would never come. It now goes to Sentry as
+ * `email.deliveryExhausted`, with the message's id and kind, so a person knows a customer was not told.
  */
 export async function deliverEmail(
   payload: Payload,
@@ -265,6 +271,26 @@ export async function deliverEmail(
     return { outcome: 'notClaimable' }
   }
 
+  /** Every failure after the claim: recorded on the row, and reported when no attempt is left. */
+  const fail = async (reason: string): Promise<DeliverOutcome> => {
+    await record(payload, messageId, { error: reason.slice(0, 900), status: 'failed' })
+
+    if (observed + 1 >= MAX_DELIVERY_ATTEMPTS) {
+      payload.logger.error({
+        attempts: observed + 1,
+        messageId,
+        msg: `An email failed on its last delivery attempt and will not be retried: ${reason.slice(0, 200)}`,
+      })
+      reportFailure(new Error(reason.slice(0, 400)), 'email.deliveryExhausted', {
+        attempts: observed + 1,
+        kind: String(row.kind),
+        messageId,
+      })
+    }
+
+    return { outcome: 'failed', reason }
+  }
+
   /*
    * The dev safeguard, applied at the last possible moment rather than at enqueue time. Deciding here
    * means the *record* of what the shop meant to send is identical in every environment, and only the
@@ -296,22 +322,16 @@ export async function deliverEmail(
      * second time, and that is the intended behaviour rather than a defect, so it is recorded as
      * failed with the reason instead of being retried into nothing.
      */
-    await record(payload, messageId, {
-      error:
-        'The template data was not retained, so this message cannot be re-rendered. Ask for a new one.',
-      status: 'failed',
-    })
+    await fail(
+      'The template data was not retained, so this message cannot be re-rendered. Ask for a new one.',
+    )
 
     return { outcome: 'failed', reason: 'notRenderable' }
   } else {
     try {
       body = await renderEmail(row.kind as EmailKind, row.data as never)
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'The template could not be rendered.'
-
-      await record(payload, messageId, { error: reason.slice(0, 900), status: 'failed' })
-
-      return { outcome: 'failed', reason }
+      return fail(error instanceof Error ? error.message : 'The template could not be rendered.')
     }
   }
 
@@ -339,9 +359,7 @@ export async function deliverEmail(
     }))
 
   if (!result.ok) {
-    await record(payload, messageId, { error: result.error.slice(0, 900), status: 'failed' })
-
-    return { outcome: 'failed', reason: result.error }
+    return fail(result.error)
   }
 
   await record(payload, messageId, {

@@ -115,6 +115,7 @@ The first visit to `/admin` creates the schema and prompts you to create the fir
 | `pnpm verify:analytics` | The Phase 25 taxonomy and the two things that fail silently forever: the GA4 reshaping (minor units to decimals, zero-based indices to one-based) and the Sentry redaction. **No database** |
 | `pnpm verify:security` | The Phase 26 rules — every branch of Turnstile verification with an injected verifier, the open-redirect validator, the upload allowlist, the REST create gate, and the secret scanner's own patterns. **No database, no network** |
 | `pnpm verify:email`, `verify:account`, `verify:reviews`, `verify:lookbook`, `verify:editorial`, `verify:admin` | The Phase 19, 20, 21, 22, 23 and 28 rules respectively. Each script's header docblock lists what it asserts |
+| `pnpm verify:concurrency` | The 2026-09-15 concurrency review — stale whole-row writes. Holds each raw-SQL checkout write (stock decrement, payment and refund claims, holds, the redemption count, the bag conversion) open in a transaction until a Payload write of the same row is queued behind it, commits, and asserts the committed value survived; then replays stale admin-form saves through the REST operation. Also the derived-stock refresh against an unpublish and a move to the trash. Creates and permanently deletes its own fixtures; local database only |
 | `pnpm scan:secrets` | §26.1d. Walks `git ls-files` for credential shapes. Exits non-zero on a finding, and never quotes the value it found |
 | `pnpm test` | Vitest, watch mode |
 | `pnpm test:run` | Vitest once — **this is the CI command**. Both projects |
@@ -390,7 +391,7 @@ Three layers, and they answer three different questions.
 | Component | `pnpm test:components` | Does this control behave — and stay accessible — in every state a customer can reach? |
 | End-to-end | `pnpm test:e2e` | Does the whole journey work in a browser? |
 
-The twenty-two `verify:*` harnesses are a fourth thing and are **not** replaced by any of these:
+The twenty-three `verify:*` harnesses are a fourth thing and are **not** replaced by any of these:
 they assert decisions against the live Payload access layer and the real database. Vitest cannot
 reach either. Three of them — `verify:seo`, `verify:analytics`, `verify:security` — and
 `scan:secrets` open no connection at all and therefore run in CI.

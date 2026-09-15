@@ -76,7 +76,14 @@ const payload: Payload = await getPayload({ config })
 
 const created: {
   collection:
-    'carts' | 'customers' | 'order-items' | 'orders' | 'product-variants' | 'products' | 'users'
+    | 'carts'
+    | 'customers'
+    | 'order-items'
+    | 'orders'
+    | 'product-variants'
+    | 'products'
+    | 'promotions'
+    | 'users'
   id: number
 }[] = []
 
@@ -423,6 +430,74 @@ async function makeOrder(label: string, paymentStatus: PaymentStatus = 'pending_
 
 const orderNow = async (id: number) =>
   payload.findByID({ collection: 'orders', depth: 0, id, overrideAccess: true })
+
+/**
+ * **What an aborted run left behind**, removed before this run starts.
+ *
+ * `cleanup` runs in `finally`, which a killed run never reaches — and what it strands includes a staff
+ * account whose password is in this file, a live discount code and published products. Sections M and
+ * M2 already clear their own pre-2000 rows; this clears the rest, by names only this harness writes:
+ * `N1-ORD-` orders and their messages, `ORD-<9 digits>-` SKUs, `orders-fixture-` slugs, `ORDL<9 digits>`
+ * codes, `orders-m2-` bag tokens, and `verify-orders-` / `orders-history-` addresses. Every foreign
+ * key here is `ON DELETE SET NULL`, so a row orphaned by a half-finished cleanup is matched by its own
+ * name rather than only through its parent.
+ */
+{
+  const idsOf = async (query: ReturnType<typeof sql>) =>
+    ((await payload.db.drizzle.execute(query)).rows as { id: number | string }[]).map((row) =>
+      Number(row.id),
+    )
+
+  const orders = await idsOf(sql`SELECT "id" FROM "orders" WHERE "order_number" LIKE 'N1-ORD-%'`)
+  const orderList =
+    orders.length > 0
+      ? sql.join(
+          orders.map((id) => sql`${id}`),
+          sql`, `,
+        )
+      : sql`NULL`
+
+  for (const [collection, query] of [
+    [
+      'email-messages',
+      sql`SELECT "id" FROM "email_messages"
+        WHERE "order_id" IN (${orderList}) OR "to" = 'orders@example.test'`,
+    ],
+    ['carts', sql`SELECT "id" FROM "carts" WHERE "token" LIKE 'orders-m2-%'`],
+    [
+      'order-items',
+      sql`SELECT "id" FROM "order_items"
+        WHERE "order_id" IN (${orderList}) OR "sku" ~ '^ORD-[0-9]{9}-'`,
+    ],
+    ['orders', sql`SELECT "id" FROM "orders" WHERE "id" IN (${orderList})`],
+    ['promotions', sql`SELECT "id" FROM "promotions" WHERE "code" ~ '^ORDL[0-9]{9}$'`],
+    ['product-variants', sql`SELECT "id" FROM "product_variants" WHERE "sku" ~ '^ORD-[0-9]{9}-'`],
+    ['products', sql`SELECT "id" FROM "products" WHERE "slug" LIKE 'orders-fixture-%'`],
+    [
+      'customers',
+      sql`SELECT "id" FROM "customers"
+        WHERE "email" LIKE 'verify-orders-%' OR "email" LIKE 'orders-history-%'`,
+    ],
+    ['users', sql`SELECT "id" FROM "users" WHERE "email" LIKE 'verify-orders-%'`],
+  ] as const) {
+    const ids = await idsOf(query)
+
+    if (ids.length === 0) continue
+
+    const { errors } = await payload.delete({
+      collection,
+      overrideAccess: true,
+      trash: true,
+      where: { id: { in: ids } },
+    })
+
+    if (errors.length > 0) {
+      throw new Error(
+        `verify-orders could not clear an aborted run's ${collection}: ${JSON.stringify(errors)}`,
+      )
+    }
+  }
+}
 
 /* -------------------------------------------------------------------------------------------------
  * The database half
@@ -1400,6 +1475,9 @@ try {
       } as never,
       overrideAccess: true,
     })
+
+    /* Tracked at once: a throw before the delete below would otherwise leak a live 10% code. */
+    created.push({ collection: 'promotions', id: promotion.id })
 
     await payload.update({
       collection: 'promotions',
