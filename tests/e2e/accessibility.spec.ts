@@ -52,7 +52,6 @@ import {
   addFirstAvailableVariantToBag,
   CART_COPY,
   DEMO_NOTICE_COPY,
-  DEMO_NOTICE_KEY,
   expect,
   NAME,
   openFirstProduct,
@@ -164,6 +163,14 @@ test.describe('§27.1e — automated accessibility over the six routes the plan 
        */
       await page.emulateMedia({ reducedMotion: 'reduce' })
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+
+      /*
+       * The open state first, then the absence of the closed one. Only a client effect ever writes
+       * either attribute (`editorial/reveal.tsx`), so a bare `toHaveCount(0)` on `closed` is equally
+       * true of a page whose observer has not run at all — it cannot make this scan deterministic,
+       * which is the whole reason the step exists (sweep 2 of the demonstration notice).
+       */
+      await expect(page.locator('[data-reveal="open"]').first()).toBeAttached()
       await expect(page.locator('[data-reveal="closed"]')).toHaveCount(0)
       await page.evaluate(() => window.scrollTo(0, 0))
     })
@@ -424,10 +431,14 @@ test.describe('DEV-86 — the demonstration notice a first visit sees', () => {
 
     /*
      * The notice only ever appears **after** hydration, and the footer `waitForShell` waits for is
-     * server-rendered — so this assertion has to wait for something only the client can do, or it
-     * would pass against the pre-hydration DOM and prove nothing.
+     * server-rendered — so the absence has to be asserted against a hydrated page, or it proves
+     * nothing. Sweep 2 caught the first attempt at this: it waited for the stored key, which the
+     * previous page had already written and which survives a same-origin navigation, so it resolved
+     * on its first poll. Opening the search overlay is a client-only round trip: it cannot succeed
+     * until this document's own React is running.
      */
-    await page.waitForFunction((key) => window.localStorage.getItem(key) !== null, DEMO_NOTICE_KEY)
+    await page.getByRole('button', { name: NAME.searchTrigger }).click()
+    await expect(page.getByRole('dialog', { name: NAME.searchDialog })).toBeVisible()
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
   })
 })

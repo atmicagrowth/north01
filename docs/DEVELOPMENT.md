@@ -186,9 +186,9 @@ src/
    ├─ access/            the access-control vocabulary — one rule, one name (Phase 7)
    ├─ blocks/            reusable editorial block definitions (Phase 6)
    ├─ collections/       one file per collection
-   ├─ email/             the log-only transport and the reset message (Phase 7)
+   ├─ email/             the reset message and the service adapter Payload sends through (Phase 19)
    ├─ fields/            reusable field builders — money, slug, seo, address, link, hotspot
-   ├─ globals/           site settings and navigation
+   ├─ globals/           site settings, navigation and the homepage
    ├─ hooks/             collection hooks — derived-price sync, cascades, ownership, shell revalidation
    ├─ storage/           the Cloudinary adapter — the only file importing the SDK (Phase 8)
    └─ migrations/        generated, committed, applied in order (Phase 5)
@@ -208,7 +208,7 @@ The prefix is a decision to publish.
 
 `env.core.ts` is the same module without that guard, and exists only because the `payload` CLI runs
 outside Next, where `server-only` cannot resolve. ESLint blocks importing it from anywhere but
-`payload.config.ts` and `instrumentation.ts`. See [`docs/ENVIRONMENT.md`](ENVIRONMENT.md).
+`env.server.ts`, `payload.config.ts`, `instrumentation.ts` and `scripts/`. See [`docs/ENVIRONMENT.md`](ENVIRONMENT.md).
 
 Two things must stay true, or the Payload admin panel starts inheriting Tailwind's Preflight reset:
 
@@ -407,8 +407,8 @@ not have. The command used against the already-running server:
 E2E_BASE_URL=http://localhost:<port> pnpm exec playwright test --workers=1
 ```
 
-The spec files' own docblocks still say the suite has never been executed. That is stale; this
-section is the current record.
+Each spec's docblock records the Phase 35 first run. `docs/TESTING.md` §5 is the current record — 44
+passed, 0 failed, 14 skipped as of 2026-09-15.
 
 **Never point it at production.** An E2E suite writes: it creates customers, adds to bags and opens
 Stripe Checkout sessions. Decision **D-10** exists to stop a writing harness reaching production, and

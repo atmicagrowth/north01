@@ -9,7 +9,7 @@ the gate as one sequence, a matrix of what each harness touches, and the invento
 
 | Layer | Where | Command | Needs |
 |---|---|---|---|
-| Unit | `tests/unit/*.test.ts` (20 files) | `pnpm test:unit` | nothing: Node environment, no DOM |
+| Unit | `tests/unit/*.test.ts` (34 files) | `pnpm test:unit` | nothing: Node environment, no DOM |
 | Component | `tests/components/*.test.tsx` (10 files) | `pnpm test:components` | nothing: jsdom, `tests/setup/components.ts` |
 | Both | — | `pnpm test:run` (CI), `pnpm test` (watch) | — |
 | Harnesses | `scripts/verify-*.ts` (23) | `pnpm verify:<name>` | most need the **development** database (§3) |
@@ -99,8 +99,11 @@ Related scripts:
 ## 4. Unit and component tests
 
 Unit tests cover pure rules: money, cart totals, merges and price changes, inventory, variants, size
-order, promotions, shipping, tax, order state, checkout confirmation, navigation routes, search
-mapping, the proxy, trusted origins, reply-to filtering and privacy redaction (`tests/unit/`).
+order, promotions, shipping, tax, order state, checkout confirmation and its session, the webhook's
+classification, navigation routes, search mapping, the proxy, trusted origins, reply-to filtering,
+privacy redaction, the legal and help pages, the retention sweep, scheduled indexing, search-index
+reporting, the order-email queue, a final email attempt, the customer revision marker, payment lock
+order, stale whole-row writes and the derived-stock refresh (`tests/unit/`).
 Component tests cover the interactive controls a customer uses: bag line, checkout form, filters,
 login form, quantity, search overlay, site footer, variant selector, wishlist button, and the
 demonstration notice (`tests/components/`).

@@ -1384,11 +1384,10 @@ on `campaigns`, no `DROP COLUMN` and no `DROP TABLE` in its `up`. Applied, rolle
 on a throwaway database, and the resulting schema **diffed identical** to the pushed development one
 across 867 columns, 519 indexes, 282 constraints and 68 enums.
 
-**Phases 11–35: complete.** This section is not extended past Phase 10. Each later phase is
-recorded in the notes (`NORTH01_Implementation_Notes_and_Deviations.md` §1.16–§1.40) and in its
-append log (Section 3), with the decisions above (**D-36**–**D-42**) and the deviation register
-(Section 2, through **DEV-84**). **Phase 36 (final review and documentation audit) is in progress.**
-What still needs the owner is in `TODO.md`.
+**Phases 11–36, and the owner follow-up after them: complete.** This section is not extended past
+Phase 10. Each later phase is recorded in the notes (`NORTH01_Implementation_Notes_and_Deviations.md`
+§1.16–§1.44) and in its append log (Section 3), with the decisions above (**D-36**–**D-42**) and the
+deviation register (Section 2, through **DEV-86**). What still needs the owner is in `TODO.md`.
 
 **Cleared before Phase 3** (2026-08-23, all three from Phase 2's own edge-case list):
 

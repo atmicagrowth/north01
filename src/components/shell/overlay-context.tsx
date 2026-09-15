@@ -161,7 +161,30 @@ export function ShellOverlayProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      trigger.current?.focus()
+      /*
+       * **The trigger may be gone by now** — sweep 2 of the demonstration notice, which found the
+       * same class of defect this handler exists to fix. `editorial/hotspot.tsx` registers its own
+       * **Add** button and then opens the bag, and that button lives in a non-modal Radix popover
+       * which dismisses itself the moment the drawer takes focus; `layout/mobile-nav.tsx`'s trigger is
+       * hidden above `lg` if the window is widened while the menu is open. `focus()` on a detached or
+       * unrendered element is a silent no-op, and focus falls to `<body>` — exactly the WCAG 2.4.3
+       * failure described above, reached by a different route.
+       *
+       * The test is the outcome, not a guess at why: ask for focus, then check whether it was taken.
+       * Neither a detached element nor a hidden one can hold it, and no visibility heuristic — which
+       * `offsetParent` is, and a wrong one for anything inside a fixed ancestor — has to be right.
+       * When nothing took it, the page does: `<main>` is focusable for the skip link, and
+       * `shell/demo-notice.tsx` hands focus there for the same reason.
+       */
+      const target = trigger.current
+
+      target?.focus()
+
+      if (target && document.activeElement === target) {
+        return
+      }
+
+      document.getElementById('main-content')?.focus()
     },
     [open],
   )

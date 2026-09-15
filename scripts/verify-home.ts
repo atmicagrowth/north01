@@ -1201,7 +1201,8 @@ try {
 
     check(
       'live: the longest homepage constraint is comfortably inside the limit',
-      Number(longest[0]?.len ?? 0) < 63,
+      /* No `?? 0`: an empty result would then pass as `0 < 63`, proving nothing (sweep 2). */
+      longest.length > 0 && Number(longest[0]?.len) < 63,
       `${longest[0]?.name} (${longest[0]?.len})`,
     )
   }

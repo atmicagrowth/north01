@@ -180,8 +180,8 @@ errors through `src/app/(frontend)/error.tsx` and `src/app/global-error.tsx`.
 | Enable Speed Insights in the Vercel dashboard | The component renders, but Vercel collects nothing until it is on |
 | Decide on source maps (`SENTRY_AUTH_TOKEN`, the `@sentry/cli` build permission, `sourcemaps` in `next.config.mjs`) | Without them production stack traces are minified |
 | Verify events against the real properties (§7) before trusting any number | Not yet done |
-| PostHog → Project settings → turn on **Discard client IP data** (not yet listed in TODO.md §6) | PostHog otherwise stores every visitor's IP; no client option can stop it. The privacy notice is worded to stay true either way |
-| GA4: keep **Google signals** off, do not link Google Ads, and review **Admin → Account settings → Data sharing** (not yet listed in TODO.md §6) | `allow_google_signals: false` covers the tag; account-level data sharing is outside what the tag can control |
+| PostHog → Project settings → turn on **Discard client IP data** (TODO.md §6) | PostHog otherwise stores every visitor's IP; no client option can stop it. The privacy notice is worded to stay true either way |
+| GA4: keep **Google signals** off, do not link Google Ads (both TODO.md §6), and review **Admin → Account settings → Data sharing**, which is not | `allow_google_signals: false` covers the tag; account-level data sharing is outside what the tag can control |
 | A consent approach (G-17) | Nothing currently gates analytics |
 
 `pnpm verify:analytics` runs 125 checks (notes §1.30.14; section J added in Phase 37).

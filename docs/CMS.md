@@ -20,8 +20,9 @@ sign in to the admin (**D-21**).
   creates users; an admin cannot delete themselves.
 - Access helpers (`src/payload/access/index.ts`): `anyone`, `nobody` (server writes only — admins
   included), `isStaff`, `isAdmin`, `publishedOnly` / `publishedOn(path)` (public sees `published`,
-  staff see all), `ownedByCustomer`, `isActiveCustomer`, `verifiedPublicWrite` (staff, or a request
-  that passed Turnstile), and field-level `isStaffField`, `isAdminField`, `nobodyField`.
+  staff see all), `ownedByCustomer`, `isActiveCustomer`, `isStaffOrActiveCustomer`,
+  `verifiedPublicWrite` (staff, or a request that passed Turnstile), and field-level `isStaffField`,
+  `isAdminField`, `nobodyField`.
 - Payload's internal `payload-locked-documents` and `payload-preferences` are staff-only
   (`access/internal-collections.ts`, audit R1-18).
 - GraphQL is not exposed (**DEV-04**); only the REST routes under `/api/`.

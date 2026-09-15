@@ -162,7 +162,7 @@ pnpm verify:search   # section N asserts primary/replica parity on four settings
 ```bash
 pnpm reindex         # rebuild settings + records. Atomic; safe at any time; idempotent.
 pnpm reindex:check   # report drift. Writes nothing. Exit 1 if the index disagrees with Postgres.
-pnpm verify:search   # 200 checks. Live section runs only when Algolia is configured.
+pnpm verify:search   # 213 checks. Live section runs only when Algolia is configured.
 ```
 
 **Order matters once:** a settings change needs `pnpm reindex`, not a restart.

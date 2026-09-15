@@ -17,7 +17,10 @@ import {
  *
  * Mounted once, in the storefront layout, so it covers whichever page a visit starts on. It closes
  * only through **Continue**: Escape and a click on the scrim are refused, because a warning that can
- * be dismissed without being read has not been given. Radix supplies the rest — focus moves to
+ * be dismissed without being read has not been given. That refusal is structural first — `open` is
+ * controlled and no `onOpenChange` is passed, so Radix's own dismiss path ends in a no-op — and the
+ * two handlers below are the belt to that pair of braces, for the day someone gives this dialog an
+ * `onOpenChange` (sweep 2, which found the regression test could not fail without them). Radix supplies the rest — focus moves to
  * Continue, focus is trapped, the page behind is `aria-hidden` and does not scroll.
  *
  * ### Why it appears after hydration, not in the server HTML

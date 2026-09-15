@@ -279,7 +279,7 @@ document; Phase 4 chose them, recorded as **DEV-26**.
 |---|---|---|---|
 | `DATABASE_PUSH_TARGET` | server | **Phase 4** — local development only | Derived from your own `DATABASE_URL`: `host[:port]/database`, credentials stripped |
 | `SITE_URL` | server | **Phase 7** | The deployment's canonical origin, no trailing slash |
-| `CRON_SECRET` | server | **Phase 32** — Production | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Vercel sends it to the scheduled email drain; unset, the drain refuses the cron (DEV-67) |
+| `CRON_SECRET` | server | **Phase 32** — Production | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Vercel sends it to both scheduled routes — the email drain and the daily retention sweep; unset, each refuses the cron (DEV-67) |
 
 `SITE_URL` earned a paragraph of its own in Phase 7, because it stopped being a value nothing reads.
 

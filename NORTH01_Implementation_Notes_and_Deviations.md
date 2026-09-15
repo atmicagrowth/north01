@@ -9863,9 +9863,21 @@ charged"* warns about a shop that does not take money yet, which errs in the saf
 they are the owner's words and both become true as those keys are added; `TODO.md` §13 says so in front
 of the owner, and says how to remove the notice if the shop stops being a demonstration.
 
+### 1.44.4 What was verified
+
+| Check | Result |
+|---|---|
+| `typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
+| Migrations | none — the flag is device storage, not a column |
+| `pnpm test:run` | **1,154** tests in 44 files at this commit (5 new, in `tests/components/demo-notice.test.tsx`; sweep 1 added a sixth) |
+| Refusing Escape and the scrim | asserted. Sweep 2 found the assertion could not fail — the refusal is structural, because `open` is controlled and no `onOpenChange` is passed — and the handlers are kept as the belt to that |
+| All 23 `verify:*` | pass, unchanged counts |
+| Playwright E2E | **44 passed, 0 failed, 14 skipped** — one new test: the notice opens on a first visit, axe finds no WCAG 2.1 A/AA violation while it is open, Escape is refused, Continue closes it, and the next page does not show it |
+| Browser, desktop 1440×900 and iPhone 13 | absent from the server HTML; opens after hydration; named by its heading; focus starts on Continue and stays inside; Escape and an outside click leave it open; Continue closes it, writes `1`, and restores scrolling; the next page load has no notice; no horizontal overflow; 0 page errors and no hydration warning |
+
 ### 1.44.5 Sweep 1
 
-An independent read of the change found seven defects, no high-severity one, and confirmed what did
+An independent read of the change found six defects, no high-severity one, and confirmed what did
 not need reporting: the store cannot mismatch on hydration, StrictMode leaves one `storage` listener,
 reduced motion is already global, the dialog surface is 17.10:1, and at 320px it reflows (WCAG 1.4.10).
 
@@ -9889,17 +9901,75 @@ reduced motion is already global, the dialog surface is 17.10:1, and at 320px it
 - **`app/global-not-found.tsx`** renders its own shell and had no notice, so a visit that began on an
   unmatched URL was unwarned for that one page. It mounts the notice too.
 
-### 1.44.4 What was verified
+
+### 1.44.6 Sweep 2
+
+Sweep 1 read the change; this one hunted its five defect classes across the whole repository. Two of
+sweep 1's own fixes had not landed, and two defects were found in code the change had not touched.
+
+**The class: focus that has nowhere to go.** `shell/overlay-context.tsx` exists because Radix returns
+focus to a trigger the shell's overlays do not have. It restores focus to the control that registered
+itself — and that control can be **gone** by then. `editorial/hotspot.tsx` registers its own *Add*
+button and opens the bag; the button is inside a non-modal Radix popover, which dismisses itself the
+moment the drawer takes focus. The mobile menu's trigger is hidden above `lg` if the window is widened
+while the menu is open. `focus()` on a detached or unrendered element is a silent no-op, so closing the
+bag after adding from a lookbook hotspot dropped focus on `<body>` — the same WCAG 2.4.3 failure the
+file was written to fix. The handler now asks for focus and then checks whether it was taken, falling
+back to `<main>`; a behaviour check rather than a visibility heuristic, because `offsetParent` is the
+wrong answer for anything inside a fixed ancestor. `tests/components/overlay-focus.test.tsx` covers
+both halves and fails without the fix.
+
+**The class: assertions that cannot fail.**
+
+- Sweep 1's own replacement waited for the stored key, which the previous page had already written and
+  which survives a same-origin navigation — so it resolved on the first poll and the absence was still
+  asserted against pre-hydration markup. It now opens the search overlay, which only a hydrated page
+  can do.
+- The notice's "only Continue closes it" checks pass whether or not the guards exist, because the
+  dialog is controlled with no `onOpenChange`: Radix's dismiss path ends in a no-op. The guards stay
+  as a defence against a future `onOpenChange`, the component says so, and the notes no longer claim a
+  regression proof that does not exist.
+- The homepage axe scan's `data-reveal="closed"` guard is written only by a client effect, so a count
+  of zero was equally true of a page whose observer had never run. It now asserts an opened section
+  first.
+- Two more of the same shape: an image-abort loop that never ran when the located box held no `<img>`,
+  and `verify:home`'s constraint-length check, whose `?? 0` made an empty result pass.
+
+**The class: documentation that no longer matches the repository.** Sweep 1 corrected one row of
+`docs/TESTING.md`'s table and half of one list; both siblings were still wrong, and eleven more claims
+had drifted. Corrected: the unit-test count (20 → **34**) and its list; `ARCHITECTURE.md`'s "Phase 36
+in progress" and its §1.16–§1.40 / DEV-84 ranges; `DEVELOPMENT.md`'s claim that the E2E docblocks are
+stale, its `email/` and `globals/` directory lines, and the two files it named as allowed to import
+`env.core.ts` (there are four); `DATABASE.md`'s migration snapshot, which names a file that does not
+exist; `SEARCH.md`'s 200 checks (**213**); `ANALYTICS.md`'s two "not yet listed in TODO.md" notes,
+which TODO.md does list; `CMS.md`'s access-helper list; `ENVIRONMENT.md`'s `CRON_SECRET`, which gates
+two crons and not one; `ci.yml`'s "nineteen" harnesses (twenty); and TODO.md's photograph range and
+Playwright count.
+
+**The class: runbook steps that leave the build red.** §13's removal instruction, rewritten in sweep 1,
+still told the owner to delete two blocks whose imports would then be unused — `noUnusedLocals` and
+`--max-warnings 0` both fail on that. It now says "with the import it leaves behind" for each, and
+names `scripts/seed/legal.ts` and `docs/SECURITY.md` §1 beside the admin edit.
+
+**The class: shell parity.** `app/global-not-found.tsx` renders its own document and read the session
+itself — `getCustomer` then `getCart`, without the `getShellSession` wrapper Phase 31 added after
+measuring every route answering a bare 500 during a database outage. An unmatched URL is exactly where
+a visitor lands in an incident, and the drawer, given no `unavailable`, would have called an unreadable
+bag empty. It now uses the shared read, and mounts the three things it was missing: the wishlist sync,
+analytics and Speed Insights — so a 404 is no longer the one page no analytics ever saw. Left as it is,
+and recorded rather than fixed: its metadata is a static constant where the layout's is CMS-driven, so
+renaming the shop leaves that tab behind.
+
+**What was verified** (local Postgres, re-seeded):
 
 | Check | Result |
 |---|---|
 | `typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
-| Migrations | none — the flag is device storage, not a column |
-| `pnpm test:run` | **1,154** tests in 44 files (5 new, in `tests/components/demo-notice.test.tsx`) |
-| Regression proof | removing the Escape and scrim guards fails the "only Continue closes it" test |
-| All 23 `verify:*` | pass, unchanged counts |
-| Playwright E2E | **44 passed, 0 failed, 14 skipped** — one new test: the notice opens on a first visit, axe finds no WCAG 2.1 A/AA violation while it is open, Escape is refused, Continue closes it, and the next page does not show it |
-| Browser, desktop 1440×900 and iPhone 13 | absent from the server HTML; opens after hydration; named by its heading; focus starts on Continue and stays inside; Escape and an outside click leave it open; Continue closes it, writes `1`, and restores scrolling; the next page load has no notice; no horizontal overflow; 0 page errors and no hydration warning |
+| `pnpm test:run` | **1,157** tests in 45 files (`tests/components/overlay-focus.test.tsx` is new) |
+| Regression proofs | the overlay fallback and the notice's close-focus each fail with their fix reverted |
+| All 23 `verify:*` | pass |
+| Playwright E2E | **44 passed, 0 failed, 14 skipped**. The gate's first run read 40 passed / 18 skipped: its `import:media` step produced no output that run, so the lookbook had no hotspots and the four shop-the-look tests skipped on their own documented condition. Re-running the import restored them and the suite; no code was involved |
+| Browser, desktop and phone | unchanged from §1.44.4 |
 
 # 2. Deviations
 
@@ -12153,5 +12223,6 @@ client-side only, so it can never be the reason a page fails to render.
 | Owner follow-up — sweep 1 | 2026-09-14 | Notes **§1.43.8**. No migration. A pattern sweep of the review's five defect classes across the codebase: 20 confirmed, 8 rejected. A sale now re-derives catalogue stock; sign-in merges defer while a guest checkout can still take money; customer writes lock the rows access allows and sign-in detects an overtaken read; the reset cooldown is one conditional UPDATE; twelve copy claims the code did not back were corrected. Every fix has a regression shown to fail when reverted. |
 | Owner follow-up — sweep 2 | 2026-09-15 | Notes **§1.43.9**. No migration. Five defect classes hunted: Payload's whole-row writes from a stale read (a variant save could restore sold stock, an order save could undo a payment or refund, a promotion save lose a use, a stock refresh republish a product, a bag action reopen a paid bag) — now row locks before Payload reads, plus an opened-with stock check; after-response work lost when the event-row write failed; scheduled products never indexed; a second pool connection and unbounded Stripe calls inside held locks, and a decrement-order deadlock; 18 untested security guards now tested; nine harness-debris fixes. Every fix has a regression shown to fail when reverted. |
 | Owner request — the demonstration notice | 2026-09-15 | Notes **§1.44**, **DEV-86**. No migration. A modal on a browser's first visit carrying the owner's warning that the site is a demonstration, closed only by Continue and remembered in `localStorage`. Not in the server HTML, never in `/admin`, and absent with scripting off. The privacy notice, `docs/SECURITY.md` §1 and `TODO.md` §12 name the new storage key; the E2E suite pre-sets it, and one new E2E test covers the notice itself. Two of the owner's sentences (*"all features work"*, *"you will be charged"*) are not true until the Stripe, Algolia and Resend keys exist — `TODO.md` §13. |
+| Owner request — the notice, sweeps 1 and 2 | 2026-09-15 | Notes **§1.44.5**, **§1.44.6**. No migration. Sweep 1: closing the notice dropped focus on `<body>` (WCAG 2.4.3), an E2E check could not fail, a test-only export shipped in `src/`, the 404 document had no notice, and a removal runbook would have left the build red. Sweep 2 hunted those classes repo-wide: the shell's shared focus restore fails the same way whenever a trigger is gone — reached from every lookbook hotspot — four more assertions that cannot fail, thirteen documentation claims that no longer matched the repository, and the 404 document reading the session without the outage wrapper and missing analytics. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

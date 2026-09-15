@@ -34,7 +34,7 @@ by the build, verification) is DEPLOYMENT.md §4, and §6 below is the migration
 ### The tables today
 
 **Ninety-three**, counted from the latest migration snapshot
-(`20260911_175019_phase_36_order_fulfilment_hold.json`). Nine belong to Payload's own machinery — `users`,
+(`20260912_064949_phase_37_legal_pages.json`). Nine belong to Payload's own machinery — `users`,
 `users_sessions`, `customers_sessions`, `payload_preferences`, `payload_preferences_rels`,
 `payload_locked_documents`, `payload_locked_documents_rels`, `payload_migrations`, `payload_kv` — and
 the rest are the data model: twenty-four collections (`src/payload/collections/`), **three** globals,

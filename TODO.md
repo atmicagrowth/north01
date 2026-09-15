@@ -15,7 +15,8 @@ pointed at it by mistake.
 ### What is still owed against it
 
 Nothing technical. Every `verify:*` harness now runs against this database at each phase, and the
-57 Playwright tests first ran in Phase 35 (43 passed, 0 failed, 14 skipped — `docs/TESTING.md`).
+Playwright suite first ran in Phase 35 (43 passed, 0 failed, 14 skipped; 44 passed as of 2026-09-15 —
+`docs/TESTING.md`).
 
 ### Rotate the role anyway
 
@@ -84,7 +85,7 @@ checkout. Both are yours to resolve in Stripe (refund, or back-order); neither c
 
 ## 5. Larger product photography — optional, and the most visible gap
 
-The sixteen supplied photographs are 224–467 px wide. They are used where that size is honest —
+The sixteen supplied photographs are 217–467 px wide (224–467 for the garment shots). They are used where that size is honest —
 category tiles, editorial surfaces — and the product galleries kept the generated fabric studies,
 because a product page renders an image at up to 1400 px and an upscaled 264 px photograph reads as a
 mistake.
@@ -335,7 +336,10 @@ Two things to know:
   you stop after the first: `<DemoNotice />` **and its import** in `src/app/(frontend)/layout.tsx` and
   in `src/app/global-not-found.tsx`, the `DEV-86` test block at the end of
   `tests/e2e/accessibility.spec.ts` with `tests/components/demo-notice.test.tsx`, and the
-  `storageState` block in `playwright.config.ts`. The sentence about it in the privacy notice (Site
-  Settings → Policies, *Cookies and device storage*) goes at the same time.
+  `storageState` block in `playwright.config.ts` — each **with the import it leaves behind**, or
+  `pnpm typecheck` fails on the unused one. The sentence about it in the privacy notice goes at the
+  same time, in two places: the production admin (Site Settings → Policies, *Cookies and device
+  storage*) and `scripts/seed/legal.ts`, which is where the text you paste comes from. The storage key
+  is also listed in `docs/SECURITY.md` §1.
 
 The words are yours: change them in `src/lib/demo-notice.ts`.

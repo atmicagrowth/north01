@@ -705,6 +705,11 @@ test.describe('§27.1d — the fifteen edge cases the plan enumerates', () => {
        * reports `naturalWidth === 0` for an image it could not decode, so a non-zero value here
        * would mean the picture rendered and everything below proved nothing.
        */
+      expect(
+        reserved.naturalWidths.length,
+        'the reserved box must contain an <img>, or the loop below proves nothing',
+      ).toBeGreaterThan(0)
+
       for (const naturalWidth of reserved.naturalWidths) {
         expect(naturalWidth, 'the image must genuinely have failed to load').toBe(0)
       }

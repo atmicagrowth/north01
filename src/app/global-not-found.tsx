@@ -1,5 +1,7 @@
 import type { Metadata } from 'next'
 
+import { Analytics } from '@/components/analytics/analytics'
+import { SpeedInsights } from '@/components/analytics/speed-insights'
 import { SiteFooter } from '@/components/layout/site-footer'
 import { SiteHeader } from '@/components/layout/site-header'
 import { NewsletterSignup } from '@/components/newsletter/newsletter-signup'
@@ -7,14 +9,14 @@ import { CartDrawer } from '@/components/shell/cart-drawer'
 import { DemoNotice } from '@/components/shell/demo-notice'
 import { ShellOverlayProvider } from '@/components/shell/overlay-context'
 import { SearchOverlay } from '@/components/shell/search-overlay'
+import { WishlistSync } from '@/components/wishlist/wishlist-sync'
 import { PageContainer } from '@/components/layout/page-container'
 import { PageTitle } from '@/components/layout/page-title'
 import { Section } from '@/components/layout/section'
 import { Button } from '@/components/ui/button'
 import { Link } from '@/components/ui/link'
-import { getCustomer } from '@/lib/auth/session'
-import { getCart } from '@/lib/cart/cart'
 import { getShell } from '@/lib/navigation/shell'
+import { getShellSession } from '@/lib/navigation/shell-session'
 
 import { fontVariables } from './(frontend)/fonts'
 import './(frontend)/globals.css'
@@ -60,9 +62,14 @@ export const metadata: Metadata = {
 export default async function GlobalNotFound() {
   const { navigation } = await getShell()
 
-  /* The 404 renders its own <html> outside the route group, so it reads the bag for itself. */
-  const customer = await getCustomer()
-  const cart = await getCart(customer?.id ?? null)
+  /*
+   * The same read the layout does, through the same helper — sweep 2. Calling `getCustomer` and
+   * `getCart` directly here meant a database failure threw inside this document, where no boundary
+   * can catch it, while every real route degraded to a signed-out shell; and the drawer, given no
+   * `unavailable`, would have called an unreadable bag empty. An unmatched URL is exactly where a
+   * visitor lands during an outage (`lib/navigation/shell-session.ts`).
+   */
+  const { cart, customer, failed: bagUnavailable } = await getShellSession()
 
   return (
     <html lang="en" className={fontVariables}>
@@ -94,10 +101,19 @@ export default async function GlobalNotFound() {
           <SiteFooter newsletter={<NewsletterSignup />} />
 
           <SearchOverlay />
-          <CartDrawer cart={cart} items={navigation.primary} />
+          <CartDrawer cart={cart} items={navigation.primary} unavailable={bagUnavailable} />
 
           {/* DEV-86: this document renders its own shell, so it needs the notice too. */}
           <DemoNotice />
+
+          {/*
+            Sweep 2: the layout mounts these three and this document did not, so a 404 was the one page
+            no analytics ever saw — the page view a shop most wants — and a sign-in that landed here
+            did not merge the device's wishlist until the next real page.
+          */}
+          <WishlistSync signedIn={customer !== null} />
+          <Analytics />
+          <SpeedInsights />
         </ShellOverlayProvider>
       </body>
     </html>
