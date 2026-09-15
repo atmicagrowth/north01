@@ -228,16 +228,16 @@ or California generally needs consent before measurement cookies are set at all.
 
 ## 10. How long personal data is kept — five decisions
 
-[`docs/SECURITY.md` §4](docs/SECURITY.md) lists them with the reasoning. In short: how long an
-**unpaid** order keeps its email and address; how long the email outbox is kept; what an erasure
+[`docs/SECURITY.md` §4](docs/SECURITY.md) lists them with the reasoning. In short: ~~how long an
+**unpaid** order keeps its email and address~~ — **DONE**: 30 days after its last change, decided
+2026-09-11 and built (Notes §1.43.3); how long the email outbox is kept; what an erasure
 request does to orders; a self-service newsletter unsubscribe before the first marketing email; and
 whether editors, not only admins, should read the subscriber list and the outbox. Each is a small
 change once the answer exists.
 
-A sixth, about staff rather than customers (Phase 36, audit R1-17): **editors can update an order's
-fulfilment and tracking, and create and edit discount codes.** Credentials and order ownership are
-already admin-only. If only admins should touch orders or promotions, say so and it is a one-line
-access change each; if editors should, it is recorded as intended.
+~~A sixth, about staff rather than customers (Phase 36, audit R1-17): **editors can update an order's
+fulfilment and tracking, and create and edit discount codes.**~~ — **DONE**: editors should, recorded
+as intended in **DEV-85**. Credentials and order ownership stay admin-only.
 
 ## 11. Production content — Phase 35
 
