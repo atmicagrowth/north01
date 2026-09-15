@@ -267,8 +267,8 @@ Enter it by hand, in **Admin → Settings → Site Settings**, **Admin → FAQs*
   rather than started online — email admin@micagrowth.com and we will send you what to do.*
 - **Site Settings → Policies → Privacy Policy** and **→ Terms Of Sale** → set `CRON_SECRET` first
   (§8), then paste the paragraphs of `PRIVACY_PARAGRAPHS` and `TERMS_PARAGRAPHS` from
-  `scripts/seed/legal.ts`, one paragraph per string, in order (both dated *Last updated 13 September
-  2026*). The terms' *Delivery* paragraph builds its country list in code, so paste it as: *Delivery.
+  `scripts/seed/legal.ts`, one paragraph per string, in order (the privacy notice dated *Last updated 15 September
+  2026*, the terms *13 September 2026*). The terms' *Delivery* paragraph builds its country list in code, so paste it as: *Delivery.
   We deliver to the United States, Canada, the United Kingdom, Ireland, France, Germany, the
   Netherlands and Australia, and checkout will not accept an address anywhere else. Standard and
   Express delivery are available to all of them; Overnight is available in the United States only.
@@ -316,3 +316,23 @@ Enter it by hand, in **Admin → Settings → Site Settings**, **Admin → FAQs*
   listed in its details. Between sizes, take the larger.* It said every top is a regular fit.
 - **Size guides → Trousers and shorts → Fit notes** → *Waist sizes run true. Between sizes, take the
   larger.* It said the waists are measured flat, and they are the size on the label in centimetres.
+
+## 13. The demonstration notice — two sentences to make true, and when to remove it
+
+Added 2026-09-15 at your request (**DEV-86**). Every visitor's browser sees it once, on the first
+page it loads, and **Continue** is the only way past it:
+
+> This website is a demonstration. Please do not submit any real information. All features work, and
+> if you enter your card information at checkout, you will be charged.
+
+Two things to know:
+
+- **Neither sentence about charging is true yet.** Production has no Stripe keys (§4), so checkout
+  tells the customer payments are unavailable; search is off (§8) and no email is sent (§2). The
+  notice warns about the shop you will have once those keys exist, which is the safe direction to be
+  wrong in. It needs no change when you add them.
+- **Removing it is one line.** Delete `<DemoNotice />` from `src/app/(frontend)/layout.tsx` when the
+  shop stops being a demonstration. The sentence about it in the privacy notice (Site Settings →
+  Policies, *Cookies and device storage*) goes at the same time.
+
+The words are yours: change them in `src/lib/demo-notice.ts`.

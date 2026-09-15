@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+import { DEMO_NOTICE_KEY, DEMO_NOTICE_SEEN } from './src/lib/demo-notice'
+
 /**
  * **Plan §27.1c–§27.1e — Playwright.**
  *
@@ -74,6 +76,21 @@ export default defineConfig({
 
   use: {
     baseURL,
+    /*
+     * Every context starts as a browser that has already pressed Continue on the demonstration notice
+     * (DEV-86). The notice is a modal that covers the page on a first visit, so without this every
+     * flow would fail at its first click for a reason that is not the flow. The notice itself is
+     * tested from an empty storage state in `accessibility.spec.ts`.
+     */
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          localStorage: [{ name: DEMO_NOTICE_KEY, value: DEMO_NOTICE_SEEN }],
+          origin: new URL(baseURL).origin,
+        },
+      ],
+    },
     /* On the first retry only — a trace for every passing test is gigabytes of nothing. */
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',

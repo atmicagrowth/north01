@@ -10,7 +10,7 @@ the gate as one sequence, a matrix of what each harness touches, and the invento
 | Layer | Where | Command | Needs |
 |---|---|---|---|
 | Unit | `tests/unit/*.test.ts` (20 files) | `pnpm test:unit` | nothing: Node environment, no DOM |
-| Component | `tests/components/*.test.tsx` (8 files) | `pnpm test:components` | nothing: jsdom, `tests/setup/components.ts` |
+| Component | `tests/components/*.test.tsx` (9 files) | `pnpm test:components` | nothing: jsdom, `tests/setup/components.ts` |
 | Both | — | `pnpm test:run` (CI), `pnpm test` (watch) | — |
 | Harnesses | `scripts/verify-*.ts` (23) | `pnpm verify:<name>` | most need the **development** database (§3) |
 | Secret scan | `scripts/scan-secrets.ts` | `pnpm scan:secrets` | git |
@@ -102,14 +102,18 @@ Unit tests cover pure rules: money, cart totals, merges and price changes, inven
 order, promotions, shipping, tax, order state, checkout confirmation, navigation routes, search
 mapping, the proxy, trusted origins, reply-to filtering and privacy redaction (`tests/unit/`).
 Component tests cover the interactive controls a customer uses: bag line, checkout form, filters,
-login form, quantity, search overlay, variant selector, wishlist button (`tests/components/`).
+login form, quantity, search overlay, variant selector, wishlist button, and the demonstration notice
+(`tests/components/`).
 
 ## 5. End-to-end — Playwright
 
 `playwright.config.ts`: Chromium desktop for every spec except `mobile-navigation.spec.ts`, which runs
 on a Pixel 7 profile. `baseURL` is `E2E_BASE_URL` (default `http://localhost:3000`). A server is
 started only when `E2E_START_SERVER=1` (`pnpm build && pnpm start`); otherwise the suite expects one
-already running. Retries 0 locally, 1 in CI. `tests/e2e/fixtures.ts` holds shared routes and
+already running. Every context starts with the demonstration notice already acknowledged
+(`storageState`, DEV-86), because a modal over the first page would fail each flow at its first click;
+`accessibility.spec.ts` tests the notice itself from an empty storage state. Retries 0 locally, 1 in
+CI. `tests/e2e/fixtures.ts` holds shared routes and
 sequences (register, sign in, add the first available variant to the bag) and assumes Turnstile is
 unconfigured or on Cloudflare's always-pass test keys.
 
@@ -133,7 +137,8 @@ fail for reasons that belong to the harness. Confirm what the port serves before
 **First run, Phase 35** (notes §1.40.7): 38 passed, 5 failed, 14 skipped. One failure was a shop defect
 (the pending-review sentence disappeared), one a configuration defect (`next start` on a laptop
 resolved as production, audit R1-19), three were the suite's own. After the fixes: **43 passed,
-0 failed, 14 skipped.** The specs' docblocks record the same first run.
+0 failed, 14 skipped.** The specs' docblocks record the same first run. The demonstration notice's own
+test (DEV-86) took it to **44 passed** on 2026-09-15.
 
 ### The skips
 

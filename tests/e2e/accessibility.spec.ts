@@ -51,6 +51,7 @@ import type { Page } from '@playwright/test'
 import {
   addFirstAvailableVariantToBag,
   CART_COPY,
+  DEMO_NOTICE_COPY,
   expect,
   NAME,
   openFirstProduct,
@@ -390,3 +391,32 @@ test.describe('§27.1e — automated accessibility over the six routes the plan 
  * including the translucent one the wishlist button and the badge share over a photograph, where the
  * ground is a garment rather than a token and no contrast rule can be computed at all.
  */
+
+test.describe('DEV-86 — the demonstration notice a first visit sees', () => {
+  /* An empty storage state: this browser has never pressed Continue. */
+  test.use({ storageState: { cookies: [], origins: [] } })
+
+  test('covers the first page with the owner’s words, has no WCAG 2.1 A or AA violations while open, and stays closed after Continue', async ({
+    page,
+  }) => {
+    await page.goto(ROUTE.home)
+
+    const notice = page.getByRole('alertdialog', { name: DEMO_NOTICE_COPY.title })
+    await expect(notice).toBeVisible()
+    for (const sentence of DEMO_NOTICE_COPY.body) {
+      await expect(notice).toContainText(sentence)
+    }
+
+    await expectNoAxeViolations(page, `${ROUTE.home} with the demonstration notice open`)
+
+    await page.keyboard.press('Escape')
+    await expect(notice).toBeVisible()
+
+    await notice.getByRole('button', { name: DEMO_NOTICE_COPY.continue }).click()
+    await expect(notice).toBeHidden()
+
+    await page.goto(ROUTE.shop)
+    await waitForShell(page)
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  })
+})

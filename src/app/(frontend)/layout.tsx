@@ -7,6 +7,7 @@ import { SiteFooter } from '@/components/layout/site-footer'
 import { SiteHeader } from '@/components/layout/site-header'
 import { NewsletterSignup } from '@/components/newsletter/newsletter-signup'
 import { CartDrawer } from '@/components/shell/cart-drawer'
+import { DemoNotice } from '@/components/shell/demo-notice'
 import { WishlistSync } from '@/components/wishlist/wishlist-sync'
 import { ShellOverlayProvider } from '@/components/shell/overlay-context'
 import { SearchOverlay } from '@/components/shell/search-overlay'
@@ -103,6 +104,12 @@ export default async function FrontendLayout({ children }: { children: ReactNode
 
           <SearchOverlay />
           <CartDrawer cart={cart} items={navigation.primary} unavailable={bagUnavailable} />
+
+          {/*
+            The owner's demonstration warning (DEV-86): a modal on a browser's first visit, closed only
+            by Continue. Here, beside the other overlays, so it covers whichever page a visit starts on.
+          */}
+          <DemoNotice />
 
           {/*
             §20.1a's *"on login, merge into customer wishlist"*. Renders nothing and does nothing

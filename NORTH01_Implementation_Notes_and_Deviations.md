@@ -9813,6 +9813,64 @@ product's cached stock racing, which can leave the display figure one sale high 
 | Browser check | unchanged from §1.43.8; the sweep answers 401 without the secret and `{carts, orders, scheduledDrops}` with it |
 | `scan:secrets` | clean, 504 tracked files |
 
+## 1.44 Owner request — a demonstration notice on first visit
+
+On 2026-09-15 the owner asked for *"a big warning popup in the beginning"*, with their own words and
+a Continue button underneath. The site is a public demonstration of a working shop, and a visitor who
+does not know that could give it a real address, or a real card. Recorded as **DEV-86**.
+
+### 1.44.1 What it is
+
+A modal on a browser's first visit to any storefront page. The owner's three sentences, unedited: the
+first is the dialog's heading and its accessible name, the other two are its description, and
+**Continue** is a full-width button under them.
+
+- **Continue is the only way out.** Escape and a click on the scrim are refused, and there is no close
+  icon: a warning that can be dismissed without being read has not been given. Everything else is
+  Radix's dialog, which the shop already uses — `role="alertdialog"`, focus moved to Continue and
+  trapped, the page behind `aria-hidden` and not scrolling.
+- **It is remembered on the device**, in `localStorage` under `north01:demo-notice`, beside the three
+  keys the shop already keeps there. Pressing Continue in one tab closes it in another.
+- **It is not in the server's HTML.** Whether Continue has been pressed is a device fact the server
+  cannot read without a cookie, and reading a cookie in the layout would make every page's HTML depend
+  on it. So the server snapshot is *"already seen"*, the client snapshot reads storage, and the dialog
+  opens once the page has hydrated. It is a fixed overlay, so nothing on the page moves when it does.
+- **With scripting off it never appears.** That is the right failure: a dialog that cannot be closed
+  would be a shop nobody can use.
+- **`/admin` never shows it.** The admin is a sibling route group with its own root layout (D-08).
+- **If storage throws** — private browsing, blocked site data — Continue closes it for the rest of that
+  page's life and it returns on the next full load. Shown too often rather than not at all.
+
+### 1.44.2 What else had to change
+
+- **The privacy notice**, which lists device storage key by key, now names this one, and its *Last
+  updated* line moves to 15 September 2026 (the terms are unchanged). `docs/SECURITY.md` §1 has the
+  same row; `TODO.md` §12 carries the new date for the text the owner pastes into production.
+- **The E2E suite**: every context now starts with the key already set (`playwright.config.ts`), or a
+  modal would cover the page before each flow's first click. The notice itself is tested from an empty
+  storage state.
+
+### 1.44.3 Two sentences the code does not back today
+
+*"All features work"* and *"you will be charged"* are the owner's words and are kept verbatim, but
+production has no Stripe, Algolia or Resend keys: checkout says that payments are unavailable
+(**DEV-62**), search says the same, and no email is sent. Nobody can be charged until `TODO.md` §4 is
+done. The notice is a warning, so the safe direction is the one it errs in — it over-warns rather than
+under-warns — and the sentences become true as those keys are added. `TODO.md` §13 records that, and
+that the notice should be removed if the shop ever stops being a demonstration.
+
+### 1.44.4 What was verified
+
+| Check | Result |
+|---|---|
+| `typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
+| Migrations | none — the flag is device storage, not a column |
+| `pnpm test:run` | **1,154** tests in 44 files (5 new, in `tests/components/demo-notice.test.tsx`) |
+| Regression proof | removing the Escape and scrim guards fails the "only Continue closes it" test |
+| All 23 `verify:*` | pass, unchanged counts |
+| Playwright E2E | **44 passed, 0 failed, 14 skipped** — one new test: the notice opens on a first visit, axe finds no WCAG 2.1 A/AA violation while it is open, Escape is refused, Continue closes it, and the next page does not show it |
+| Browser, desktop 1440×900 and iPhone 13 | absent from the server HTML; opens after hydration; named by its heading; focus starts on Continue and stays inside; Escape and an outside click leave it open; Continue closes it, writes `1`, and restores scrolling; the next page load has no notice; no horizontal overflow; 0 page errors and no hydration warning |
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -11979,6 +12037,24 @@ either. The role help text in `Users.ts` was corrected to say so.
 *Affects Phases 7, 18, 34 and 36.*
 
 
+### DEV-86 — A demonstration notice on first visit
+
+**The corpus says** nothing about a site-wide modal. Every overlay in the visual guide and in
+structure §3 is one the customer opens — the bag drawer, search, a size guide — and §0.1.17's rule is
+that the shop must not put anything in front of a customer that does not do what it appears to do.
+
+**We do:** show a modal on a browser's first visit to the storefront, carrying the owner's warning
+that the site is a demonstration, closed only by **Continue** and then remembered on the device.
+
+**Why:** the owner asked for it on 2026-09-15, in those words. The deployment is a public
+demonstration of a shop that takes real card details once Stripe keys exist, and a visitor has no
+other way to know. It is honest rather than decorative, which is the test §0.1.17 sets; it is refused
+Escape and a scrim click because an acknowledgement nobody made is not an acknowledgement; and it is
+client-side only, so it can never be the reason a page fails to render.
+
+*Affects Phases 9 (the shell), 27 (the E2E suite) and the owner follow-up's privacy notice (§1.43).*
+
+
 # 3. Append log
 
 | Phase | Date | Added |
@@ -12046,5 +12122,6 @@ either. The role help text in `Users.ts` was corrected to say so.
 | Owner follow-up — contact address, legal pages, 30-day retention | 2026-09-13 | Notes **§1.43**, **DEV-85**. One migration (`phase_37_legal_pages`). Contact `admin@micagrowth.com`; privacy notice and terms (an unreviewed draft, shown only once published); unpaid orders deleted after 30 days of inactivity, never while held; analytics privacy hardening. Verified on a throwaway local Postgres because the Neon dev branch rejects its password. |
 | Owner follow-up — sweep 1 | 2026-09-14 | Notes **§1.43.8**. No migration. A pattern sweep of the review's five defect classes across the codebase: 20 confirmed, 8 rejected. A sale now re-derives catalogue stock; sign-in merges defer while a guest checkout can still take money; customer writes lock the rows access allows and sign-in detects an overtaken read; the reset cooldown is one conditional UPDATE; twelve copy claims the code did not back were corrected. Every fix has a regression shown to fail when reverted. |
 | Owner follow-up — sweep 2 | 2026-09-15 | Notes **§1.43.9**. No migration. Five defect classes hunted: Payload's whole-row writes from a stale read (a variant save could restore sold stock, an order save could undo a payment or refund, a promotion save lose a use, a stock refresh republish a product, a bag action reopen a paid bag) — now row locks before Payload reads, plus an opened-with stock check; after-response work lost when the event-row write failed; scheduled products never indexed; a second pool connection and unbounded Stripe calls inside held locks, and a decrement-order deadlock; 18 untested security guards now tested; nine harness-debris fixes. Every fix has a regression shown to fail when reverted. |
+| Owner request — the demonstration notice | 2026-09-15 | Notes **§1.44**, **DEV-86**. No migration. A modal on a browser's first visit carrying the owner's warning that the site is a demonstration, closed only by Continue and remembered in `localStorage`. Not in the server HTML, never in `/admin`, and absent with scripting off. The privacy notice, `docs/SECURITY.md` §1 and `TODO.md` §12 name the new storage key; the E2E suite pre-sets it, and one new E2E test covers the notice itself. Two of the owner's sentences (*"all features work"*, *"you will be charged"*) are not true until the Stripe, Algolia and Resend keys exist — `TODO.md` §13. |
 
 > **Append this table, and the sections above it, at the end of every phase.**
