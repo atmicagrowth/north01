@@ -1134,7 +1134,7 @@ try {
   await payload.updateGlobal({
     slug: 'navigation',
     data: {
-      // Six primary items — DEV-07, C-08. The array caps at six, so this is the whole navigation.
+      // Five primary items — DEV-07, C-08. The array caps at six, so this is the whole navigation.
       primary: [
         { label: 'New', kind: 'url', href: '/shop?sort=newest' },
         {

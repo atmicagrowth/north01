@@ -517,10 +517,14 @@ if (process.argv.includes('--preview')) {
     writeFileSync(join(dir, `${name}.png`), bytes)
   }
 
-  process.stdout.write(
-    `${samples.map(([n, b]) => `${n}.png  ${(b.length / 1024).toFixed(0)} KB`).join('\n')}\n\n` +
-      `Wrote ${samples.length} preview(s) to ${dir}. Nothing was uploaded and no document changed.\n`,
-  )
+  /* Awaited, then exit: `process.exit` does not drain a pending write to a pipe or a file. */
+  await new Promise<void>((resolve) => {
+    process.stdout.write(
+      `${samples.map(([n, b]) => `${n}.png  ${(b.length / 1024).toFixed(0)} KB`).join('\n')}\n\n` +
+        `Wrote ${samples.length} preview(s) to ${dir}. Nothing was uploaded and no document changed.\n`,
+      () => resolve(),
+    )
+  })
 
   process.exit(0)
 }

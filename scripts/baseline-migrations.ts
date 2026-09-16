@@ -23,7 +23,7 @@
  *
  * ```
  * pnpm migrate:status                       # see which are recorded as run
- * pnpm payload run scripts/baseline-migrations.ts  *   20260827_022341_initial  *   20260827_044610_remove_schema_probes  *   20260827_051943_phase_6_data_model
+ * pnpm payload run scripts/baseline-migrations.ts 20260827_022341_initial 20260827_044610_remove_schema_probes 20260827_051943_phase_6_data_model
  * pnpm migrate:status                       # everything the database already has: "Yes"
  * pnpm migrate                              # applies only what is genuinely pending
  * ```
