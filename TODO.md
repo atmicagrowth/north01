@@ -393,5 +393,7 @@ them:
 5. **The three dashboard settings code cannot make** (§6): GA4's "page changes based on browser
    history events" off, PostHog's "Discard client IP data" on, and Speed Insights enabled.
 6. **Larger photography** (§5). The supplied images are 217–467 px wide, so every full-width
-   placement is visibly soft. `docs/PHOTOGRAPHY_CANDIDATES.md` is a licensed shortlist to choose
-   from; `scripts/import-brand-media.ts` holds the placement map that says which image goes where.
+   placement is visibly soft. Two licensed shortlists to choose from —
+   `docs/PHOTOGRAPHY_CANDIDATES.md` (100, monochrome and neutral) and
+   `docs/PHOTOGRAPHY_CANDIDATES_COLOUR.md` (100, the colour accents) — and
+   `scripts/import-brand-media.ts` holds the placement map that says which image goes where.

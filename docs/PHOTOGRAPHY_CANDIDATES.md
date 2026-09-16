@@ -9,6 +9,11 @@ This is a shortlist to close that gap without a photoshoot. Every image below is
 or CC BY**, at least 1,920 px wide (median **4,460 px**), and was chosen by eye against
 `NORTH01_Visual_Guide_OnlineOnly.md`.
 
+**This list is the monochrome half.** Its companion,
+[`PHOTOGRAPHY_CANDIDATES_COLOUR.md`](PHOTOGRAPHY_CANDIDATES_COLOUR.md), is a second hundred chosen for
+the opposite reason — indigo, oxblood, ochre, rust and neon on black, for the surfaces meant to carry
+the colour on a page.
+
 ## How these were chosen
 
 1. **Searched** the Openverse index (Wikimedia, StockSnap, rawpixel, Museums Victoria) across 110
