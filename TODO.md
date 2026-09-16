@@ -369,3 +369,29 @@ Two things to know:
   is also listed in `docs/SECURITY.md` §1.
 
 The words are yours: change them in `src/lib/demo-notice.ts`.
+
+## 14. After the first payment — low priority
+
+Added 2026-09-15, once Stripe's webhook secret went in and the shop could take money. None of these
+blocks the site working; each is worth doing before you push traffic at it. In the order I would do
+them:
+
+1. **Take one order yourself, end to end.** No payment has ever run through this deployment. Add to
+   bag, check out, pay (test card `4242 4242 4242 4242` in test mode; the cheapest real item in live
+   mode), then confirm in the admin that the order is **paid**, its stock came off the variant, and
+   the confirmation email was delivered — and in Stripe that the payment and a **Tax transaction**
+   are there. Ship it and mark it delivered so those two emails go out, then refund it and check the
+   refund email. Reverse the tax transaction by hand afterwards (§4).
+2. **Stripe Tax registrations** (§4). Without a registration for a jurisdiction, every calculation
+   returns **zero tax** — checkout works and collects nothing, which looks like success. Check one
+   order against a registered address.
+3. **Prove email leaves the shop**, not just the queue (§2). Send yourself a password reset and check
+   it arrives and is not in spam — SPF and DKIM on the sending domain.
+4. **Watch the two crons run** — Vercel → Cron Jobs. They have never run with a secret set. The
+   retention sweep answers `{carts, orders, scheduledDrops}`, and each half now reports `errors` when
+   a delete was refused (§8, `docs/DEPLOYMENT.md` §7).
+5. **The three dashboard settings code cannot make** (§6): GA4's "page changes based on browser
+   history events" off, PostHog's "Discard client IP data" on, and Speed Insights enabled.
+6. **Larger photography** (§5). The supplied images are 217–467 px wide, so every full-width
+   placement is visibly soft. `docs/PHOTOGRAPHY_CANDIDATES.md` is a licensed shortlist to choose
+   from; `scripts/import-brand-media.ts` holds the placement map that says which image goes where.
