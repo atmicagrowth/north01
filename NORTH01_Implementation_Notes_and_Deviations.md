@@ -10043,6 +10043,58 @@ shell variable really does beat `.env` under `payload run`.
 | `pnpm seed` | unchanged behaviour after the copy moved to `scripts/seed/support.ts` — the gate re-seeds before every harness |
 | `pnpm test:run`, all 23 `verify:*`, E2E | pass |
 
+
+### 1.45.2 Sweep 2
+
+Sweep 1 read the publisher; this one hunted its four classes across the repository. The class is rare
+here — the analytics taxonomy, the email templates, the collections and globals registry, the route
+map and the three product-spec modules are each single-source or pinned by a harness — but it found
+five more instances, and two of sweep 1's own corrections that had not reached the documents an
+operator actually follows.
+
+- **The publisher's two index entries still said six FAQs, from two of its three modules.** Sweep 1
+  fixed the script, `TODO.md` §12 and §1.45.1, and left `docs/DEVELOPMENT.md`'s command table and this
+  document's append-log row saying the opposite. Both now say fourteen.
+- **`TODO.md` §12 still told the owner to wait five minutes** for pages that are immediate, and said
+  nothing about the sitemap's hour — the claim sweep 1 had corrected everywhere except the one
+  document written for the person running the command.
+- **The retention sweep could not tell "nothing to delete" from "every delete was refused".**
+  `sweepExpiredCarts` and `sweepUnpaidOrders` counted the rows Payload refused, logged them, sent them
+  to Sentry — and then dropped the count, so the cron's response was `{ deleted: 0, failed: false,
+  more: false }` either way, which is the whole of what an operator sees. `SweepOutcome` now carries
+  `errors`, and a refused row makes the step `failed` and `more`, the same as a throw. A unit test
+  covers it and fails without the change.
+- **`/help/faq` is built from a second copy of the topic list.** A seventh topic added to `Faqs.ts`
+  would have dropped every answer filed under it from the page — silently, which `Faqs.ts` already
+  records finding twice. The copy is now `Record<NonNullable<Faq['topic']>, string>`, so the next one
+  fails `pnpm typecheck` instead.
+- **The seeded mega-menu listed four of the five Edits the seed publishes.** `cold` is written by
+  `seed/editorial.ts` and the column mapped `seed.ts`'s four, so it was live at `/edit` and in the
+  sitemap and absent from the menu. Both are now spread into the column, from one exported constant.
+- **`pnpm import:media` asserted two lookbook placements it might not have made.** The chapters are
+  matched by title — an array block has no slug, so there is no better key — and a miss returned the
+  chapter unchanged while the report claimed both. It now counts what it composed and prints a line
+  for what it could not find.
+- **Two scripts printed their verdict into an unawaited write and then `process.exit`** —
+  `smoke.mjs`, the post-deployment check most likely to be redirected to a file, and
+  `generate-media --preview`. `verify-home.ts` measured that failure and every other operator script
+  obeys the rule it produced; these two did not.
+
+**Accepted, recorded rather than changed:** `generate:media --clean` finds its own uploads by an
+editor-editable caption, so an edited caption hides an orphan from the cleanup. The script is
+documented as never to be run against a shared cloud (`TODO.md` §3), which is the stronger guard.
+
+**What was verified** (local Postgres, re-seeded):
+
+| Check | Result |
+|---|---|
+| `typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
+| `pnpm test:run` | **1,158** tests in 45 files |
+| Regression proof | the refused-delete check fails with `failed: errors > 0` reverted |
+| All 23 `verify:*` | pass |
+| Playwright E2E | 44 passed, 0 failed, 14 skipped |
+| `pnpm smoke` against production | 12 passed, 0 warnings, 0 failed — including redirected to a file, which is the case the awaited write is for |
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -12296,6 +12348,7 @@ client-side only, so it can never be the reason a page fails to render.
 | Owner follow-up — sweep 2 | 2026-09-15 | Notes **§1.43.9**. No migration. Five defect classes hunted: Payload's whole-row writes from a stale read (a variant save could restore sold stock, an order save could undo a payment or refund, a promotion save lose a use, a stock refresh republish a product, a bag action reopen a paid bag) — now row locks before Payload reads, plus an opened-with stock check; after-response work lost when the event-row write failed; scheduled products never indexed; a second pool connection and unbounded Stripe calls inside held locks, and a decrement-order deadlock; 18 untested security guards now tested; nine harness-debris fixes. Every fix has a regression shown to fail when reverted. |
 | Owner request — the demonstration notice | 2026-09-15 | Notes **§1.44**, **DEV-86**. No migration. A modal on a browser's first visit carrying the owner's warning that the site is a demonstration, closed only by Continue and remembered in `localStorage`. Not in the server HTML, never in `/admin`, and absent with scripting off. The privacy notice, `docs/SECURITY.md` §1 and `TODO.md` §12 name the new storage key; the E2E suite pre-sets it, and one new E2E test covers the notice itself. Two of the owner's sentences (*"all features work"*, *"you will be charged"*) are not true until the Stripe, Algolia and Resend keys exist — `TODO.md` §13. |
 | Owner request — the notice, sweeps 1 and 2 | 2026-09-15 | Notes **§1.44.5**, **§1.44.6**. No migration. Sweep 1: closing the notice dropped focus on `<body>` (WCAG 2.4.3), an E2E check could not fail, a test-only export shipped in `src/`, the 404 document had no notice, and a removal runbook would have left the build red. Sweep 2 hunted those classes repo-wide: the shell's shared focus restore fails the same way whenever a trigger is gone — reached from every lookbook hotspot — four more assertions that cannot fail, thirteen documentation claims that no longer matched the repository, and the 404 document reading the session without the outage wrapper and missing analytics. |
-| Owner content — one command instead of §12's retyping | 2026-09-15 | Notes **§1.45**. No migration. `pnpm content:publish` / `:write` writes the contact address, shipping and returns policies, the privacy notice, the terms, six FAQ answers and two size-guide fit notes into whichever database the shell names, from the same modules the seed uses (`scripts/seed/support.ts` is new). It creates nothing, compares before writing, and prints the target first. TODO.md §12 now leads with the command; `docs/DEPLOYMENT.md` §9 and `docs/DEVELOPMENT.md` list it. |
+| Owner content — one command instead of §12's retyping | 2026-09-15 | Notes **§1.45**. No migration. `pnpm content:publish` / `:write` writes the contact address, shipping and returns policies, the privacy notice, the terms, all fourteen FAQ answers and two size-guide fit notes into whichever database the shell names, from the same modules the seed uses (`scripts/seed/support.ts` is new). It creates nothing, compares before writing, and prints the target first. TODO.md §12 now leads with the command; `docs/DEPLOYMENT.md` §9 and `docs/DEVELOPMENT.md` list it. |
+| Owner content — the publisher's two sweeps | 2026-09-15 | Notes **§1.45.1**, **§1.45.2**. No migration. Sweep 1: the publisher covered six of the fourteen FAQ answers the seed writes and said it covered all; a failed write printed no report; a changed policy showed a paragraph count rather than the sentence it would overwrite; size guides were matched by display title. Sweep 2 hunted those classes repo-wide: the retention sweep could not tell an empty night from a refused batch (`errors` is now in its response), `/help/faq` was built from a second copy of the topic list that a seventh topic would have silently dropped, the seeded mega-menu listed four of five Edits, `import:media` asserted placements it might not have made, and two scripts printed their verdict into an unawaited write before `process.exit`. |
 
 > **Append this table, and the sections above it, at the end of every phase.**

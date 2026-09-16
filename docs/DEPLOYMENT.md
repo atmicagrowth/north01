@@ -112,7 +112,9 @@ a more frequent expression fails the deployment on Hobby. On Pro, tighten it (`*
 `GET /api/carts/sweep` daily at 03:30 UTC. Same secret, same 401. It runs **two** retention rules and,
 since the lost-side-effect review, a **third step** that is not retention (below), from the one
 request, and answers `{"carts": {...}, "orders": {...}, "scheduledDrops": {...}}`. `carts` and `orders`
-each carry `deleted`, `more` (the batch was full, so more waits for tomorrow) and `failed`:
+each carry `deleted`, `errors` (rows the delete refused — they are still there), `more` (the batch
+was full, or rows were refused, so more waits for tomorrow) and `failed` (the step threw, or refused
+a row):
 
 - up to 200 `active` bags past their `expiresAt`, and their lines — `converted` bags are order
   history and are never touched;

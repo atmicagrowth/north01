@@ -277,6 +277,9 @@ const PLACEMENTS: Placement[] = [
 
 const placed: string[] = []
 
+/** Placements the map named and the database could not offer — printed, never swallowed. */
+const skipped: string[] = []
+
 for (const placement of PLACEMENTS) {
   const { docs } = await payload.find({
     collection: placement.collection,
@@ -369,22 +372,43 @@ if (aw26) {
     Inland: { hotspots: fullLengthLook, image: '14_full_body_editorial_male' },
   }
 
+  /*
+   * Chapters are an array block with no slug, so the title — display copy an editor may reword — is
+   * the only key there is, and a miss returns the chapter unchanged. The report therefore counts what
+   * was actually composed rather than asserting both placements: it used to push this line
+   * unconditionally, so a renamed chapter, or a lookbook with none, still read as written (the content
+   * sweep, 2026-09-15).
+   */
+  const composedChapters: string[] = []
+
   await payload.update({
     collection: 'lookbooks',
     data: {
       chapters: (aw26.chapters ?? []).map((chapter) => {
         const composed = chapterImages[chapter.title]
 
-        return composed
-          ? { ...chapter, heroImage: id(composed.image), hotspots: composed.hotspots }
-          : chapter
+        if (!composed) {
+          return chapter
+        }
+
+        composedChapters.push(`${chapter.title}=${composed.image.slice(0, 2)}`)
+
+        return { ...chapter, heroImage: id(composed.image), hotspots: composed.hotspots }
       }),
     } as never,
     id: aw26.id,
     overrideAccess: true,
   })
 
-  placed.push('lookbooks/aw26  chapters: Headland=09 (1 hotspot), Inland=14 (2 hotspots)')
+  for (const title of Object.keys(chapterImages)) {
+    if (!composedChapters.some((entry) => entry.startsWith(`${title}=`))) {
+      skipped.push(`lookbooks/aw26  chapter "${title}" — no chapter with that title; not composed`)
+    }
+  }
+
+  if (composedChapters.length > 0) {
+    placed.push(`lookbooks/aw26  chapters: ${composedChapters.join(', ')}`)
+  }
 }
 
 const homepage = await payload.findGlobal({ depth: 0, overrideAccess: true, slug: 'homepage' })
@@ -423,7 +447,9 @@ await payload.updateGlobal({
 })
 
 process.stdout.write(
-  `${placed.join('\n')}\n\n${uploaded.size} photograph(s) imported, ${placed.length} placement(s) written.\n`,
+  `${[...placed, ...skipped].join('\n')}\n\n${uploaded.size} photograph(s) imported, ${
+    placed.length
+  } placement(s) written${skipped.length > 0 ? `, ${skipped.length} not made` : ''}.\n`,
 )
 
 await payload.destroy()

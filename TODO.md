@@ -273,8 +273,9 @@ pnpm content:publish:write  # writes it
 
 It prints the database it is about to change, skips anything that already matches, creates nothing,
 and touches only the fields listed below — never products, orders, customers, media or navigation.
-Running it twice changes nothing the second time, and the storefront caches this content for five
-minutes. Close the window afterwards: the value must never reach `.env`.
+Running it twice changes nothing the second time. The help and legal pages show the new copy
+immediately; the footer's links to the legal pages take up to five minutes, and the sitemap up to an
+hour. Close the window afterwards: the value must never reach `.env`.
 
 **Do not run the seed against production instead**: it refuses any database but the development one
 `DATABASE_PUSH_TARGET` names (D-10), and it would overwrite production's settings, navigation and

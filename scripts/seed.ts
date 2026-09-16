@@ -53,7 +53,7 @@ import config from '../src/payload.config'
 
 import { developmentDatabase } from '../src/lib/env.core'
 import { seedCommerce } from './seed/commerce'
-import { seedExtraEditorial } from './seed/editorial'
+import { EXTRA_EDIT_SPECS, seedExtraEditorial } from './seed/editorial'
 import { ACCESSORY_PRODUCTS } from './seed/products-accessories'
 import { LOWER_PRODUCTS } from './seed/products-lower'
 import { TOPS_PRODUCTS } from './seed/products-tops'
@@ -1199,7 +1199,12 @@ try {
           columns: [
             {
               heading: 'The Edit',
-              links: editSpecs.map((spec) => ({
+              /*
+               * Every Edit the seed publishes, from **both** modules that declare them — the content
+               * sweep, 2026-09-15. This mapped `editSpecs` alone, so `cold` (`seed/editorial.ts`) was
+               * live at `/edit` and in the sitemap and absent from the menu, permanently.
+               */
+              links: [...editSpecs, ...EXTRA_EDIT_SPECS].map((spec) => ({
                 label: spec.title,
                 kind: 'url' as const,
                 href: `/edit/${spec.slug}`,

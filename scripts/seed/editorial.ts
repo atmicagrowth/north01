@@ -261,6 +261,16 @@ const ARTICLES: ArticleSpec[] = [
  * ourselves to" where the terms call it an estimate. The tracking answer also only holds for an order
  * placed signed in — a guest order is never attached to an account.
  */
+/**
+ * **The Edits this module publishes, for anyone that has to list them all.**
+ *
+ * `scripts/seed.ts` declares four in `editSpecs` and builds the header's Edit column from them; this
+ * module adds a fifth. The column mapped the four alone, so `cold` was live at `/edit` and in the
+ * sitemap and missing from the menu — the content sweep, 2026-09-15. Exported so the menu can spread
+ * both, and used below so the two cannot drift.
+ */
+export const EXTRA_EDIT_SPECS = [{ slug: 'cold', title: 'Cold' }] as const
+
 export const FAQS: {
   answer: string[]
   question: string
@@ -571,12 +581,12 @@ export async function seedExtraEditorial(
         },
       ],
       publishedAt: '2026-08-06T09:00:00.000Z',
-      slug: 'cold',
+      slug: EXTRA_EDIT_SPECS[0].slug,
       status: 'published',
-      title: 'Cold',
+      title: EXTRA_EDIT_SPECS[0].title,
     },
     payload,
-    where: { slug: { equals: 'cold' } },
+    where: { slug: { equals: EXTRA_EDIT_SPECS[0].slug } },
   })
 
   return { edits: 1, faqs: FAQS.length, journal: ARTICLES.length, lookbooks: 1 }

@@ -325,7 +325,7 @@ describe('an order under a fulfilment hold', () => {
       },
     })
 
-    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 0, more: false })
+    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 0, errors: 0, more: false })
     expect(deletes).toHaveLength(0)
   })
 
@@ -336,7 +336,7 @@ describe('an order under a fulfilment hold', () => {
       rows: { orders: [order(1, { fulfilmentHold: null }), order(2)] },
     })
 
-    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 2, more: false })
+    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 2, errors: 0, more: false })
   })
 })
 
@@ -370,7 +370,7 @@ describe('the thirty-day window', () => {
       },
     })
 
-    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 1, more: false })
+    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 1, errors: 0, more: false })
   })
 
   it('filters on updatedAt, so an order being paid for right now is never deleted', async () => {
@@ -425,7 +425,7 @@ describe('the delete re-checks what it deletes', () => {
       rows: { orders: [order(1), order(2), order(3), order(4)] },
     })
 
-    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 1, more: false })
+    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 1, errors: 0, more: false })
   })
 
   it('locks the selected rows first, inside the transaction the delete runs in, then commits', async () => {
@@ -450,7 +450,7 @@ describe('the delete re-checks what it deletes', () => {
 
     expect(events).toContain('rollback:tx-1')
     expect(events).not.toContain('commit:tx-1')
-    expect(result.orders).toEqual({ deleted: 0, failed: true, more: true })
+    expect(result.orders).toEqual({ deleted: 0, errors: 0, failed: true, more: true })
     expect(logged).toContainEqual(expect.objectContaining({ level: 'error', step: 'orders' }))
     expect(reported).toHaveBeenCalledWith(expect.any(Error), 'retention.orders')
   })
@@ -477,7 +477,7 @@ describe('deleting permanently, trashed rows included', () => {
     // rather than sending `{ id: { in: [] } }` and trusting the adapter.
     const { deletes, events, payload } = fakePayload({ rows: { orders: [] } })
 
-    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 0, more: false })
+    expect(await sweepUnpaidOrders(payload, AT)).toEqual({ deleted: 0, errors: 0, more: false })
     expect(deletes).toHaveLength(0)
     expect(events).toHaveLength(0)
   })
@@ -524,7 +524,7 @@ describe('the bag delete re-checks what it deletes', () => {
       rows: { carts: [bag(1), bag(2), bag(3)] },
     })
 
-    expect(await sweepExpiredCarts(payload, AT)).toEqual({ deleted: 1, more: false })
+    expect(await sweepExpiredCarts(payload, AT)).toEqual({ deleted: 1, errors: 0, more: false })
   })
 
   it('locks the orders on the selected bags, then the bags, then deletes and commits in that transaction', async () => {
@@ -553,7 +553,7 @@ describe('the bag delete re-checks what it deletes', () => {
     expect(events.slice(0, 4)).toEqual(['begin', 'lock', 'lock', 'delete:tx-1'])
     expect(events).toContain('rollback:tx-1')
     expect(events).not.toContain('commit:tx-1')
-    expect(result.carts).toEqual({ deleted: 0, failed: true, more: true })
+    expect(result.carts).toEqual({ deleted: 0, errors: 0, failed: true, more: true })
     expect(logged).toContainEqual(expect.objectContaining({ level: 'error', step: 'carts' }))
     expect(reported).toHaveBeenCalledWith(expect.any(Error), 'retention.carts')
   })
@@ -561,7 +561,7 @@ describe('the bag delete re-checks what it deletes', () => {
   it('opens no transaction and deletes nothing when no bag has expired', async () => {
     const { deletes, events, payload } = fakePayload({ rows: { carts: [] } })
 
-    expect(await sweepExpiredCarts(payload, AT)).toEqual({ deleted: 0, more: false })
+    expect(await sweepExpiredCarts(payload, AT)).toEqual({ deleted: 0, errors: 0, more: false })
     expect(deletes).toHaveLength(0)
     expect(events).toHaveLength(0)
   })
@@ -589,7 +589,7 @@ describe('reporting what was actually deleted', () => {
 
     const result = await sweepUnpaidOrders(payload, AT)
 
-    expect(result).toEqual({ deleted: 2, more: false })
+    expect(result).toEqual({ deleted: 2, errors: 1, more: false })
     expect(logged).toContainEqual(expect.objectContaining({ errors: 1, level: 'error' }))
     expect(reported).toHaveBeenCalledWith(expect.any(Error), 'retention.orders', {
       errors: 1,
@@ -605,7 +605,7 @@ describe('reporting what was actually deleted', () => {
 
     const result = await sweepExpiredCarts(payload, AT)
 
-    expect(result).toEqual({ deleted: 2, more: false })
+    expect(result).toEqual({ deleted: 2, errors: 1, more: false })
     expect(logged).toContainEqual(expect.objectContaining({ errors: 1, level: 'error' }))
     expect(reported).toHaveBeenCalledWith(expect.any(Error), 'retention.carts', {
       errors: 1,
@@ -638,13 +638,13 @@ describe('staying inside one invocation', () => {
     const result = await sweepUnpaidOrders(payload, AT, 2)
 
     expect(finds[0].limit).toBe(2)
-    expect(result).toEqual({ deleted: 2, more: true })
+    expect(result).toEqual({ deleted: 2, errors: 0, more: true })
   })
 
   it('does not claim a backlog it does not have', async () => {
     const { payload } = fakePayload({ rows: { orders: [1, 2] } })
 
-    expect(await sweepUnpaidOrders(payload, AT, 5)).toEqual({ deleted: 2, more: false })
+    expect(await sweepUnpaidOrders(payload, AT, 5)).toEqual({ deleted: 2, errors: 0, more: false })
   })
 
   it('bounds the bag sweep the same way, and only takes active bags past their expiry', async () => {
@@ -660,7 +660,7 @@ describe('staying inside one invocation', () => {
     })
     expect(finds[0].sort).toBe('expiresAt')
     expect(finds[0].limit).toBe(2)
-    expect(result).toEqual({ deleted: 2, more: true })
+    expect(result).toEqual({ deleted: 2, errors: 0, more: true })
   })
 
   it('takes an expired active bag, and never a live or converted one', async () => {
@@ -674,7 +674,7 @@ describe('staying inside one invocation', () => {
       },
     })
 
-    expect(await sweepExpiredCarts(payload, AT)).toEqual({ deleted: 1, more: false })
+    expect(await sweepExpiredCarts(payload, AT)).toEqual({ deleted: 1, errors: 0, more: false })
   })
 })
 
@@ -687,8 +687,8 @@ describe('the cron entry point', () => {
     const { payload } = fakePayload({ rows: { carts: [1, 2], orders: [3] } })
 
     expect(await sweepRetention(payload, AT)).toEqual({
-      carts: { deleted: 2, failed: false, more: false },
-      orders: { deleted: 1, failed: false, more: false },
+      carts: { deleted: 2, errors: 0, failed: false, more: false },
+      orders: { deleted: 1, errors: 0, failed: false, more: false },
     })
   })
 
@@ -712,8 +712,22 @@ describe('the cron entry point', () => {
 
     const result = await sweepRetention(payload, AT)
 
-    expect(result.carts).toEqual({ deleted: 0, failed: true, more: true })
-    expect(result.orders).toEqual({ deleted: 1, failed: false, more: false })
+    expect(result.carts).toEqual({ deleted: 0, errors: 0, failed: true, more: true })
+    expect(result.orders).toEqual({ deleted: 1, errors: 0, failed: false, more: false })
+  })
+
+  it('calls a batch whose rows were refused failed, so a quiet night and a broken sweep differ', async () => {
+    /*
+     * Sweep 2 of the content publisher, hunting reports that cannot say what happened: the refused
+     * rows were logged and sent to Sentry and then dropped from the answer, so a run in which Payload
+     * refused every delete returned exactly what an empty night returns — and the cron's response
+     * body is all an operator sees.
+     */
+    const { payload } = fakePayload({ partialDelete: 'carts', rows: { carts: [1, 2, 3] } })
+
+    const result = await sweepRetention(payload, AT)
+
+    expect(result.carts).toEqual({ deleted: 2, errors: 1, failed: true, more: true })
   })
 
   it('sends a failing order step to the log and to Sentry, under its own area', async () => {

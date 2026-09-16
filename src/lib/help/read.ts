@@ -35,15 +35,27 @@ import { getPayloadClient } from '@/lib/payload'
 
 const STOREFRONT_ACCESS = { overrideAccess: false, user: null } as const
 
-/** §28.1c's topics, in the order a customer meets them rather than alphabetically. */
-export const FAQ_TOPICS = [
-  { label: 'Orders', value: 'orders' },
-  { label: 'Shipping', value: 'shipping' },
-  { label: 'Returns', value: 'returns' },
-  { label: 'Sizing', value: 'sizing' },
-  { label: 'Product care', value: 'care' },
-  { label: 'Account', value: 'account' },
-] as const
+/**
+ * §28.1c's topics, in the order a customer meets them rather than alphabetically.
+ *
+ * **Exhaustive by type**, so the compiler is what keeps this list level with `Faqs.ts`. The page is
+ * built by mapping this array; a seventh option added to the collection and left out here would drop
+ * every answer filed under it from `/help/faq` — silently, with no empty heading and nothing logged.
+ * `Faqs.ts` already records that shape of defect being found twice. Now it fails `pnpm typecheck`
+ * instead (the content sweep, 2026-09-15).
+ */
+const FAQ_TOPIC_LABELS: Record<NonNullable<Faq['topic']>, string> = {
+  account: 'Account',
+  care: 'Product care',
+  orders: 'Orders',
+  returns: 'Returns',
+  shipping: 'Shipping',
+  sizing: 'Sizing',
+}
+
+export const FAQ_TOPICS = (
+  ['orders', 'shipping', 'returns', 'sizing', 'care', 'account'] as const
+).map((value) => ({ label: FAQ_TOPIC_LABELS[value], value }))
 
 export type FaqGroup = {
   entries: { answer: unknown; id: number; question: string }[]

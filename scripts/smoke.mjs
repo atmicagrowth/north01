@@ -193,13 +193,22 @@ await check('reset link is never reported to analytics', async () => {
 })
 
 const width = Math.max(...results.map((r) => r.name.length))
-process.stdout.write(`\nSmoke test — ${base}\n\n`)
-for (const r of results)
-  process.stdout.write(`${r.status.padEnd(5)} ${r.name.padEnd(width)}  ${r.detail}\n`)
-
 const failed = results.filter((r) => r.status === 'FAIL').length
 const warned = results.filter((r) => r.status === 'WARN').length
-process.stdout.write(
-  `\n${results.length - failed - warned} passed, ${warned} warning(s), ${failed} failed.\n`,
-)
+
+/*
+ * One report, one awaited write, then the exit code — the rule `verify-home.ts` measured: stdout is
+ * asynchronous whenever it is a pipe or a file, and `process.exit` does not drain a pending write, so
+ * a redirected run could lose the very lines that say which check failed. The exit code always
+ * carried the verdict; which check failed is what was at risk (the content sweep, 2026-09-15).
+ */
+await new Promise((resolve) => {
+  process.stdout.write(
+    `\nSmoke test — ${base}\n\n` +
+      results.map((r) => `${r.status.padEnd(5)} ${r.name.padEnd(width)}  ${r.detail}`).join('\n') +
+      `\n\n${results.length - failed - warned} passed, ${warned} warning(s), ${failed} failed.\n`,
+    () => resolve(),
+  )
+})
+
 process.exit(failed > 0 ? 1 : 0)

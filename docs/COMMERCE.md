@@ -156,7 +156,7 @@ fail independently:
 `updatedAt` is the order's last write. Every raw `UPDATE "orders"` in `pending-order.ts` and
 `fulfil.ts` sets `updated_at = now()` (§7.2, §8), so a checkout attempt, a recorded session and every
 webhook claim that moves the order restart the clock; a claim matching no row does not. The route
-answers `{"carts": …, "orders": …}`, each `{ deleted, more, failed }`; a failing step is reported to
+answers `{"carts": …, "orders": …}`, each `{ deleted, errors, more, failed }`; a failing step is reported to
 Sentry as `retention.carts` / `retention.orders`. Why the window and clock are what they are:
 [`SECURITY.md`](SECURITY.md) §4.
 

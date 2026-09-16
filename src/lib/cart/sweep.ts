@@ -94,7 +94,7 @@ export async function sweepExpiredCarts(
   payload: Payload,
   now: Date = new Date(),
   batch: number = CART_SWEEP_BATCH,
-): Promise<{ deleted: number; more: boolean }> {
+): Promise<{ deleted: number; errors: number; more: boolean }> {
   const expiry = expiredCartWhere(now)
 
   const expired = await payload.find({
@@ -109,7 +109,7 @@ export async function sweepExpiredCarts(
 
   const ids = expired.docs.map((cart) => cart.id)
 
-  if (ids.length === 0) return { deleted: 0, more: false }
+  if (ids.length === 0) return { deleted: 0, errors: 0, more: false }
 
   const transactionID = await payload.db.beginTransaction()
 
@@ -162,7 +162,7 @@ export async function sweepExpiredCarts(
     })
   }
 
-  return { deleted: result.docs.length, more: ids.length === batch }
+  return { deleted: result.docs.length, errors: result.errors.length, more: ids.length === batch }
 }
 
 /** The selected ids, **and** the expiry predicate again — see "Why the delete re-checks". */
@@ -379,7 +379,7 @@ export async function sweepUnpaidOrders(
   payload: Payload,
   now: Date = new Date(),
   batch: number = UNPAID_ORDER_SWEEP_BATCH,
-): Promise<{ deleted: number; more: boolean }> {
+): Promise<{ deleted: number; errors: number; more: boolean }> {
   const retention = unpaidOrderRetentionWhere(now)
 
   const abandoned = await payload.find({
@@ -395,7 +395,7 @@ export async function sweepUnpaidOrders(
 
   const ids = abandoned.docs.map((order) => order.id)
 
-  if (ids.length === 0) return { deleted: 0, more: false }
+  if (ids.length === 0) return { deleted: 0, errors: 0, more: false }
 
   const transactionID = await payload.db.beginTransaction()
 
@@ -441,7 +441,7 @@ export async function sweepUnpaidOrders(
     )
   }
 
-  return { deleted: result.docs.length, more: ids.length === batch }
+  return { deleted: result.docs.length, errors: result.errors.length, more: ids.length === batch }
 }
 
 /** The selected ids, **and** the whole predicate again — see "Why the delete re-checks". */
@@ -467,7 +467,14 @@ function deleteQualifying(
 
 export type SweepOutcome = {
   deleted: number
-  /** True when the step threw. The count is then what was deleted before it did, which is none. */
+  /**
+   * How many rows Payload refused to delete. Counted rather than dropped — sweep 2 of the content
+   * publisher, which hunted reports that cannot tell "nothing to do" from "everything failed". A run
+   * in which every delete was refused used to answer `{ deleted: 0, failed: false, more: false }`,
+   * byte-identical to a quiet night, and the cron's response body is all an operator sees.
+   */
+  errors: number
+  /** True when the step threw, **or** when any row it selected was refused. */
   failed: boolean
   /** True when the batch was full, so more rows are waiting for tomorrow. */
   more: boolean
@@ -498,18 +505,22 @@ export async function sweepRetention(
 async function runStep(
   payload: Payload,
   step: 'carts' | 'orders',
-  run: () => Promise<{ deleted: number; more: boolean }>,
+  run: () => Promise<{ deleted: number; errors: number; more: boolean }>,
 ): Promise<SweepOutcome> {
   try {
-    const { deleted, more } = await run()
+    const { deleted, errors, more } = await run()
 
-    payload.logger.info({ deleted, more, msg: `Retention sweep: ${step}`, step })
+    payload.logger.info({ deleted, errors, more, msg: `Retention sweep: ${step}`, step })
 
-    return { deleted, failed: false, more }
+    /*
+     * Refused rows are still there, so the step did not do its job: `failed`, and `more`, for the same
+     * reason a throw reports both. Each row was already logged and sent to Sentry.
+     */
+    return { deleted, errors, failed: errors > 0, more: more || errors > 0 }
   } catch (error) {
     payload.logger.error({ err: error, msg: `Retention sweep failed: ${step}`, step })
     reportFailure(error, `retention.${step}`)
 
-    return { deleted: 0, failed: true, more: true }
+    return { deleted: 0, errors: 0, failed: true, more: true }
   }
 }
