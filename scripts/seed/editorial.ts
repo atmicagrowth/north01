@@ -261,7 +261,7 @@ const ARTICLES: ArticleSpec[] = [
  * ourselves to" where the terms call it an estimate. The tracking answer also only holds for an order
  * placed signed in — a guest order is never attached to an account.
  */
-const FAQS: {
+export const FAQS: {
   answer: string[]
   question: string
   sortOrder: number

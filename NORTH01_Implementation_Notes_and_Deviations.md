@@ -9981,21 +9981,20 @@ first place: the live FAQ still promised same-working-day dispatch before 2pm an
 the seed at Phase 36 and nowhere else. Both legal pages were 404 because their fields were empty.
 
 `pnpm content:publish` (report) and `pnpm content:publish:write` (write) close that gap. Measured
-against the live site on 2026-09-15: production carries exactly the six seeded questions, so matching
-by question text reaches all of them.
+against the live site on 2026-09-15: production carries six of the fourteen questions the seed writes,
+and the other eight are reported as missing rather than created.
 
 - **The strings are not retyped anywhere.** The FAQ answers, contact address, shipping and returns
   policies and size-guide fit notes moved out of `scripts/seed.ts` into `scripts/seed/support.ts`, and
   the legal text was already in `scripts/seed/legal.ts`. The seed and this script read the same
   modules, so a corrected sentence cannot be live in one place and stale in the other — which is what
   §12 was tracking by hand.
-- **It writes six things and no others:** `site-settings.contactEmail`, `shippingPolicy`,
+- **It writes seven things and no others:** `site-settings.contactEmail`, `shippingPolicy`,
   `returnsPolicy`, `privacyPolicy`, `termsOfSale`; the answer of each FAQ it matches by exact question;
-  and `fitNotes` on each size guide it matches by title. Products, orders, customers, media and
+  and `fitNotes` on each size guide it matches by slug. Products, orders, customers, media and
   navigation are never read or written.
 - **It creates nothing.** A question or guide that is not there is reported as missing and skipped,
-  because an answer nobody wrote is not a script's to invent. The four *if production has it* questions
-  in §12 are not in the seed, so they stay a hand edit.
+  because an answer nobody wrote is not a script's to invent.
 - **It compares before it writes**, paragraph by paragraph, so a second run reports *unchanged* for
   everything, and the report is the same list whether or not it wrote.
 - **Two files rather than a flag**, for the reason `scripts/reindex.ts` records: `payload run` forwards
@@ -10004,8 +10003,35 @@ by question text reaches all of them.
 - **The target database is printed first**, because this is meant to be pointed at production from a
   shell holding its `DATABASE_URL` for that one command — the same shape as `pnpm reindex`
   (DEPLOYMENT.md §6). Nothing goes into `.env`.
-- The storefront caches settings and help content for five minutes, so a change appears within that;
-  `revalidateTag` cannot run under the CLI, which is the same accepted behaviour the seed has.
+- **What lags, and for how long.** `/help/*` and both legal pages read per request, so they show the
+  new copy immediately. The footer's Privacy and Terms links are cached for five minutes
+  (`loadLegalPublication`), and the sitemap for an hour. `revalidateTag` cannot run under the CLI,
+  which is the same accepted behaviour the seed has.
+
+### 1.45.1 Sweep 1
+
+An independent read found eight defects, one of them significant, and refuted the rest of what it
+checked: a partial `updateGlobal` does preserve every field it does not name, the dry run writes
+nothing on any path, no hook fires that matters under the CLI, the seed refactor is faithful, and a
+shell variable really does beat `.env` under `payload run`.
+
+- **It published six of the fourteen FAQs the seed writes, and said it had published them all.** The
+  other eight are declared in `seed/editorial.ts`, and the loop only read `seed/support.ts` — so they
+  were not written, not compared, and not even reported as missing, while `TODO.md` §12 told the owner
+  the command covered everything. Five of them are the answers Phase 37's sweep 1 corrected (S09–S11).
+  Both modules are now read, and the documents say what is actually covered.
+- **A write that failed part-way printed no report at all.** Each write commits separately, so the
+  operator who most needed the list — which half is published? — got a stack trace instead. The report
+  is now built in a `finally`, marks each unwritten change `[NOT written]`, and says the run failed.
+- **A changed policy reported only a paragraph count.** `8 → 8 paragraph(s)` tells nobody that the
+  free-delivery figure an editor corrected by hand is about to be overwritten — the exact case
+  `TODO.md` §12 asks them to check. It now prints the first differing paragraph, old and new.
+- **The usage block documented `--write`**, the trap the file explains three lines lower that it
+  avoided by having two entry files.
+- Size guides are matched by `slug` rather than by the display title an editor may reword, a draft FAQ
+  is reported as invisible on `/help/faq` rather than silently corrected, and two documentation claims
+  were wrong: seven fields rather than six, and the five-minute cache, which is the footer's legal
+  links — the pages themselves are immediate and the sitemap takes an hour.
 
 **What was verified** (local Postgres):
 
@@ -10013,7 +10039,7 @@ by question text reaches all of them.
 |---|---|
 | `typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
 | Migrations | none — content only |
-| Behaviour | on a seeded database: 13 items, all *unchanged*. After breaking four of them (contact address back to `help@north01.example`, a one-paragraph returns policy, an emptied privacy notice, the 2pm dispatch answer): the dry run reported exactly those four and wrote nothing; the write applied them; a third run reported *unchanged* |
+| Behaviour | on a seeded database: 21 items, all *unchanged*. After breaking four of them (the contact address back to `help@north01.example`, and the 2pm dispatch, evening-scan and same-day-refund answers): the dry run reported exactly those four with the old sentence beside the new and wrote nothing; the write reported `4 of 4 change(s) written`; a third run reported *unchanged*. Before sweep 1, three of those four were invisible to it |
 | `pnpm seed` | unchanged behaviour after the copy moved to `scripts/seed/support.ts` — the gate re-seeds before every harness |
 | `pnpm test:run`, all 23 `verify:*`, E2E | pass |
 

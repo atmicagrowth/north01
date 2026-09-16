@@ -62,9 +62,9 @@ import { PRIVACY_PARAGRAPHS, TERMS_PARAGRAPHS } from './seed/legal'
 import {
   CONTACT_EMAIL,
   FAQ_SPECS,
+  fitNotesFor,
   RETURNS_POLICY_PARAGRAPHS,
   SHIPPING_POLICY_PARAGRAPHS,
-  SIZE_GUIDE_FIT_NOTES,
 } from './seed/support'
 
 /**
@@ -213,7 +213,7 @@ try {
        * Sweep 1, S13: this said "Cut for a regular fit through the body", and the guide is shared by
        * slim, relaxed and oversized pieces whose Details say otherwise. The fit is each product's own.
        */
-      fitNotes: rich(SIZE_GUIDE_FIT_NOTES.Tops),
+      fitNotes: rich(fitNotesFor('mens-tops')),
       modelNote: 'Model is 186 cm and wears a size M.',
     },
   })
@@ -261,7 +261,7 @@ try {
        * Not "Measured flat, unstretched": these waists are the size on the label in centimetres — 81
        * for a 32 — which is a body measurement, as the sizing FAQ says. Sweep 1, S13.
        */
-      fitNotes: rich(SIZE_GUIDE_FIT_NOTES['Trousers and shorts']),
+      fitNotes: rich(fitNotesFor('mens-bottoms')),
     },
   })
 

@@ -103,11 +103,30 @@ export const FAQ_SPECS: readonly FaqSpec[] = [
 ]
 
 /**
- * Size guide → Fit notes, by the guide's title. Sweep 1, S13 and S18: the tops guide claimed a
- * regular fit for garments whose own details say slim, relaxed or oversized, and the trouser guide
- * described measurements it does not carry.
+ * Size guide → Fit notes. Sweep 1, S13 and S18: the tops guide claimed a regular fit for garments
+ * whose own details say slim, relaxed or oversized, and the trouser guide described measurements it
+ * does not carry.
+ *
+ * **Keyed by `slug`, not by `title`** — the publisher's own sweep 1. `SizeGuides.ts` describes the
+ * title as what the customer sees at the top of the dialog, which is display copy an editor may
+ * reword; the slug is the identity the seed already upserts on.
  */
-export const SIZE_GUIDE_FIT_NOTES: Readonly<Record<string, string>> = {
-  Tops: 'How each piece fits — slim, regular, relaxed or oversized — is listed in its details. Between sizes, take the larger.',
-  'Trousers and shorts': 'Waist sizes run true. Between sizes, take the larger.',
+export const SIZE_GUIDE_FIT_NOTES: readonly { fitNotes: string; slug: string }[] = [
+  {
+    fitNotes:
+      'How each piece fits — slim, regular, relaxed or oversized — is listed in its details. Between sizes, take the larger.',
+    slug: 'mens-tops',
+  },
+  { fitNotes: 'Waist sizes run true. Between sizes, take the larger.', slug: 'mens-bottoms' },
+]
+
+/** The same notes by slug, for the seed's two guides. */
+export const fitNotesFor = (slug: string): string => {
+  const found = SIZE_GUIDE_FIT_NOTES.find((guide) => guide.slug === slug)
+
+  if (!found) {
+    throw new Error(`No fit notes declared for size guide ${slug}`)
+  }
+
+  return found.fitNotes
 }

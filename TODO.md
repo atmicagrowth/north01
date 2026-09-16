@@ -284,9 +284,9 @@ What it writes — or what to enter by hand in **Admin → Settings → Site Set
 and **Admin → Size guides**, if you would rather:
 
 It covers every line below that the seed also writes: the contact address, both policies, the privacy
-notice, the terms, six FAQ answers and the two size-guide fit notes. The questions marked *if
-production has it* are not in the seed — the command reports them as not found, and they stay a
-hand edit.
+notice, the terms, **all fourteen FAQ answers** and the two size-guide fit notes — including the ones
+marked *if production has it*, which it reports as `MISSING` when your FAQ does not have them (it
+creates nothing). Your live FAQ currently has six of the fourteen, so expect eight `MISSING` lines.
 
 - **Site Settings → Contact → Contact Email** → `admin@micagrowth.com`.
 - **Site Settings → Policies → Returns Policy**, second paragraph → *Returns are arranged with our team

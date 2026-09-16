@@ -2,8 +2,8 @@
  * **Publish the owner's support and legal copy into a live shop.**
  *
  * ```
- * pnpm content:publish          # dry run — prints what would change, writes nothing
- * pnpm content:publish --write  # writes it
+ * pnpm content:publish        # dry run — prints what would change, writes nothing
+ * pnpm content:publish:write  # writes it
  * ```
  *
  * ### Why this exists
@@ -43,6 +43,7 @@
 
 import config from '../../src/payload.config'
 
+import { FAQS as EDITORIAL_FAQ_SPECS } from '../seed/editorial'
 import { PRIVACY_PARAGRAPHS, TERMS_PARAGRAPHS } from '../seed/legal'
 import { rich } from '../seed/shared'
 import {
@@ -52,6 +53,21 @@ import {
   SHIPPING_POLICY_PARAGRAPHS,
   SIZE_GUIDE_FIT_NOTES,
 } from '../seed/support'
+
+/**
+ * **Every FAQ the seed writes, from both modules that declare them** — the publisher's own sweep 1.
+ *
+ * The first version iterated `seed/support.ts` alone and silently covered six of fourteen: the eight
+ * in `seed/editorial.ts` were not written, not compared and not even reported as missing, while
+ * `TODO.md` §12 told the owner the command covered everything. Five of those eight are the answers
+ * sweep 1 of Phase 37 corrected (S09–S11) — the evening carrier scan, the same-day refund, the
+ * delivery estimate "we hold ourselves to", and the shipping answer that said *worldwide* where
+ * checkout accepts eight countries.
+ */
+const ALL_FAQS: readonly { paragraphs: readonly string[]; question: string }[] = [
+  ...FAQ_SPECS.map((spec) => ({ paragraphs: [spec.answer], question: spec.question })),
+  ...EDITORIAL_FAQ_SPECS.map((spec) => ({ paragraphs: spec.answer, question: spec.question })),
+]
 
 /**
  * `write: false` reports and changes nothing. The two entry points are separate FILES rather than one
@@ -76,10 +92,17 @@ export async function publishOwnerContent({ write }: { write: boolean }): Promis
 
   type Outcome = 'changed' | 'missing' | 'unchanged'
 
-  const results: { detail: string; outcome: Outcome; what: string }[] = []
+  const results: { detail: string; outcome: Outcome; what: string; written?: boolean }[] = []
+
+  /** False until the last step returns, so a failed run's report can say the rest is unpublished. */
+  let finished = false
 
   const record = (what: string, outcome: Outcome, detail = '') => {
-    results.push({ detail, outcome, what })
+    const row = { detail, outcome, what, written: false }
+
+    results.push(row)
+
+    return row
   }
 
   /** The plain text of a Lexical document, paragraph by paragraph — what is compared. */
@@ -103,6 +126,23 @@ export async function publishOwnerContent({ write }: { write: boolean }): Promis
     return found.length === wanted.length && found.every((text, index) => text === wanted[index])
   }
 
+  /**
+   * The first paragraph that differs, old and new, trimmed to something readable.
+   *
+   * A count of paragraphs was the first version, and it told an operator nothing: a policy an editor
+   * had corrected by hand — the free-delivery figure in the terms, say, which `TODO.md` §12 asks them
+   * to check — reported `8 → 8 paragraph(s)` and would have been quietly overwritten (sweep 1).
+   */
+  const firstDifference = (value: unknown, wanted: readonly string[]): string => {
+    const found = paragraphsOf(value)
+    const index = wanted.findIndex((text, at) => found[at] !== text)
+    const at = index === -1 ? found.length - 1 : index
+    const clip = (text: string | undefined) =>
+      text === undefined ? '(nothing)' : `“${text.slice(0, 70)}${text.length > 70 ? '…' : ''}”`
+
+    return `paragraph ${at + 1}: ${clip(found[at])} → ${clip(wanted[at])}`
+  }
+
   try {
     process.stdout.write(`Target database: ${target}\n${write ? 'WRITING' : 'DRY RUN'}\n\n`)
 
@@ -110,10 +150,17 @@ export async function publishOwnerContent({ write }: { write: boolean }): Promis
     const settings = await payload.findGlobal({ slug: 'site-settings', depth: 0 })
 
     const settingsChanges: Record<string, unknown> = {}
+    const settingsRows: { written?: boolean }[] = []
 
     if (settings.contactEmail !== CONTACT_EMAIL) {
       settingsChanges.contactEmail = CONTACT_EMAIL
-      record('site-settings.contactEmail', 'changed', `${settings.contactEmail} → ${CONTACT_EMAIL}`)
+      settingsRows.push(
+        record(
+          'site-settings.contactEmail',
+          'changed',
+          `${settings.contactEmail} → ${CONTACT_EMAIL}`,
+        ),
+      )
     } else {
       record('site-settings.contactEmail', 'unchanged')
     }
@@ -131,19 +178,21 @@ export async function publishOwnerContent({ write }: { write: boolean }): Promis
       }
 
       settingsChanges[field] = rich(...paragraphs)
-      record(
-        `site-settings.${field}`,
-        'changed',
-        `${paragraphsOf(settings[field]).length} → ${paragraphs.length} paragraph(s)`,
+      settingsRows.push(
+        record(`site-settings.${field}`, 'changed', firstDifference(settings[field], paragraphs)),
       )
     }
 
     if (write && Object.keys(settingsChanges).length > 0) {
       await payload.updateGlobal({ slug: 'site-settings', data: settingsChanges, depth: 0 })
+
+      for (const row of settingsRows) {
+        row.written = true
+      }
     }
 
     // ---------------------------------------------------------------------- FAQs
-    for (const spec of FAQ_SPECS) {
+    for (const spec of ALL_FAQS) {
       const found = await payload.find({
         collection: 'faqs',
         where: { question: { equals: spec.question } },
@@ -159,33 +208,42 @@ export async function publishOwnerContent({ write }: { write: boolean }): Promis
         continue
       }
 
-      if (sameText(existing.answer, [spec.answer])) {
-        record(`faq: ${spec.question}`, 'unchanged')
+      /*
+       * A draft FAQ is found (the Local API overrides access) and corrected, but it is not on
+       * `/help/faq`. Saying so is the difference between a corrected answer and a corrected answer
+       * nobody can read; publishing it here is not this script's decision to make.
+       */
+      const draft = existing.status === 'published' ? '' : ' [draft — not shown on /help/faq]'
+
+      if (sameText(existing.answer, spec.paragraphs)) {
+        record(`faq: ${spec.question}`, 'unchanged', draft.trim())
 
         continue
       }
 
-      record(
+      const row = record(
         `faq: ${spec.question}`,
         'changed',
-        paragraphsOf(existing.answer)[0]?.slice(0, 70) ?? '',
+        `${firstDifference(existing.answer, spec.paragraphs)}${draft}`,
       )
 
       if (write) {
         await payload.update({
           collection: 'faqs',
           id: existing.id,
-          data: { answer: rich(spec.answer) },
+          data: { answer: rich(...spec.paragraphs) },
           depth: 0,
         })
+
+        row.written = true
       }
     }
 
     // --------------------------------------------------------------- size guides
-    for (const [title, notes] of Object.entries(SIZE_GUIDE_FIT_NOTES)) {
+    for (const { fitNotes, slug } of SIZE_GUIDE_FIT_NOTES) {
       const found = await payload.find({
         collection: 'size-guides',
-        where: { title: { equals: title } },
+        where: { slug: { equals: slug } },
         limit: 1,
         depth: 0,
       })
@@ -193,57 +251,76 @@ export async function publishOwnerContent({ write }: { write: boolean }): Promis
       const existing = found.docs[0]
 
       if (!existing) {
-        record(`size guide: ${title}`, 'missing', 'no guide with this title')
+        record(`size guide: ${slug}`, 'missing', 'no guide with this slug')
 
         continue
       }
 
-      if (sameText(existing.fitNotes, [notes])) {
-        record(`size guide: ${title}`, 'unchanged')
+      if (sameText(existing.fitNotes, [fitNotes])) {
+        record(`size guide: ${slug}`, 'unchanged')
 
         continue
       }
 
-      record(
-        `size guide: ${title}`,
+      const row = record(
+        `size guide: ${slug}`,
         'changed',
-        paragraphsOf(existing.fitNotes)[0]?.slice(0, 70) ?? '',
+        firstDifference(existing.fitNotes, [fitNotes]),
       )
 
       if (write) {
         await payload.update({
           collection: 'size-guides',
           id: existing.id,
-          data: { fitNotes: rich(notes) },
+          data: { fitNotes: rich(fitNotes) },
           depth: 0,
         })
+
+        row.written = true
       }
     }
 
-    // ------------------------------------------------------------------- verdict
+    finished = true
+  } finally {
+    /*
+     * **The report is printed on every exit path, including a throw** — sweep 1. Each write commits in
+     * its own transaction, so a failure part-way leaves some of this published and the rest not: a
+     * size guide an editor left with a blank measurement throws a validation error from a write that
+     * named only `fitNotes`, because Payload re-validates the whole document. The first version built
+     * the report as the last statement of the `try`, so exactly the operator who needed to know which
+     * half had landed got a stack trace and nothing else.
+     */
     const lines = results.map(
-      ({ detail, outcome, what }) =>
-        `${outcome.toUpperCase().padEnd(9)} ${what}${detail ? ` — ${detail}` : ''}`,
+      ({ detail, outcome, what, written }) =>
+        `${outcome.toUpperCase().padEnd(9)} ${what}${
+          write && outcome === 'changed' && !written ? ' [NOT written]' : ''
+        }${detail ? ` — ${detail}` : ''}`,
     )
 
     const changed = results.filter((row) => row.outcome === 'changed').length
+    const applied = results.filter((row) => row.outcome === 'changed' && row.written).length
     const missing = results.filter((row) => row.outcome === 'missing').length
 
     /*
      * One awaited `process.stdout.write` rather than the logger, for the reason `reindex.ts` records:
      * `payload.destroy()` tears the logger's transport down, and a report nobody sees is not a report.
      */
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve) => {
       process.stdout.write(
         `${lines.join('\n')}\n\n${
           write
-            ? `${changed} change(s) written`
+            ? `${applied} of ${changed} change(s) written${
+                finished ? '' : ' — the run failed, and the rest are NOT published'
+              }`
             : `${changed} change(s) to write — re-run with \`pnpm content:publish:write\``
-        }, ${missing} item(s) not found.\nThe storefront caches this content for five minutes.\n`,
-        (error) => (error ? reject(error) : resolve()),
+        }, ${missing} item(s) not found.\n` +
+          'The help and legal pages show it immediately. The footer links to the legal pages take up ' +
+          'to five minutes,\nand the sitemap up to an hour.\n',
+        /* Resolve either way: a failed stdout write must not replace the error that got us here. */
+        () => resolve(),
       )
     })
-  } finally {
+
     await payload.destroy()
   }
 }
