@@ -27,6 +27,8 @@
     "migrate:fresh": "payload migrate:fresh",
     "generate:types": "payload generate:types",
     "generate:importmap": "payload generate:importmap",
+    "content:publish": "payload run scripts/publish-owner-content.ts",
+    "content:publish:write": "payload run scripts/publish-owner-content-write.ts",
     "seed": "payload run scripts/seed.ts",
     "generate:media": "payload run scripts/generate-media.ts",
     "import:media": "payload run scripts/import-brand-media.ts",

@@ -256,12 +256,37 @@ The storefront hides what is missing rather than showing it broken, but only you
 
 ## 12. Wording to update in the live admin — Phase 36, revised Phase 37
 
-The seed now writes all of this, but production's content was entered separately and still carries the
-old wording, which promises an online returns flow that does not exist and names an address that cannot
-receive mail (audit DOC-01, DOC-02). **Do not run the seed against production to get it there**: the
-seed refuses any database but the development one `DATABASE_PUSH_TARGET` names (D-10), and it would
-overwrite production's settings, navigation and homepage and add demo customers, orders and reviews.
-Enter it by hand, in **Admin → Settings → Site Settings**, **Admin → FAQs** and **Admin → Size guides**:
+Production's content was entered separately and still carries the old wording, which promises an
+online returns flow that does not exist and names an address that cannot receive mail (audit DOC-01,
+DOC-02); its privacy notice and terms are empty, so both legal pages 404.
+
+**One command does all of it**, from a terminal holding production's `DATABASE_URL` for that command
+only — the same way `pnpm reindex` is run (§8, `docs/DEPLOYMENT.md` §6). In a new PowerShell window,
+from the project folder:
+
+```powershell
+$env:DATABASE_URL = Read-Host "Production DATABASE_URL"
+
+pnpm content:publish        # reports what would change; writes nothing
+pnpm content:publish:write  # writes it
+```
+
+It prints the database it is about to change, skips anything that already matches, creates nothing,
+and touches only the fields listed below — never products, orders, customers, media or navigation.
+Running it twice changes nothing the second time, and the storefront caches this content for five
+minutes. Close the window afterwards: the value must never reach `.env`.
+
+**Do not run the seed against production instead**: it refuses any database but the development one
+`DATABASE_PUSH_TARGET` names (D-10), and it would overwrite production's settings, navigation and
+homepage and add demo customers, orders and reviews.
+
+What it writes — or what to enter by hand in **Admin → Settings → Site Settings**, **Admin → FAQs**
+and **Admin → Size guides**, if you would rather:
+
+It covers every line below that the seed also writes: the contact address, both policies, the privacy
+notice, the terms, six FAQ answers and the two size-guide fit notes. The questions marked *if
+production has it* are not in the seed — the command reports them as not found, and they stay a
+hand edit.
 
 - **Site Settings → Contact → Contact Email** → `admin@micagrowth.com`.
 - **Site Settings → Policies → Returns Policy**, second paragraph → *Returns are arranged with our team

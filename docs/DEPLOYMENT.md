@@ -183,6 +183,7 @@ canonical and sitemap host (§9, `SITE_URL`) and search (§6).
 | Set Production `SITE_URL` to `https://north01apparel.vercel.app` (or the custom domain, Phase 33) | It is the team alias `north01apparel-mi-ca-growth.vercel.app`, so every canonical, the sitemap, reset links and Stripe return URLs name a host customers do not use. The smoke test warns about it |
 | Populate Preview (§3) | No preview can build (R3-03), so no change is rehearsed before production |
 | Build the production search index (§6) | Search and three filters are unavailable in production |
+| Publish the support and legal copy: `pnpm content:publish`, then `pnpm content:publish:write`, from a shell holding production's `DATABASE_URL` (TODO.md §12) | Production's content was entered by hand and kept wording the code does not back (DOC-01, DOC-02), and its privacy notice and terms are empty, so both legal pages 404 |
 | Set `CRON_SECRET` in Production (§7) | The daily drain and the retention sweep (bags, and unpaid orders after 30 days) refuse the cron without it |
 | Confirm the production Neon region; if `us-east-2`, set the Function region to `cle1` | Functions run in `iad1`, so every query crosses regions (R3-08) |
 | Project Settings → Git → enable **queued** production builds (no concurrent builds) | Two concurrent builds would migrate at once (R3-12) |

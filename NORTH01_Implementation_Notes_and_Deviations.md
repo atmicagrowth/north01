@@ -9971,6 +9971,52 @@ renaming the shop leaves that tab behind.
 | Playwright E2E | **44 passed, 0 failed, 14 skipped**. The gate's first run read 40 passed / 18 skipped: its `import:media` step produced no output that run, so the lookbook had no hotspots and the four shop-the-look tests skipped on their own documented condition. Re-running the import restored them and the suite; no code was involved |
 | Browser, desktop and phone | unchanged from §1.44.4 |
 
+## 1.45 Publishing the owner's copy into production
+
+`TODO.md` §12 had the owner retype ten answers, two policies, a contact address and two pages of legal
+text into the production admin, because the seed refuses every database but the development one
+(**D-10**) and production's content was entered separately. Retyping is how the wording drifted in the
+first place: the live FAQ still promised same-working-day dispatch before 2pm and named
+`help@north01.example`, an address that cannot receive mail — **DOC-01** and **DOC-02**, corrected in
+the seed at Phase 36 and nowhere else. Both legal pages were 404 because their fields were empty.
+
+`pnpm content:publish` (report) and `pnpm content:publish:write` (write) close that gap. Measured
+against the live site on 2026-09-15: production carries exactly the six seeded questions, so matching
+by question text reaches all of them.
+
+- **The strings are not retyped anywhere.** The FAQ answers, contact address, shipping and returns
+  policies and size-guide fit notes moved out of `scripts/seed.ts` into `scripts/seed/support.ts`, and
+  the legal text was already in `scripts/seed/legal.ts`. The seed and this script read the same
+  modules, so a corrected sentence cannot be live in one place and stale in the other — which is what
+  §12 was tracking by hand.
+- **It writes six things and no others:** `site-settings.contactEmail`, `shippingPolicy`,
+  `returnsPolicy`, `privacyPolicy`, `termsOfSale`; the answer of each FAQ it matches by exact question;
+  and `fitNotes` on each size guide it matches by title. Products, orders, customers, media and
+  navigation are never read or written.
+- **It creates nothing.** A question or guide that is not there is reported as missing and skipped,
+  because an answer nobody wrote is not a script's to invent. The four *if production has it* questions
+  in §12 are not in the seed, so they stay a hand edit.
+- **It compares before it writes**, paragraph by paragraph, so a second run reports *unchanged* for
+  everything, and the report is the same list whether or not it wrote.
+- **Two files rather than a flag**, for the reason `scripts/reindex.ts` records: `payload run` forwards
+  no arguments, so `--write` would have been ignored and the command meant to report would have
+  written.
+- **The target database is printed first**, because this is meant to be pointed at production from a
+  shell holding its `DATABASE_URL` for that one command — the same shape as `pnpm reindex`
+  (DEPLOYMENT.md §6). Nothing goes into `.env`.
+- The storefront caches settings and help content for five minutes, so a change appears within that;
+  `revalidateTag` cannot run under the CLI, which is the same accepted behaviour the seed has.
+
+**What was verified** (local Postgres):
+
+| Check | Result |
+|---|---|
+| `typecheck`, `lint --max-warnings 0`, `format:check`, `build` | pass |
+| Migrations | none — content only |
+| Behaviour | on a seeded database: 13 items, all *unchanged*. After breaking four of them (contact address back to `help@north01.example`, a one-paragraph returns policy, an emptied privacy notice, the 2pm dispatch answer): the dry run reported exactly those four and wrote nothing; the write applied them; a third run reported *unchanged* |
+| `pnpm seed` | unchanged behaviour after the copy moved to `scripts/seed/support.ts` — the gate re-seeds before every harness |
+| `pnpm test:run`, all 23 `verify:*`, E2E | pass |
+
 # 2. Deviations
 
 Every departure from what a canonical document actually says. **These override the plan.**
@@ -12224,5 +12270,6 @@ client-side only, so it can never be the reason a page fails to render.
 | Owner follow-up — sweep 2 | 2026-09-15 | Notes **§1.43.9**. No migration. Five defect classes hunted: Payload's whole-row writes from a stale read (a variant save could restore sold stock, an order save could undo a payment or refund, a promotion save lose a use, a stock refresh republish a product, a bag action reopen a paid bag) — now row locks before Payload reads, plus an opened-with stock check; after-response work lost when the event-row write failed; scheduled products never indexed; a second pool connection and unbounded Stripe calls inside held locks, and a decrement-order deadlock; 18 untested security guards now tested; nine harness-debris fixes. Every fix has a regression shown to fail when reverted. |
 | Owner request — the demonstration notice | 2026-09-15 | Notes **§1.44**, **DEV-86**. No migration. A modal on a browser's first visit carrying the owner's warning that the site is a demonstration, closed only by Continue and remembered in `localStorage`. Not in the server HTML, never in `/admin`, and absent with scripting off. The privacy notice, `docs/SECURITY.md` §1 and `TODO.md` §12 name the new storage key; the E2E suite pre-sets it, and one new E2E test covers the notice itself. Two of the owner's sentences (*"all features work"*, *"you will be charged"*) are not true until the Stripe, Algolia and Resend keys exist — `TODO.md` §13. |
 | Owner request — the notice, sweeps 1 and 2 | 2026-09-15 | Notes **§1.44.5**, **§1.44.6**. No migration. Sweep 1: closing the notice dropped focus on `<body>` (WCAG 2.4.3), an E2E check could not fail, a test-only export shipped in `src/`, the 404 document had no notice, and a removal runbook would have left the build red. Sweep 2 hunted those classes repo-wide: the shell's shared focus restore fails the same way whenever a trigger is gone — reached from every lookbook hotspot — four more assertions that cannot fail, thirteen documentation claims that no longer matched the repository, and the 404 document reading the session without the outage wrapper and missing analytics. |
+| Owner content — one command instead of §12's retyping | 2026-09-15 | Notes **§1.45**. No migration. `pnpm content:publish` / `:write` writes the contact address, shipping and returns policies, the privacy notice, the terms, six FAQ answers and two size-guide fit notes into whichever database the shell names, from the same modules the seed uses (`scripts/seed/support.ts` is new). It creates nothing, compares before writing, and prints the target first. TODO.md §12 now leads with the command; `docs/DEPLOYMENT.md` §9 and `docs/DEVELOPMENT.md` list it. |
 
 > **Append this table, and the sections above it, at the end of every phase.**
